@@ -30,6 +30,7 @@ fi
 [[ ${1:-} == --no-shell ]] && { echo ok; exit 0; }
 
 need omarchy; need rsync; need flock
+[[ -x /usr/lib/qt6/bin/qmllint ]] || fail "missing tool: /usr/lib/qt6/bin/qmllint"
 stage=$(mktemp -d); trap 'rm -rf "$stage"' EXIT
 OMARIFY_DEST="$stage/plugin" "$root/bin/dev-sync" || fail "dev-sync"
 omarchy plugin validate "$stage/plugin" || fail "validate"

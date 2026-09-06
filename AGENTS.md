@@ -96,7 +96,7 @@ bin/check --no-shell             # the CI-able subset (no omarchy, no Qt)
 bin/record-fixture servers /servers   # record a scrubbed fixture with the read-only token
 
 # dev loop (validator refuses symlinks, so copy)
-bin/dev-sync                     # then the shell hot-reloads the plugin
+bin/dev-sync                     # Panel/Bar QML hot-reload sometimes; Service.qml and Panel.qml changes need `omarchy restart shell`
 bin/dev-watch                    # keep syncing on save
 omarchy plugin enable io.github.danjonesio.omarify right   # first time
 omarchy-shell shell rescanPlugins                          # if not picked up
@@ -108,11 +108,11 @@ omarchy plugin remove io.github.danjonesio.omarify         # safe rollback: move
 omarchy-shell shell toggle io.github.danjonesio.omarify
 omarchy-shell io.github.danjonesio.omarify refresh
 omarchy-shell io.github.danjonesio.omarify status
-omarchy-shell io.github.danjonesio.omarify deploy <uuid>
+omarchy-shell io.github.danjonesio.omarify deploy <uuid>   # Phase 2; Phase 1 registers only refresh and status
 
 # logs
 quickshell log -p /usr/share/omarchy/shell --tail 100
-omarchy restart shell            # after Service.qml or manifest changes
+omarchy restart shell            # after Service.qml, Panel.qml or manifest changes (hot reload keeps the old objects)
 ```
 
 QML under `~/.config/omarchy/plugins/` hot-reloads on save. `Service.qml` is

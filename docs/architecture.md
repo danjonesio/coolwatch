@@ -181,10 +181,11 @@ and under 60/min with one deployment. Idle is ≈17/min at 3 projects and 3 serv
 - Startup: deployments, version, resources and servers launch together; topology 2 s
   later. The icon lights on the first deployments response. A `startupRamp` retries
   every 2 s for 30 s if the first attempts are offline.
-- Topology is two batched requests on one `Req`: `[/projects]`, then, from that
-  dispatch, `[/projects/{uuid} × P] + [/servers/{uuid}/resources × S]` with `S` from the
-  last servers response. `topologySec` is raised so `(1 + P + S)` per cycle costs at
-  most 3 req/min. Coolify refreshes stored statuses about once a minute, so faster
+- Topology is `/projects` (35 s after the token is ready, then every `topologySec`),
+  followed by one stage-2 block (`/projects/{uuid}` × P, `/servers/{uuid}/resources` × S)
+  every 30 s until the queue drains, so no 60 s window holds more than ~3 topology
+  requests; a server that answers late gets its resource list queued the same way.
+  `topologySec` is raised so `(1 + P + S)` per cycle costs at most 3 req/min. Coolify refreshes stored statuses about once a minute, so faster
   resource polling would return the same bytes.
 - Vanished deployment uuids go on a deduped queue (cap 20) drained one at a time by the
   `deployment` `Req`; its dispatch and fail handlers pop the next uuid immediately.
@@ -202,9 +203,9 @@ plain object built by `Model.js`, never a live QObject in a ListView.
 
 ```
 snapshot:  { instance, error, warning, servers, resources, deployments, recent, tree,
-             byServer, failedUnacked, lastPollAt, busy, openPanels, baselineDone }
+             byServer, failedUnacked, lastPollAt, busy, openPanels, baselineDone, backoffSec }
 instance:  { id, name, url, version, plaintext }
-error:     null | { kind, title, detail, httpCode, curlExit, at, staleSince }
+error:     null | { kind, title, detail, httpCode, curlExit, request, at, staleSince }
            kind ∈ noconfig | configerror | unsafe | tokencmd | waitingtoken | auth |
                   apidisabled | ipblocked | ability | ratelimited | offline | toolarge | http
 warning:   null | { kind (permissions | plaintext), title, detail }

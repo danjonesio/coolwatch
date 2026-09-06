@@ -24,7 +24,7 @@ panels. `docs/omarchy-shell-reference.md` is the component reference.
 ## Bar icon
 
 `BarIconButton` with a Nerd Font glyph. The configured, healthy icon is the filled
-Material cloud `󰅟` (U+F015F, `md-cloud`); the outline `󰅜` (U+F0163) is the
+Material cloud `󰅟` (U+F015F, `md-cloud`); the outline `󰅣` (U+F0163) is the
 "not configured" ghost. A Coolify mark as a `Shape` (`Mark.qml`, like omasnitch) can
 replace it later if the glyph reads badly at 13 px. The bar has one accent colour
 (`bar.urgent`) and one opacity lever (`dimmed`), so the glyph is what tells the error
@@ -35,12 +35,12 @@ First matching row wins (`Model.barState`):
 
 | # | State | Selector | Glyph | `dimmed` | `active` | Tooltip |
 |---|---|---|---|---|---|---|
-| 1 | Not configured | no config file | `󰅜` F0163 | yes | no | "Omarify — no config at ~/.config/omarify/config.json" |
-| 2 | Config error / unsafe | bad JSON, invalid, or writable by others | `󰦠` F09E0 | yes | no | "Omarify — config error: <first line>" / "Omarify — config is writable by others" |
-| 3 | Token unavailable | `tokenCommand` failed | `󰦠` | yes | no | "Omarify — token command failed (exit N)" |
+| 1 | Not configured | no config file | `󰅣` F0163 | yes | no | "Omarify — no config at ~/.config/omarify/config.json" |
+| 2 | Config error / unsafe | bad JSON, invalid, or writable by others | `󰧠` F09E0 | yes | no | "Omarify — config error: <first line>" / "Omarify — config is writable by others" |
+| 3 | Token unavailable | `tokenCommand` failed | `󰧠` | yes | no | "Omarify — token command failed (exit N)" |
 | 4 | Waiting for token | `tokenCommand` running | `󰅟` | yes | no | "Omarify — waiting for token command" |
-| 5 | Token rejected | 401 | `󰦠` | yes | no | "Omarify — token rejected" |
-| 6 | API disabled / IP blocked | 403 | `󰦠` | yes | no | "Omarify — API disabled on this instance" / "Omarify — this IP is not allowed" |
+| 5 | Token rejected | 401 | `󰧠` | yes | no | "Omarify — token rejected" |
+| 6 | API disabled / IP blocked | 403 | `󰧠` | yes | no | "Omarify — API disabled on this instance" / "Omarify — this IP is not allowed" |
 | 7 | Offline | curl exit 6/7/28/35/60 | `󰅤` F0164 | yes | no | "Omarify — offline, retrying" |
 | 8 | Rate limited | 429 | `󰅟` | yes | no | "Omarify — rate limited, backing off Ns" |
 | 9 | Starting | no baseline yet | `󰅟` | yes | no | "Omarify — starting" |
@@ -83,7 +83,7 @@ Card padding is the `KeyboardPanel` default. Column spacing `Style.space(12)`.
 │   ● api        running · healthy                  │  resource row
 │   ● postgres   running                            │
 │   ○ worker     exited                             │  exited → dim
-│   󰪶 web        restarting                         │  degraded/restarting → urgent
+│   󱎖 web        restarting                         │  degraded/restarting → urgent
 │     [Deploy] [Redeploy] [Restart] [Stop] [Open]   │  action row when expanded (Phase 2)
 │ ▸ sandbox / staging                               │
 │ ───────────────────────────────────────────────── │
@@ -156,7 +156,7 @@ formatted `1m 20s`, `45s`, `2h 03m`.
 
 ### Servers section
 
-Row per server: dot glyph (`●` reachable and usable, `󰪶` reachable but not usable,
+Row per server: dot glyph (`●` reachable and usable, `󱎖` reachable but not usable,
 `○` unreachable or disabled), name, caption "<ip> · N resources" plus "unreachable"
 in urgent, "disabled", "build server" as they apply. Unreachable and disabled servers
 dim the whole row. Proxy status and `unreachable_count` need `GET /servers/{uuid}` per
@@ -172,7 +172,7 @@ toggles the same property. Grouping folds are `▾ / ▸` rows like omasnitch's 
 fold; a resource whose environment is unknown lands in an "Ungrouped" fold. Resource
 rows:
 
-- Dot: `●` running (foreground), `󰪶` (U+F1396) starting/restarting/degraded (urgent),
+- Dot: `●` running (foreground), `󱎖` (U+F1396) starting/restarting/degraded (urgent),
   `○` exited/paused (dim), `◌` unknown. `◐` U+25D0 is not in JetBrainsMono Nerd Font.
 - Name bold body, status words in caption: "running · healthy", "exited", "restarting",
   or (Phase 2) the pending verb in accent: "deploying…", "stopping…".
