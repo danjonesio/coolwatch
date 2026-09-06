@@ -70,8 +70,8 @@ function normaliseConfig(text) {
   if (c.poll && typeof c.poll === "object") {
     for (var k in POLL_DEFAULTS) {
       if (Object.prototype.hasOwnProperty.call(c.poll, k)) {
-        var n = Number(c.poll[k])
-        if (!isFinite(n)) { out.error = "poll." + k + " must be a number"; return out }
+        var n = c.poll[k]
+        if (typeof n !== "number" || !isFinite(n)) { out.error = "poll." + k + " must be a number"; return out }
         out.poll[k] = Math.max(2, Math.round(n))
       }
     }
@@ -181,8 +181,9 @@ function elide(text, max) {
 }
 
 // GET /version is text/html with a bare version string; never JSON.parse it.
+// Bounded: it is the one API string that reaches the hero and `status` unparsed.
 function parseVersion(text) {
-  return String(text === undefined || text === null ? "" : text).trim().replace(/^"+|"+$/g, "").replace(/^v/i, "").trim()
+  return elide(String(text === undefined || text === null ? "" : text).trim().replace(/^"+|"+$/g, "").replace(/^v/i, "").trim(), 32)
 }
 
 // ---- errors -------------------------------------------------------------------------
@@ -461,6 +462,9 @@ function isPartial(s) { return !!(s && s.error && (s.error.kind === "http" || s.
 
 function plural(n, word) { return n + " " + word + (n === 1 ? "" : "s") }
 
+var KIND_WORDS = { serverResources: "topology", project: "topology", projects: "topology", topology: "topology", deployment: "deployments" }
+function kindWord(k) { return KIND_WORDS[k] || k || "data" }
+
 function heroTitle(s) {
   var i = s && s.instance
   if (!i) return "Omarify"
@@ -487,7 +491,7 @@ function heroMeta(s) {
   if (!s) return "Loading"
   var e = s.error
   if (e && e.kind !== "ability") {
-    if (isPartial(s)) return (e.request || "data") + " unavailable · showing last known"
+    if (isPartial(s)) return kindWord(e.request) + " unavailable · showing last known"
     if (META[e.kind]) return META[e.kind]
   }
   if (!s.baselineDone) return "Loading"
@@ -517,23 +521,23 @@ function barState(s) {
   if (failed.length) {
     var first = failedName(s, failed[0])
     r.glyph = G.failed; r.active = true
-    r.tooltip = "Deployment failed: " + first + (failed.length > 1 ? " +" + (failed.length - 1) + " more" : "")
+    r.tooltip = "Deployment failed: " + elide(first, 40) + (failed.length > 1 ? " +" + (failed.length - 1) + " more" : "")
     return r
   }
   var down = unreachableServers(s)
   if (down.length) {
     r.glyph = G.cloudOff; r.active = true
-    r.tooltip = down[0].name + " unreachable" + (down.length > 1 ? " +" + (down.length - 1) + " more" : "")
+    r.tooltip = elide(down[0].name, 40) + " unreachable" + (down.length > 1 ? " +" + (down.length - 1) + " more" : "")
     return r
   }
   var act = activeDeployments(s)
   if (act.length) {
     r.glyph = G.progress; r.active = true
-    r.tooltip = act.length === 1 ? "Deploying " + act[0].appName : act.length + " deployments running"
+    r.tooltip = act.length === 1 ? "Deploying " + elide(act[0].appName, 40) : act.length + " deployments running"
     return r
   }
   var counts = countsLine(s)
-  if (isPartial(s)) { r.tooltip = name + " — " + (counts || "no resources") + " (" + (e.request || "data") + " unavailable)"; return r }
+  if (isPartial(s)) { r.tooltip = name + " — " + (counts || "no resources") + " (" + kindWord(e.request) + " unavailable)"; return r }
   r.tooltip = name + " — " + (counts || "no resources")
   return r
 }
@@ -546,7 +550,7 @@ function failedName(s, uuid) {
 
 var SAMPLE_CONFIG = '{ "version": 1, "instances": [\n  { "id": "cloud", "name": "Coolify Cloud", "url": "https://app.coolify.io", "token": "67|…" } ] }'
 
-function calloutBody(e) {
+function calloutBody(e, s) {
   switch (e.kind) {
     case "noconfig": return "Create ~/.config/omarify/config.json (chmod 600):\n" + SAMPLE_CONFIG
     case "configerror": return e.detail || "Config could not be read."
@@ -557,7 +561,7 @@ function calloutBody(e) {
     case "apidisabled": return "Enable it in Settings → Advanced → API Access."
     case "ipblocked": return "Add this machine's IP to the token's allowed list in Coolify → Security → API Tokens."
     case "ability": return "The token is missing the " + (abilityOf(e.detail) || "required") + " ability."
-    case "ratelimited": return "Backing off " + (e.backoffSec || 30) + "s."
+    case "ratelimited": return "Backing off " + ((s && s.backoffSec) || e.backoffSec || 30) + "s."
     case "offline": return "Retrying."
     case "toolarge": return "Coolify's response exceeded 8 MB and was dropped."
     case "http": return e.detail || ("Coolify returned " + (e.httpCode || 0) + ".")
@@ -583,8 +587,8 @@ function callout(s, nowMs) {
   if (!e && !w) return null
   var title = "", body = ""
   if (e) {
-    title = isPartial(s) ? (e.request || "data") + " is unavailable" : (META[e.kind] || "Error")
-    body = isPartial(s) ? "" : calloutBody(e)
+    title = isPartial(s) ? kindWord(e.request) + " unavailable" : (META[e.kind] || "Error")
+    body = isPartial(s) ? kindWord(e.request) + " is unavailable." : calloutBody(e, s)
     if (e.staleSince) body += (body ? "\n" : "") + "Showing data from " + age(e.staleSince, nowMs || Date.now()) + "."
     if (w) body += (body ? "\n" : "") + warningBody(w)
   } else {
@@ -595,6 +599,8 @@ function callout(s, nowMs) {
 }
 
 var NOTES = { deployments: "Nothing deploying.", servers: "No servers on this team.", resources: "No resources on this team." }
+var NOT_LOADED = "Not loaded yet."
+function noteFor(s, section) { return (s.error || !s.baselineDone) && (s.lastPollAt || {})[section] === 0 ? NOT_LOADED : NOTES[section] }
 
 // ---- panel rows -----------------------------------------------------------------------------
 
@@ -670,20 +676,20 @@ function panelRows(s, ui) {
   rows.push({ type: "section", key: "sec:deployments", title: "DEPLOYMENTS", control: null })
   var active = activeDeployments(s)
   var recent = (s.recent || []).slice(0, RECENT_RENDER_CAP)
-  if (!active.length && !recent.length) rows.push({ type: "note", key: "note:deployments", text: NOTES.deployments })
+  if (!active.length && !recent.length) rows.push({ type: "note", key: "note:deployments", text: noteFor(s, "deployments") })
   active.forEach(function (d) { rows.push(deploymentRow(d)) })
   recent.forEach(function (d) { rows.push(deploymentRow(d)) })
   rows.push({ type: "separator", key: "sep:" + (++sep) })
   // SERVERS
   rows.push({ type: "section", key: "sec:servers", title: "SERVERS", control: null })
   var servers = s.servers || []
-  if (!servers.length) rows.push({ type: "note", key: "note:servers", text: NOTES.servers })
+  if (!servers.length) rows.push({ type: "note", key: "note:servers", text: noteFor(s, "servers") })
   servers.forEach(function (x) { rows.push(serverRow(x)) })
   rows.push({ type: "separator", key: "sep:" + (++sep) })
   // RESOURCES
   rows.push({ type: "section", key: "sec:resources", title: "RESOURCES", control: "groupBy" })
   var resources = s.resources || []
-  if (!resources.length) { rows.push({ type: "note", key: "note:resources", text: NOTES.resources }); return rows }
+  if (!resources.length) { rows.push({ type: "note", key: "note:resources", text: noteFor(s, "resources") }); return rows }
   var byUuid = {}
   resources.forEach(function (r) { byUuid[r.uuid] = r })
   function fold(key, title, uuids, indent) {

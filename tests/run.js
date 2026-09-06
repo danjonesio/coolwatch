@@ -198,6 +198,7 @@ test("Model.parseVersion strips v, quotes and whitespace and never JSON.parses",
   eq(M.parseVersion('"4.3.17"'), "4.3.17")
   eq(M.parseVersion("  V4.3.17  "), "4.3.17")
   eq(M.parseVersion(fixture("version.txt")), "4.3.14")
+  eq(M.parseVersion("v" + "9".repeat(500)).length, 32, "bounded")
   eq(M.parseVersion(null), "")
 })
 
@@ -226,6 +227,8 @@ test("Model.normaliseConfig: valid config with defaults, clamp and plaintext (SR
   eq(c.poll.deploymentsSec, 4); eq(c.poll.resourcesSec, 60); eq(c.poll.serversSec, 120); eq(c.poll.topologySec, 600)
   const p = M.normaliseConfig({ instances: [{ url: "http://10.0.0.1:8000", token: "t" }], poll: { deploymentsSec: 1, topologySec: 900 } })
   eq(p.ok, true); eq(p.instances[0].plaintext, true); eq(p.poll.deploymentsSec, 2); eq(p.poll.topologySec, 900); eq(p.instances[0].name, "10.0.0.1")
+  assert(!M.normaliseConfig({ instances: [{ url: "https://x", token: "t" }], poll: { deploymentsSec: null } }).ok, "null poll value is an error, not 2 s")
+  assert(!M.normaliseConfig({ instances: [{ url: "https://x", token: "t" }], poll: { deploymentsSec: "4" } }).ok, "string poll value is an error")
   const tc = M.normaliseConfig({ instances: [{ url: "https://x", tokenCommand: ["op", "read", "op://x"] }] })
   eq(tc.ok, true); eq(JSON.stringify(tc.instances[0].tokenCommand), JSON.stringify(["op", "read", "op://x"]))
 })
@@ -401,6 +404,7 @@ test("Model.barState: all 14 rows (glyph, dimmed, active, tooltip)", () => {
   b = st({ error: M.makeError("http", "x", { request: "servers" }), servers: [{ uuid: "s", name: "a", reachable: true }] }); eq(b.glyph, G.cloud); eq(b.active, false); eq(b.dimmed, false); assert(/\(servers unavailable\)/.test(b.tooltip))
   b = st({ servers: [{ uuid: "s", name: "a", reachable: true }, { uuid: "t", name: "b", reachable: true }], resources: [{}, {}, {}] }); eq(b.glyph, G.cloud); eq(b.dimmed, false); eq(b.active, false); eq(b.tooltip, "Coolify Cloud — 2 servers · 3 resources")
   b = st({}); eq(b.tooltip, "Coolify Cloud — no resources")
+  b = st({ deployments: [{ uuid: "d", appName: "x".repeat(200), status: "in_progress" }] }); assert(b.tooltip.length < 60, "names in tooltips are bounded")
 })
 
 test("Model.barState: failed then acknowledged returns to idle; a failure with a panel open never arms (handled by the service)", () => {
@@ -442,7 +446,12 @@ test("Model.callout: every error and warning kind has a body; healthy is null; s
   const both = M.callout(snap({ error: M.makeError("auth"), warning: { kind: "plaintext" } }))
   assert(/read ability/.test(both.body) && /http:\/\//.test(both.body), "error body then warning body")
   const partial = M.callout(snap({ error: M.makeError("http", "", { request: "servers" }), servers: [{}] }))
-  eq(partial.title, "servers is unavailable")
+  eq(partial.title, "servers unavailable"); eq(partial.body, "servers is unavailable.")
+  const topo = M.callout(snap({ error: M.makeError("http", "", { request: "serverResources" }), servers: [{}] }))
+  eq(topo.title, "topology unavailable", "request ids map to display words")
+  eq(M.heroMeta(snap({ error: M.makeError("http", "", { request: "project" }), servers: [{}] })), "topology unavailable · showing last known")
+  const rl = M.callout(snap({ error: M.makeError("ratelimited"), backoffSec: 120 }))
+  eq(rl.body, "Backing off 120s.", "callout and bar agree on the backoff")
 })
 
 // ---- Model.js: panel rows ---------------------------------------------------------------------
@@ -451,6 +460,8 @@ test("Model.panelRows: section order with separators, stable keys, notes for emp
   const rows = M.panelRows(snap({}), { groupBy: "project", folded: {} })
   eq(rows.map(r => r.type).join(","), "section,note,separator,section,note,separator,section,note")
   eq(rows[0].title, "DEPLOYMENTS"); eq(rows[1].text, "Nothing deploying."); eq(rows[4].text, "No servers on this team."); eq(rows[7].text, "No resources on this team.")
+  const errRows = M.panelRows(snap({ error: M.makeError("offline"), baselineDone: false, lastPollAt: { deployments: 0, servers: 0, resources: 0 } }), {})
+  eq(errRows[4].text, "Not loaded yet.", "no false empty-state copy while nothing has loaded")
   eq(rows[6].control, "groupBy"); eq(rows[0].control, null)
   assert(rows.every(r => typeof r.key === "string" && r.key.length > 0), "every row has a key")
 })
