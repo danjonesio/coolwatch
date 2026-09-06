@@ -641,7 +641,8 @@ Item {
       topologyFetched: root._topologyFetched,
       terminalQueue: root._terminalQueue.length,
       error: root._error ? { kind: root._error.kind, request: root._error.request, httpCode: root._error.httpCode, curlExit: root._error.curlExit } : null,
-      warning: root._warning ? root._warning.kind : null
+      warning: root._warning ? root._warning.kind : null,
+      bar: { glyph: "U+" + root.bar.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: root.bar.dimmed, active: root.bar.active, tooltip: root.bar.tooltip }
     }
   }
 
