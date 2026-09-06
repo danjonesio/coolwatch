@@ -1,0 +1,10 @@
+# local secrets and scratch
+*.token
+config.local.json
+tests/fixtures/*.private.json
+
+# editor / os
+.DS_Store
+*.swp
+.idea/
+.vscode/
