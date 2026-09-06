@@ -38,7 +38,9 @@ Panel {
 
   readonly property var snapshot: svc ? svc.snapshot : null
   readonly property var rows: root.opened && root.snapshot
-    ? Model.panelRows(root.snapshot, { groupBy: root.groupBy, folded: root.folded, nowMs: root.nowMs }) : []
+    ? Model.panelRows(root.snapshot, { groupBy: root.groupBy, folded: root.folded, nowMs: root.ageMs }) : []
+  // Coarse clock for the one-hour age-out, so rows are not recomputed every second.
+  readonly property double ageMs: Math.floor(root.nowMs / 60000) * 60000
   readonly property int selectedIndex: Model.indexOfKey(root.rowsModel, root.cursorKey)
   readonly property var currentRow: root.selectedIndex >= 0 ? root.rowsModel[root.selectedIndex] : null
   readonly property bool heroHasCursor: root.cursorActive && root.focusSection === "hero"

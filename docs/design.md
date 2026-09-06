@@ -142,14 +142,15 @@ pattern as the agents provider switch.
 
 ### Deployments section
 
-Rows are `CursorSurface`s. Left glyph by status: `󰦖` in progress (accent), `󰔟`
-queued (dim), `󰄬` finished (dim), `󰅙` failed (urgent), `󰜺` cancelled (dim). Name in
+Rows are `CursorSurface`s. Left glyph by status: `󰦖` in progress (`bar.urgent`, the bar's own signal colour), `󰔟`
+queued (dim), `󰄬` finished (dim), `󰅙` failed (`Color.accent`: red in Aetheria while `bar.urgent` is yellow-green), `󰜺` cancelled (dim). Name in
 body weight, "branch · commit message" in caption dim (the branch is the joined
 application's `git_branch`; the first seven characters of the commit when the join
 misses), right-aligned elapsed or age. Expanded row (Phase 2) shows an action row:
 **Cancel** (only while queued or in progress, urgent hover), **Logs** (Phase 4),
-**Open**. The section shows all active plus the newest 5 terminal deployments; "show
-more" is a Phase 4 concern.
+**Open**. The section shows all active plus the newest 5 terminal deployments from the
+last hour; older ones drop out on their own (Phase 3 persists them across restarts, Phase 4
+adds history and "show more").
 
 Elapsed time ticks every second while the panel is open (a `Timer` on `root.opened`),
 formatted `1m 20s`, `45s`, `2h 03m`.
