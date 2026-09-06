@@ -5,7 +5,7 @@ deployments, and the buttons to deploy, redeploy, restart, stop and cancel, in a
 [Omarchy](https://omarchy.org/) panel. Works with Coolify Cloud and self-hosted Coolify
 through the REST API.
 
-**Status: design phase. No code yet.** See [docs/roadmap.md](docs/roadmap.md).
+**Status: Phase 1 (read-only bar icon and panel) in progress.** See [docs/roadmap.md](docs/roadmap.md).
 
 ## What it will do
 
@@ -29,21 +29,25 @@ disk usage. See [docs/product.md](docs/product.md) for the honest list.
 omarchy plugin add https://github.com/danjonesio/omarify.git --enable
 ```
 
-Then create `~/.config/omarify/config.json` (mode 0600):
+Then create `~/.config/omarify/config.json` (mode 0600; the plugin creates the
+directory as 0700):
 
 ```json
 {
   "version": 1,
   "instances": [
     { "id": "cloud", "name": "Coolify Cloud", "url": "https://app.coolify.io", "token": "67|…" }
-  ]
+  ],
+  "poll": { "deploymentsSec": 4, "resourcesSec": 60, "serversSec": 120, "topologySec": 600 }
 }
 ```
 
-Create the token in Coolify under Security → API Tokens with the `read`,
-`read:sensitive` and `deploy` permissions. Instead of `token` you can give
+`poll` is optional; those are the defaults. Create the token in Coolify under
+Security → API Tokens with the `read` permission (`deploy` is needed once Phase 2 adds
+actions). Instead of `token` you can give
 `"tokenCommand": ["op", "read", "op://Private/Coolify/credential"]` so the secret never
-sits on disk.
+sits on disk; note that this keeps it off disk but not away from other plugins loaded
+into the same shell.
 
 ## Docs
 

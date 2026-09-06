@@ -1,0 +1,23 @@
+{
+  "id": 13092,
+  "uuid": "iwo4oo0cw0kc8s4g8s0og88c",
+  "name": "Storefront",
+  "description": "",
+  "environments": [
+    {
+      "id": 15640,
+      "name": "production",
+      "project_id": 13092,
+      "created_at": "2025-04-02T14:50:22.000000Z",
+      "updated_at": "2025-04-02T14:50:22.000000Z",
+      "description": null,
+      "uuid": "vokooc88s8cssgow0ww44ssw"
+    }
+  ],
+  "icon_path": null,
+  "icon_s3_storage_id": null,
+  "icon_storage_type": null,
+  "team_id": 27857,
+  "created_at": "2025-04-02T14:50:22.000000Z",
+  "updated_at": "2025-04-02T14:50:22.000000Z"
+}

@@ -17,7 +17,9 @@ Deliverables
 - `manifest.json`, `Service.qml`, `BarWidget.qml`, `Panel.qml`, `Model.js`, `Api.js`.
 - Config file loading with `token` and `tokenCommand`, file watch, 0600 check.
 - Curl-over-stdin client with sequence numbers, timeouts, watchdog, error mapping.
-- Polls: deployments, resources, servers, version, project tree.
+- Polls: deployments, resources, servers, version, topology (projects, project
+  environments, server resources). The token has `read` only. Enter on a leaf row is
+  inert; server proxy status is Phase 2.
 - Bar icon states; panel with hero, deployments, servers, resources (by project and
   by server), refresh, keyboard cursor, footer.
 - `tests/run.js` with fixtures for every parser; `bin/check` running node tests,
@@ -30,7 +32,9 @@ Acceptance
 - Pushing a commit to a Coolify-linked repo makes the icon go active and the row
   appear within 5 s of Coolify queuing it; it leaves the active list and shows as
   finished within 5 s of Coolify finishing.
-- Idle request rate measured under 20 per minute; with one deployment under 60.
+- Idle request rate measured under 20 per minute with the panel closed, and
+  separately under 60 with one deployment running, both read from
+  `omarchy-shell io.github.danjonesio.omarify status`'s `requestsLastMin`.
 - Deleting the config file while running switches the icon to "not configured" without
   a shell restart; restoring it recovers.
 - Revoking the token shows "TOKEN REJECTED"; no token string appears in
