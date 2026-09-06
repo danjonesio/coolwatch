@@ -7,10 +7,24 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 dest=${OMARIFY_DEST:-$HOME/.config/omarchy/plugins/$id}
 fail() { echo "dev-sync: $*" >&2; exit 1; }
 
+# A --delete sync needs a positive check that the target is one plugin dir, not a
+# negative prefix check: normalise first, then require a non-empty final segment
+# strictly below the plugins dir or TMPDIR, and (outside a staging run) the id itself.
+dest=$(realpath -m -- "$dest")
+plugins=$(realpath -m -- "$HOME/.config/omarchy/plugins")
+tmproot=$(realpath -m -- "${TMPDIR:-/tmp}")
 case $dest in
-  "$HOME/.config/omarchy/plugins/"*|"${TMPDIR:-/tmp}"/*) ;;
+  "$plugins"/?*|"$tmproot"/?*) ;;
   *) fail "refusing target outside plugins dir or TMPDIR: $dest" ;;
 esac
+[[ $dest != "$plugins" && $dest != "$tmproot" ]] || fail "refusing a directory root as target: $dest"
+if [[ -z ${OMARIFY_DEST:-} ]]; then [[ $(basename -- "$dest") == "$id" ]] || fail "target basename is not $id: $dest"; fi
+# Never --delete anything that is not ours: an existing target may only hold files
+# from the ship list (plus a .git we already refused above).
+if [[ -d $dest ]]; then
+  extra=$(find "$dest" -mindepth 1 -maxdepth 1 ! -name manifest.json ! -name LICENSE ! -name README.md ! -name Service.qml ! -name BarWidget.qml ! -name Panel.qml ! -name Model.js ! -name Api.js ! -name Mark.qml ! -name preview.png -print -quit)
+  [[ -z $extra ]] || fail "refusing: $dest holds something that is not omarify's: $extra"
+fi
 # A non-final `&&` member never trips set -e; this form is deliberate.
 [[ -d $dest/.git ]] && fail "$dest is a git checkout (omarchy plugin remove $id first)"
 if [[ -f $dest/manifest.json ]] && [[ $(jq -r .id "$dest/manifest.json") != "$id" ]]; then
@@ -27,7 +41,7 @@ mkdir -p "$dest"
 exec 9>"${XDG_RUNTIME_DIR:-/tmp}/omarify-dev-sync.lock"; flock 9
 stage=$(mktemp -d); trap 'rm -rf "$stage"' EXIT
 for f in "${files[@]}"; do install -m 0644 "$root/$f" "$stage/$f"; done
-rsync -a --delete "$stage/" "$dest/"
+rsync -a --delete --no-p --chmod=D755,F644 "$stage/" "$dest/"
 # Only the first creation needs a rescan; after that the shell's own inotify
 # watch reloads this plugin, and a rescan would reload every plugin.
 if [[ -z ${OMARIFY_DEST:-} && $existed -eq 0 ]]; then
