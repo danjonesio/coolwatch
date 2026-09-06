@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Copy the shipping file list into the installed plugin dir (validator refuses
+# symlinks inside a plugin folder, and inotify through a symlinked dir is unverified).
+set -euo pipefail
+id=io.github.danjonesio.omarify
+root=$(cd "$(dirname "$0")/.." && pwd)
+dest=${OMARIFY_DEST:-$HOME/.config/omarchy/plugins/$id}
+fail() { echo "dev-sync: $*" >&2; exit 1; }
+
+case $dest in
+  "$HOME/.config/omarchy/plugins/"*|"${TMPDIR:-/tmp}"/*) ;;
+  *) fail "refusing target outside plugins dir or TMPDIR: $dest" ;;
+esac
+# A non-final `&&` member never trips set -e; this form is deliberate.
+[[ -d $dest/.git ]] && fail "$dest is a git checkout (omarchy plugin remove $id first)"
+if [[ -f $dest/manifest.json ]] && [[ $(jq -r .id "$dest/manifest.json") != "$id" ]]; then
+  fail "$dest holds a different plugin"
+fi
+
+files=(manifest.json LICENSE README.md Service.qml BarWidget.qml Panel.qml Model.js Api.js)
+for f in Mark.qml preview.png; do [[ -e $root/$f ]] && files+=("$f"); done
+for f in "${files[@]}"; do [[ -e $root/$f ]] || fail "missing: $f"; done
+
+existed=0; [[ -d $dest ]] && existed=1
+mkdir -p "$dest"
+# Lock outside the plugins dir so the shell's inotify watch never sees it.
+exec 9>"${XDG_RUNTIME_DIR:-/tmp}/omarify-dev-sync.lock"; flock 9
+stage=$(mktemp -d); trap 'rm -rf "$stage"' EXIT
+for f in "${files[@]}"; do install -m 0644 "$root/$f" "$stage/$f"; done
+rsync -a --delete "$stage/" "$dest/"
+# Only the first creation needs a rescan; after that the shell's own inotify
+# watch reloads this plugin, and a rescan would reload every plugin.
+if [[ -z ${OMARIFY_DEST:-} && $existed -eq 0 ]]; then
+  omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true
+fi

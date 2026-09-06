@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Tests and static gates. `--no-shell` skips the parts that need Omarchy/Qt (CI subset).
+set -uo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+fail() { echo "check: $*" >&2; exit 1; }
+need() { command -v "$1" >/dev/null || fail "missing tool: $1"; }
+need node; need jq
+
+node "$root/tests/run.js" || fail "tests"
+
+find "$root" -name .git -prune -o -type l -print -quit | grep -q . && fail "symlink in repo"
+
+[[ -d $root/tests/fixtures ]] || fail "fixtures dir missing"
+matches=$(grep -rEl '[0-9]+\|[A-Za-z0-9]{20,}|BEGIN .*PRIVATE KEY|://[^/]*:[^@/]*@|"configuration_snapshot"|"logs"' "$root/tests/fixtures"); rc=$?
+[[ $rc -eq 1 ]] || fail "secret material in fixtures (grep rc=$rc): $matches"
+
+for q in Panel.qml BarWidget.qml; do
+  [[ -f $root/$q ]] || continue
+  t=$(grep -o 'Text {' "$root/$q" | wc -l); p=$(grep -o 'textFormat: Text.PlainText' "$root/$q" | wc -l)
+  [[ $t -gt 0 && $t -eq $p ]] || fail "$q: $t Text blocks, $p PlainText"
+  s=$(grep -o 'font.pixelSize:' "$root/$q" | wc -l); f=$(grep -o 'font.family:' "$root/$q" | wc -l)
+  [[ $s -eq $f ]] || fail "$q: $s pixelSize, $f font.family"
+done
+
+if compgen -G "$root/*.qml" >/dev/null && grep -nE '#[0-9a-fA-F]{3,8}\b|font\.family: "|pixelSize: [0-9]|radius: [0-9]' "$root"/*.qml; then
+  fail "hardcoded colour/size/font"
+fi
+
+[[ ${1:-} == --no-shell ]] && { echo ok; exit 0; }
+
+need omarchy; need rsync; need flock
+stage=$(mktemp -d); trap 'rm -rf "$stage"' EXIT
+OMARIFY_DEST="$stage/plugin" "$root/bin/dev-sync" || fail "dev-sync"
+omarchy plugin validate "$stage/plugin" || fail "validate"
+
+# qmllint resolves `import qs.Ui` only from an import root that contains qs/;
+# the shim lives in the temp dir, never in the repo or the plugin dir.
+mkdir -p "$stage/imports"; ln -s /usr/share/omarchy/shell "$stage/imports/qs"
+/usr/lib/qt6/bin/qmllint -I "$stage/imports" --missing-property disable "$root"/*.qml > "$stage/lint.txt" 2>&1 || true
+grep -q 'Failed to import qs' "$stage/lint.txt" && fail "qs shim broken; qmllint checked nothing"
+# Gate on what the shim buys (import/type resolution) and hard errors; delegate
+# scopes produce ~100 [unqualified] warnings in first-party-shaped QML.
+grep -E 'Failed to import|was not found|inheritance-cycle|unresolved-type|Error:' "$stage/lint.txt" && fail "qmllint"
+echo ok

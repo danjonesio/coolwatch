@@ -8,3 +8,6 @@ tests/fixtures/*.private.json
 *.swp
 .idea/
 .vscode/
+
+# tooling scratch
+.cache/

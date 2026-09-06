@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Re-sync on save. Events are coalesced; a .js save runs the tests first and
+# blocks the sync when they fail.
+set -uo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+inotifywait -m -e close_write,move,create --format %f "$root" "$root/tests" | while read -r f; do
+  while read -r -t 0.3 _; do :; done
+  case $f in *.js) node "$root/tests/run.js" || continue ;; esac
+  case $f in *.qml|*.js|manifest.json) "$root/bin/dev-sync" ;; esac
+done
