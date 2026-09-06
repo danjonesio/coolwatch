@@ -33,6 +33,7 @@ var GLYPHS = Object.keys(G).map(function (k) { return G[k] })
 var TERMINAL = { finished: true, failed: true, "cancelled-by-user": true }
 var ACTIVE = { queued: true, in_progress: true }
 var RECENT_RENDER_CAP = 5
+var RECENT_MAX_AGE_MS = 60 * 60 * 1000   // finished deployments leave the panel after an hour
 
 // ---- config --------------------------------------------------------------------------
 
@@ -606,10 +607,12 @@ function noteFor(s, section) { return (s.error || !s.baselineDone) && (s.lastPol
 
 function deploymentGlyph(d) {
   switch (d.status) {
-    case "in_progress": return { glyph: G.progress, tone: "accent" }
+    // In flight paints the bar's signal colour (`urgent`, the same token the bar icon
+    // uses when active); failed paints the theme accent so it reads differently.
+    case "in_progress": return { glyph: G.progress, tone: "urgent" }
     case "queued": return { glyph: G.queued, tone: "dim" }
     case "finished": return { glyph: G.finished, tone: "dim" }
-    case "failed": return { glyph: G.failed, tone: "urgent" }
+    case "failed": return { glyph: G.failed, tone: "accent" }
     case "cancelled-by-user": return { glyph: G.cancelled, tone: "dim" }
     default: return { glyph: G.dotUnknown, tone: "dim" }
   }
@@ -667,6 +670,7 @@ function resourceRow(r, indent) {
 
 function panelRows(s, ui) {
   ui = ui || {}
+  var nowMs = ui.nowMs || Date.now()
   var folded = ui.folded || {}
   var groupBy = ui.groupBy === "server" ? "server" : "project"
   var rows = []
@@ -675,7 +679,10 @@ function panelRows(s, ui) {
   // DEPLOYMENTS
   rows.push({ type: "section", key: "sec:deployments", title: "DEPLOYMENTS", control: null })
   var active = activeDeployments(s)
-  var recent = (s.recent || []).slice(0, RECENT_RENDER_CAP)
+  var recent = (s.recent || []).filter(function(d) {
+    var t = Date.parse(d.finishedAt || d.updatedAt || "")
+    return isNaN(t) || nowMs - t <= RECENT_MAX_AGE_MS
+  }).slice(0, RECENT_RENDER_CAP)
   if (!active.length && !recent.length) rows.push({ type: "note", key: "note:deployments", text: noteFor(s, "deployments") })
   active.forEach(function (d) { rows.push(deploymentRow(d)) })
   recent.forEach(function (d) { rows.push(deploymentRow(d)) })

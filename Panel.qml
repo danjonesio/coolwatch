@@ -38,7 +38,7 @@ Panel {
 
   readonly property var snapshot: svc ? svc.snapshot : null
   readonly property var rows: root.opened && root.snapshot
-    ? Model.panelRows(root.snapshot, { groupBy: root.groupBy, folded: root.folded }) : []
+    ? Model.panelRows(root.snapshot, { groupBy: root.groupBy, folded: root.folded, nowMs: root.nowMs }) : []
   readonly property int selectedIndex: Model.indexOfKey(root.rowsModel, root.cursorKey)
   readonly property var currentRow: root.selectedIndex >= 0 ? root.rowsModel[root.selectedIndex] : null
   readonly property bool heroHasCursor: root.cursorActive && root.focusSection === "hero"
