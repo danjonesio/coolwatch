@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import qs.Ui
 import qs.Commons
+import "Model.js" as Model
 
 // One instance per monitor. Renders the service's bar state and hosts the panel.
 BarWidget {
@@ -52,7 +53,7 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.svc ? root.svc.bar.glyph : "󰅜"
+    text: root.svc ? root.svc.bar.glyph : Model.G.cloudOutline
     keepSpace: true
     dimmed: root.svc ? root.svc.bar.dimmed : true
     active: root.svc ? root.svc.bar.active : false

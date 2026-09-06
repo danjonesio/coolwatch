@@ -34,7 +34,7 @@ Panel {
   property string focusSection: "list"      // "hero" | "list"
   property string cursorKey: ""
   property var rowsModel: []
-  property bool _resourcesCursorPending: false
+  property bool reflowing: false            // rows just swapped: ignore the hover the recreated delegates emit
 
   readonly property var snapshot: svc ? svc.snapshot : null
   readonly property var rows: root.opened && root.snapshot
@@ -46,7 +46,6 @@ Panel {
   readonly property bool busy: !!(root.snapshot && root.snapshot.busy)
 
   onRowsChanged: applyRows()
-  onGroupByChanged: root._resourcesCursorPending = true
   onOpenedChanged: {
     if (!svc) return
     if (opened) svc.panelOpened(panelId)
@@ -82,25 +81,36 @@ Panel {
     var next = root.rows
     if (Model.sameRows(root.rowsModel, next)) return
     var prev = root.selectedIndex
+    root.reflowing = true
     root.rowsModel = next
+    Qt.callLater(function() { root.reflowing = false })
     var i = Model.indexOfKey(next, root.cursorKey)
     if (i < 0 && next.length) {
       // Nearest surviving row: the old position, else the last selectable one.
       i = Model.nextSelectable(next, Math.min(Math.max(prev, 0), next.length - 1) - 1, 1)
       if (i < 0) i = Model.nextSelectable(next, next.length, -1)
     }
-    if (root._resourcesCursorPending) {
-      root._resourcesCursorPending = false
-      var r = Model.firstSelectableInSection(next, "RESOURCES")
-      if (r >= 0) i = r
-    }
     if (i >= 0 && next[i].key !== root.cursorKey) root.cursorKey = next[i].key
     if (root.cursorActive && i !== prev) Qt.callLater(root.scrollToSelection)
+  }
+
+  // The rows binding re-evaluates synchronously on groupBy, so by the time this
+  // returns rowsModel already holds the new grouping and the cursor can be placed.
+  function setGroupBy(v) {
+    if (v !== "project" && v !== "server") return
+    root.groupBy = v
+    var r = Model.firstSelectableInSection(root.rowsModel, "RESOURCES")
+    if (r >= 0) { root.cursorActive = true; root.focusSection = "list"; root.cursorKey = root.rowsModel[r].key; Qt.callLater(root.scrollToSelection) }
   }
 
   function focusHero() {
     root.cursorActive = true
     root.focusSection = "hero"
+  }
+
+  function hoverCursor(key) {
+    if (root.reflowing) return
+    root.setCursor(key)
   }
 
   function setCursor(key) {
@@ -159,7 +169,8 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(Style.space(480), Style.space(640))
+    // Fitted to what is actually in the card, capped: an error or empty state collapses it.
+    contentHeight: panel.fittedContentHeight(header.implicitHeight + Style.space(14) + listView.contentHeight + Style.space(10) + footer.implicitHeight, Style.space(640))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -175,7 +186,7 @@ Panel {
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
         if (t === "r" || t === "R") root.refreshNow()
-        else if (t === "g" || t === "G") root.groupBy = root.groupBy === "project" ? "server" : "project"
+        else if (t === "g" || t === "G") root.setGroupBy(root.groupBy === "project" ? "server" : "project")
       }
 
       Column {
@@ -254,6 +265,7 @@ Panel {
             }
             Text {
               width: parent.width
+              visible: text.length > 0
               textFormat: Text.PlainText
               text: root.callout ? root.callout.body : ""
               color: root.dim
@@ -294,328 +306,317 @@ Panel {
         reuseItems: false
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-        delegate: Column {
+        // One Loader per row: a row builds only its own variant's subtree.
+        delegate: Item {
           id: rowDelegate
           required property var modelData
           required property int index
           width: listView.width
+          implicitHeight: rowLoader.item ? rowLoader.item.implicitHeight : 0
+          height: implicitHeight
           readonly property string rowType: modelData.type
           readonly property bool selected: root.cursorActive && root.focusSection === "list" && root.cursorKey === modelData.key
-          readonly property bool selectable: rowType === "fold" || rowType === "deployment" || rowType === "server" || rowType === "resource"
+
+          Loader {
+            id: rowLoader
+            width: parent.width
+            sourceComponent: rowDelegate.rowType === "section" ? sectionComp
+              : rowDelegate.rowType === "separator" ? separatorComp
+              : rowDelegate.rowType === "note" ? noteComp
+              : rowDelegate.rowType === "fold" ? foldComp
+              : rowDelegate.rowType === "deployment" ? deploymentComp
+              : rowDelegate.rowType === "server" ? serverComp
+              : rowDelegate.rowType === "resource" ? resourceComp
+              : null
+          }
 
           // ---- section header, optionally with the grouping toggle
-          Item {
-            visible: rowDelegate.rowType === "section"
-            width: parent.width
-            implicitHeight: visible ? Math.max(sectionHeader.implicitHeight, groupToggle.visible ? groupToggle.implicitHeight : 0) : 0
-            height: implicitHeight
-
-            PanelSectionHeader {
-              id: sectionHeader
-              text: modelData.title || ""
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-            }
-
-            // Centred on the header's glyphs, not its box: PanelSectionHeader carries
-            // topPadding for Nerd Font overshoot (the network panel's band header idiom).
-            ButtonGroup {
-              id: groupToggle
-              visible: modelData.control === "groupBy"
-              options: [{ value: "project", label: "by project" }, { value: "server", label: "by server" }]
-              value: root.groupBy
-              fontSize: Style.font.bodySmall
-              focusable: false
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              accent: root.accent
-              anchors.right: parent.right
-              anchors.verticalCenter: sectionHeader.verticalCenter
-              anchors.verticalCenterOffset: Math.round(sectionHeader.topPadding / 2)
-              onChanged: function(v) { root.groupBy = v }
+          Component {
+            id: sectionComp
+            Item {
+              implicitHeight: Math.max(sectionHeader.implicitHeight, groupToggle.item ? groupToggle.item.implicitHeight : 0)
+              PanelSectionHeader {
+                id: sectionHeader
+                text: rowDelegate.modelData.title || ""
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+              }
+              // Centred on the header's glyphs, not its box: PanelSectionHeader carries
+              // topPadding for Nerd Font overshoot (the network panel's band header idiom).
+              Loader {
+                id: groupToggle
+                active: rowDelegate.modelData.control === "groupBy"
+                anchors.right: parent.right
+                anchors.verticalCenter: sectionHeader.verticalCenter
+                anchors.verticalCenterOffset: Math.round(sectionHeader.topPadding / 2)
+                sourceComponent: ButtonGroup {
+                  options: [{ value: "project", label: "by project" }, { value: "server", label: "by server" }]
+                  value: root.groupBy
+                  fontSize: Style.font.bodySmall
+                  focusable: false
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  accent: root.accent
+                  onChanged: function(v) { root.setGroupBy(v) }
+                }
+              }
             }
           }
 
-          // ---- separator
-          PanelSeparator {
-            visible: rowDelegate.rowType === "separator"
-            height: visible ? 1 : 0
-            width: parent.width
-            foreground: root.foreground
+          Component {
+            id: separatorComp
+            PanelSeparator { foreground: root.foreground }
           }
 
-          // ---- note (empty section)
-          Text {
-            visible: rowDelegate.rowType === "note"
-            height: visible ? implicitHeight : 0
-            width: parent.width
-            textFormat: Text.PlainText
-            text: modelData.text || ""
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
+          Component {
+            id: noteComp
+            Text {
+              textFormat: Text.PlainText
+              text: rowDelegate.modelData.text || ""
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              horizontalAlignment: Text.AlignHCenter
+              wrapMode: Text.WordWrap
+            }
           }
 
           // ---- fold (project / environment or server)
-          CursorSurface {
-            visible: rowDelegate.rowType === "fold"
-            enabled: visible
-            width: parent.width
-            implicitHeight: visible ? foldRow.implicitHeight + Style.spacing.rowPaddingX : 0
-            height: implicitHeight
-            hasCursor: rowDelegate.selected
-            foreground: root.foreground
-            accent: root.accent
-            HoverHandler {
-              enabled: parent.visible
-              onHoveredChanged: if (hovered) root.setCursor(rowDelegate.modelData.key)
-            }
-            MouseArea {
-              anchors.fill: parent
-              enabled: parent.visible
-              cursorShape: Qt.PointingHandCursor
-              onClicked: { root.setCursor(rowDelegate.modelData.key); root.toggleFold(rowDelegate.modelData.key) }
-            }
-            Row {
-              id: foldRow
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.leftMargin: Style.space(8)
-              anchors.rightMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(8)
-              Text {
-                width: Style.space(14)
-                textFormat: Text.PlainText
-                text: modelData.open ? Model.G.foldOpen : Model.G.foldClosed
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                anchors.verticalCenter: parent.verticalCenter
+          Component {
+            id: foldComp
+            CursorSurface {
+              implicitHeight: foldRow.implicitHeight + Style.spacing.rowPaddingX
+              hasCursor: rowDelegate.selected
+              foreground: root.foreground
+              accent: root.accent
+              HoverHandler { onHoveredChanged: if (hovered) root.hoverCursor(rowDelegate.modelData.key) }
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                onClicked: { root.setCursor(rowDelegate.modelData.key); root.toggleFold(rowDelegate.modelData.key) }
               }
-              Text {
-                textFormat: Text.PlainText
-                text: String(modelData.title || "").toUpperCase()
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 1.1
-                elide: Text.ElideRight
+              Row {
+                id: foldRow
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: Style.space(8)
+                anchors.rightMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-              }
-              Text {
-                textFormat: Text.PlainText
-                text: String(modelData.count === undefined ? "" : modelData.count)
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(8)
+                Text {
+                  width: Style.space(14)
+                  textFormat: Text.PlainText
+                  text: rowDelegate.modelData.open ? Model.G.foldOpen : Model.G.foldClosed
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                  width: parent.width - Style.space(14) - foldCount.implicitWidth - parent.spacing * 2
+                  textFormat: Text.PlainText
+                  text: String(rowDelegate.modelData.title || "").toUpperCase()
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                  font.letterSpacing: 1.1
+                  elide: Text.ElideRight
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                  id: foldCount
+                  textFormat: Text.PlainText
+                  text: String(rowDelegate.modelData.count === undefined ? "" : rowDelegate.modelData.count)
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  anchors.verticalCenter: parent.verticalCenter
+                }
               }
             }
           }
 
           // ---- deployment row: glyph · name over "branch · message" · elapsed/age
-          CursorSurface {
-            visible: rowDelegate.rowType === "deployment"
-            enabled: visible
-            width: parent.width
-            implicitHeight: visible ? depRow.implicitHeight + Style.spacing.rowPaddingX : 0
-            height: implicitHeight
-            hasCursor: rowDelegate.selected
-            foreground: root.foreground
-            accent: root.accent
-            HoverHandler {
-              enabled: parent.visible
-              onHoveredChanged: if (hovered) root.setCursor(rowDelegate.modelData.key)
-            }
-            MouseArea {
-              anchors.fill: parent
-              enabled: parent.visible
-              onClicked: root.setCursor(rowDelegate.modelData.key)
-            }
-            Row {
-              id: depRow
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.leftMargin: Style.space(8)
-              anchors.rightMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(8)
-              Text {
-                width: Style.space(22)
-                textFormat: Text.PlainText
-                text: modelData.glyph || ""
-                color: root.toneColor(modelData.tone)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.title
-                horizontalAlignment: Text.AlignHCenter
+          Component {
+            id: deploymentComp
+            CursorSurface {
+              implicitHeight: depRow.implicitHeight + Style.spacing.rowPaddingX
+              hasCursor: rowDelegate.selected
+              foreground: root.foreground
+              accent: root.accent
+              HoverHandler { onHoveredChanged: if (hovered) root.hoverCursor(rowDelegate.modelData.key) }
+              MouseArea { anchors.fill: parent; onClicked: root.setCursor(rowDelegate.modelData.key) }
+              Row {
+                id: depRow
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: Style.space(8)
+                anchors.rightMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-              }
-              Column {
-                width: parent.width - Style.space(22) - depTime.implicitWidth - parent.spacing * 2
-                spacing: Style.space(2)
-                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(8)
                 Text {
-                  width: parent.width
+                  width: Style.space(22)
                   textFormat: Text.PlainText
-                  text: modelData.name || ""
-                  color: modelData.tone === "urgent" ? root.urgent : root.foreground
+                  text: rowDelegate.modelData.glyph || ""
+                  color: root.toneColor(rowDelegate.modelData.tone)
                   font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  elide: Text.ElideRight
+                  font.pixelSize: Style.font.title
+                  horizontalAlignment: Text.AlignHCenter
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+                Column {
+                  width: parent.width - Style.space(22) - depTime.implicitWidth - parent.spacing * 2
+                  spacing: Style.space(2)
+                  anchors.verticalCenter: parent.verticalCenter
+                  Text {
+                    width: parent.width
+                    textFormat: Text.PlainText
+                    text: rowDelegate.modelData.name || ""
+                    color: rowDelegate.modelData.tone === "urgent" ? root.urgent : root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    elide: Text.ElideRight
+                  }
+                  Text {
+                    width: parent.width
+                    visible: text.length > 0
+                    textFormat: Text.PlainText
+                    text: rowDelegate.modelData.sub || ""
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
+                  }
                 }
                 Text {
-                  width: parent.width
-                  visible: text.length > 0
+                  id: depTime
                   textFormat: Text.PlainText
-                  text: modelData.sub || ""
+                  // The only delegate that reads nowMs: rows carry timestamps, not strings.
+                  text: rowDelegate.modelData.terminal ? Model.age(rowDelegate.modelData.updatedAt, root.nowMs) : Model.elapsed(rowDelegate.modelData.createdAt, root.nowMs)
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
-                  elide: Text.ElideRight
+                  anchors.verticalCenter: parent.verticalCenter
                 }
-              }
-              Text {
-                id: depTime
-                textFormat: Text.PlainText
-                // The only delegate that reads nowMs: rows carry timestamps, not strings.
-                text: modelData.terminal ? Model.age(modelData.updatedAt, root.nowMs) : Model.elapsed(modelData.createdAt, root.nowMs)
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                anchors.verticalCenter: parent.verticalCenter
               }
             }
           }
 
           // ---- server row: dot · name · "ip · N resources · unreachable"
-          CursorSurface {
-            visible: rowDelegate.rowType === "server"
-            enabled: visible
-            width: parent.width
-            implicitHeight: visible ? srvRow.implicitHeight + Style.spacing.rowPaddingX : 0
-            height: implicitHeight
-            hasCursor: rowDelegate.selected
-            foreground: root.foreground
-            accent: root.accent
-            HoverHandler {
-              enabled: parent.visible
-              onHoveredChanged: if (hovered) root.setCursor(rowDelegate.modelData.key)
-            }
-            MouseArea {
-              anchors.fill: parent
-              enabled: parent.visible
-              onClicked: root.setCursor(rowDelegate.modelData.key)
-            }
-            Row {
-              id: srvRow
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.leftMargin: Style.space(8)
-              anchors.rightMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(8)
-              Text {
-                width: Style.space(22)
-                textFormat: Text.PlainText
-                text: modelData.dot || ""
-                color: root.toneColor(modelData.tone)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                horizontalAlignment: Text.AlignHCenter
+          Component {
+            id: serverComp
+            CursorSurface {
+              implicitHeight: srvRow.implicitHeight + Style.spacing.rowPaddingX
+              hasCursor: rowDelegate.selected
+              foreground: root.foreground
+              accent: root.accent
+              HoverHandler { onHoveredChanged: if (hovered) root.hoverCursor(rowDelegate.modelData.key) }
+              MouseArea { anchors.fill: parent; onClicked: root.setCursor(rowDelegate.modelData.key) }
+              Row {
+                id: srvRow
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: Style.space(8)
+                anchors.rightMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-              }
-              Text {
-                textFormat: Text.PlainText
-                text: modelData.name || ""
-                color: modelData.dim ? root.dim : root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                elide: Text.ElideRight
-                anchors.verticalCenter: parent.verticalCenter
-              }
-              Text {
-                width: parent.width - Style.space(22) - parent.spacing * 2 - Style.space(120)
-                textFormat: Text.PlainText
-                text: modelData.sub || ""
-                color: modelData.tone === "urgent" ? root.urgent : root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                elide: Text.ElideRight
-                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(8)
+                Text {
+                  width: Style.space(22)
+                  textFormat: Text.PlainText
+                  text: rowDelegate.modelData.dot || ""
+                  color: root.toneColor(rowDelegate.modelData.tone)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  horizontalAlignment: Text.AlignHCenter
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                  id: srvName
+                  // The name elides; the caption keeps at least Style.space(150) so "unreachable" stays visible.
+                  width: Math.min(implicitWidth, parent.width - Style.space(22) - parent.spacing * 2 - Math.min(srvSub.implicitWidth, Style.space(150)))
+                  textFormat: Text.PlainText
+                  text: rowDelegate.modelData.name || ""
+                  color: rowDelegate.modelData.dim ? root.dim : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  elide: Text.ElideRight
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                  id: srvSub
+                  width: parent.width - Style.space(22) - parent.spacing * 2 - srvName.width
+                  textFormat: Text.PlainText
+                  text: rowDelegate.modelData.sub || ""
+                  color: rowDelegate.modelData.tone === "urgent" ? root.urgent : root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                  anchors.verticalCenter: parent.verticalCenter
+                }
               }
             }
           }
 
           // ---- resource row: dot · name · status words · kind hint
-          CursorSurface {
-            visible: rowDelegate.rowType === "resource"
-            enabled: visible
-            width: parent.width
-            implicitHeight: visible ? resRow.implicitHeight + Style.spacing.rowPaddingX : 0
-            height: implicitHeight
-            hasCursor: rowDelegate.selected
-            foreground: root.foreground
-            accent: root.accent
-            HoverHandler {
-              enabled: parent.visible
-              onHoveredChanged: if (hovered) root.setCursor(rowDelegate.modelData.key)
-            }
-            MouseArea {
-              anchors.fill: parent
-              enabled: parent.visible
-              onClicked: root.setCursor(rowDelegate.modelData.key)
-            }
-            Row {
-              id: resRow
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.leftMargin: Style.space(8) + Style.space(14) * (modelData.indent || 0)
-              anchors.rightMargin: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(8)
-              Text {
-                width: Style.space(22)
-                textFormat: Text.PlainText
-                text: modelData.dot || ""
-                color: root.toneColor(modelData.tone)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                horizontalAlignment: Text.AlignHCenter
+          Component {
+            id: resourceComp
+            CursorSurface {
+              implicitHeight: resRow.implicitHeight + Style.spacing.rowPaddingX
+              hasCursor: rowDelegate.selected
+              foreground: root.foreground
+              accent: root.accent
+              HoverHandler { onHoveredChanged: if (hovered) root.hoverCursor(rowDelegate.modelData.key) }
+              MouseArea { anchors.fill: parent; onClicked: root.setCursor(rowDelegate.modelData.key) }
+              Row {
+                id: resRow
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: Style.space(8) + Style.space(14) * (rowDelegate.modelData.indent || 0)
+                anchors.rightMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
-              }
-              Text {
-                width: parent.width - Style.space(22) - resStatus.implicitWidth - resKind.implicitWidth - parent.spacing * 3
-                textFormat: Text.PlainText
-                text: modelData.name || ""
-                color: modelData.dim ? root.dim : root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                elide: Text.ElideRight
-                anchors.verticalCenter: parent.verticalCenter
-              }
-              Text {
-                id: resStatus
-                textFormat: Text.PlainText
-                text: modelData.statusWords || ""
-                color: modelData.tone === "urgent" ? root.urgent : root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                anchors.verticalCenter: parent.verticalCenter
-              }
-              Text {
-                id: resKind
-                textFormat: Text.PlainText
-                text: modelData.kindHint || ""
-                color: root.dim
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(8)
+                Text {
+                  width: Style.space(22)
+                  textFormat: Text.PlainText
+                  text: rowDelegate.modelData.dot || ""
+                  color: root.toneColor(rowDelegate.modelData.tone)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  horizontalAlignment: Text.AlignHCenter
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                  width: parent.width - Style.space(22) - resStatus.implicitWidth - resKind.implicitWidth - parent.spacing * 3
+                  textFormat: Text.PlainText
+                  text: rowDelegate.modelData.name || ""
+                  color: rowDelegate.modelData.dim ? root.dim : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                  elide: Text.ElideRight
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                  id: resStatus
+                  textFormat: Text.PlainText
+                  text: rowDelegate.modelData.statusWords || ""
+                  color: rowDelegate.modelData.tone === "urgent" ? root.urgent : root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                  id: resKind
+                  textFormat: Text.PlainText
+                  text: rowDelegate.modelData.kindHint || ""
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  anchors.verticalCenter: parent.verticalCenter
+                }
               }
             }
           }
