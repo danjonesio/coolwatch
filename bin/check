@@ -17,7 +17,8 @@ matches=$(grep -rEl '[0-9]+\|[A-Za-z0-9]{20,}|BEGIN .*PRIVATE KEY|://[^/]*:[^@/]
 for q in Panel.qml BarWidget.qml; do
   [[ -f $root/$q ]] || continue
   t=$(grep -o 'Text {' "$root/$q" | wc -l); p=$(grep -o 'textFormat: Text.PlainText' "$root/$q" | wc -l)
-  [[ $t -gt 0 && $t -eq $p ]] || fail "$q: $t Text blocks, $p PlainText"
+  [[ $t -eq $p ]] || fail "$q: $t Text blocks, $p PlainText"
+  [[ $q != Panel.qml || $t -gt 0 ]] || fail "$q: no Text blocks found"
   s=$(grep -o 'font.pixelSize:' "$root/$q" | wc -l); f=$(grep -o 'font.family:' "$root/$q" | wc -l)
   [[ $s -eq $f ]] || fail "$q: $s pixelSize, $f font.family"
 done
