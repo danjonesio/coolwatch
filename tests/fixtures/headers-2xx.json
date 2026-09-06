@@ -1,0 +1,32 @@
+{
+  "date": [
+    "Sun, 06 Sep 2026 21:30:22 GMT"
+  ],
+  "content-type": [
+    "text/html; charset=utf-8"
+  ],
+  "server": [
+    "cloudflare"
+  ],
+  "cache-control": [
+    "no-cache, private"
+  ],
+  "x-ratelimit-limit": [
+    "200"
+  ],
+  "x-ratelimit-remaining": [
+    "191"
+  ],
+  "access-control-allow-origin": [
+    "*"
+  ],
+  "set-cookie": [
+    "«scrubbed»"
+  ],
+  "cf-cache-status": [
+    "DYNAMIC"
+  ],
+  "cf-ray": [
+    "«scrubbed»"
+  ]
+}

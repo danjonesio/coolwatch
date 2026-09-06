@@ -1,0 +1,1 @@
+{"_note": "hand-written: Laravel throttle body; the Retry-After header is what the client reads", "message": "Too Many Attempts."}

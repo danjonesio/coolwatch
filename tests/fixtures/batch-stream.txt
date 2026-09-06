@@ -1,0 +1,21 @@
+{"a":1}
+0 200 0.001226 7 
+{"server":["SimpleHTTP/0.6 Python/3.14.7"],
+"date":["Sun, 06 Sep 2026 21:30:50 GMT"],
+"content-type":["application/json"],
+"content-length":["7"],
+"last-modified":["Sun, 06 Sep 2026 21:30:49 GMT"]
+}
+
+7 000 0.000105 0 Failed to connect to 127.0.0.1:1 after 0 ms: Could not connect to server
+{
+}
+{"bb":2}
+0 200 0.000594 8 
+{"server":["SimpleHTTP/0.6 Python/3.14.7"],
+"date":["Sun, 06 Sep 2026 21:30:50 GMT"],
+"content-type":["application/json"],
+"content-length":["8"],
+"last-modified":["Sun, 06 Sep 2026 21:30:49 GMT"]
+}
+

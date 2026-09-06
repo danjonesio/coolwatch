@@ -1,0 +1,32 @@
+[
+  {
+    "id": 13092,
+    "uuid": "iwo4oo0cw0kc8s4g8s0og88c",
+    "name": "Storefront",
+    "description": ""
+  },
+  {
+    "id": 19869,
+    "uuid": "hggsscowggks00cgcggs04s4",
+    "description": "Monitoring stack",
+    "name": "Monitoring"
+  },
+  {
+    "id": 43114,
+    "uuid": "r79n2k1gwmedrsk1ipwuknry",
+    "description": "Single sign-on",
+    "name": "Authentik"
+  },
+  {
+    "id": 46922,
+    "uuid": "ka8m8yml4ocm1au3m3kfs2fi",
+    "name": "Landing",
+    "description": ""
+  },
+  {
+    "id": 49034,
+    "uuid": "qjyijq3y0xzj9obksv8ix2pi",
+    "name": "api",
+    "description": ""
+  }
+]
