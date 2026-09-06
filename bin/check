@@ -41,5 +41,7 @@ mkdir -p "$stage/imports"; ln -s /usr/share/omarchy/shell "$stage/imports/qs"
 grep -q 'Failed to import qs' "$stage/lint.txt" && fail "qs shim broken; qmllint checked nothing"
 # Gate on what the shim buys (import/type resolution) and hard errors; delegate
 # scopes produce ~100 [unqualified] warnings in first-party-shaped QML.
-grep -E 'Failed to import|was not found|inheritance-cycle|unresolved-type|Error:' "$stage/lint.txt" && fail "qmllint"
+# [signal-handler-parameters] fires on every onExited(exitCode, exitStatus): QProcess::ExitStatus
+# is not in the qmltypes. First-party services have the same handler shape.
+grep -v 'signal-handler-parameters' "$stage/lint.txt" | grep -E 'Failed to import|was not found|inheritance-cycle|unresolved-type|Error:' && fail "qmllint"
 echo ok
