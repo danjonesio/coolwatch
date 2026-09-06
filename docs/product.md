@@ -116,8 +116,11 @@ Phases are defined in `docs/roadmap.md`. Every feature below names the API it re
    API. SSH is used only for what the API cannot give (Sentinel metrics), in Phase 5,
    opt-in per server. Servers are SSH-reachable from this machine, so that phase is
    feasible.
-4. **Token abilities**: `read`, `read:sensitive`, `deploy`. That covers every Phase 1
-   to 4 feature including build logs. `write` is optional and only unlocks "Validate
-   server"; without it the button explains what is missing.
+4. **Token abilities**, per phase (revised 2026-09-06 by the Phase 1 plan): Phase 1
+   uses `read` only; `deploy` is added in Phase 2; `read:sensitive` in Phase 4 for build
+   logs (it also makes every `GET /deployments` poll carry the full logs, so it is not
+   held earlier). `write` is optional and only unlocks "Validate server"; without it the
+   button explains what is missing. Server proxy status needs `GET /servers/{uuid}` per
+   server and ships with Validate in Phase 2.
 5. **Failed deployments and unreachable servers notify at `critical`**, which bypasses
    Do Not Disturb. Everything else is `low` or `normal`.

@@ -8,7 +8,7 @@ deployments, and the actions to deploy, redeploy, restart, stop, start and cance
 Notifications when deployments queue, build, finish or fail. It is a Quickshell plugin
 that runs inside `omarchy-shell`; there is no daemon and no second process.
 
-Status: **Phase 0, docs only. No code yet.** Read `docs/roadmap.md` before writing any.
+Status: **Phase 1 ("see") in progress.** Read `docs/roadmap.md` before writing code.
 
 ## Product locks
 
@@ -16,8 +16,10 @@ Status: **Phase 0, docs only. No code yet.** Read `docs/roadmap.md` before writi
   (The older omasnitch id used `danjones`; the GitHub handle is `danjonesio`.)
 - API first, SSH last. Anything the REST API can answer comes from the REST API. SSH
   is only for Sentinel metrics, Phase 5, opt-in per server.
-- Token abilities: `read`, `read:sensitive`, `deploy`. `write` is optional and only
-  gates "Validate server".
+- Token abilities are per phase. **Phase 1: `read` only.** `deploy` is added in Phase 2.
+  `read:sensitive` is added in Phase 4 for the log viewer; it also makes
+  `GET /deployments` carry every deployment's full build log on every poll, so do not
+  hold it before then. `write` is optional and only gates "Validate server".
 - Failed deployment and unreachable server notify at `critical` (bypasses Do Not
   Disturb). Everything else `low`/`normal`.
 - Config accepts `token` and `tokenCommand`; `tokenCommand` wins when both are set.
@@ -32,7 +34,11 @@ Status: **Phase 0, docs only. No code yet.** Read `docs/roadmap.md` before writi
   `GET /deployments` lists only `queued` + `in_progress`; a finished deployment vanishes
   from it, so track uuids and fetch `GET /deployments/{uuid}` when one disappears.
 - The first poll after start or config change is a baseline. It raises no notification.
-- HTTP is `curl` in a `Quickshell.Io.Process` with config on **stdin** (`-K -`). The
+- HTTP is `curl -q -S -K -` in a `Quickshell.Io.Process` with the config on **stdin**;
+  nothing else is in argv (`-q` first ignores `~/.curlrc`). Every per-transfer option
+  (`max-time`, `max-filesize`, `proto`, headers, `write-out`) lives in every config
+  block because curl resets them at each `next`. stdin is closed with
+  `stdinEnabled = false` right after the write, which is what makes curl start. The
   token never goes in argv, never in logs, never in state files.
 - Config lives in `~/.config/omarify/config.json` (0600), not in `shell.json`.
   `token` or `tokenCommand`. Watched live.
@@ -45,8 +51,9 @@ Status: **Phase 0, docs only. No code yet.** Read `docs/roadmap.md` before writi
 - Look native or do not ship: only `qs.Ui` + `qs.Commons`, no hardcoded colours, sizes,
   radii or font families. `docs/design.md` is the spec, `docs/omarchy-shell-reference.md`
   the component reference.
-- Rate limit is 200 req/min per token. Idle polling stays under 20/min, with a
-  deployment under 60/min. See the schedule in `docs/architecture.md`.
+- Rate limit is 200 req/min per token. Idle polling is ≈17/min (deployments 4 s,
+  resources 60 s, servers 120 s, topology batched ≥600 s and capped at 3/min), ≈36/min
+  with a deployment. See the schedule in `docs/architecture.md`.
 
 ## Layout
 
@@ -62,7 +69,8 @@ tests/run.js       node vm runner for Model.js + Api.js
 tests/fixtures/    recorded API responses, secrets replaced, uuids kept
 bin/check          node tests + omarchy plugin validate + qmllint
 bin/dev-sync       copy plugin files into ~/.config/omarchy/plugins/<id>/
-bin/dev-watch      inotify loop around dev-sync
+bin/dev-watch      inotify loop around dev-sync (runs tests on a .js save)
+bin/record-fixture curl one endpoint into tests/fixtures/ with secret values scrubbed
 docs/              product, architecture, design, roadmap, API + shell references
 ```
 
@@ -80,15 +88,21 @@ BarWidget.qml Panel.qml Model.js Api.js` (+ `Mark.qml`, `preview.png` when they 
 ```sh
 # tests and static checks
 node tests/run.js
-omarchy plugin validate .
-/usr/lib/qt6/bin/qmllint -I /usr/share/omarchy/shell *.qml   # qmllint is not on PATH
-bin/check                                                     # all of the above
+bin/check                        # tests, fixture-secret and PlainText gates, validate of a staged copy, qmllint
+bin/check --no-shell             # the CI-able subset (no omarchy, no Qt)
+# qmllint only resolves `import qs.Ui` from an import root that contains qs/; bin/check
+# builds one in a temp dir (qs -> /usr/share/omarchy/shell). `-I /usr/share/omarchy/shell`
+# alone resolves nothing and exits 0.
+bin/record-fixture servers /servers   # record a scrubbed fixture with the read-only token
 
 # dev loop (validator refuses symlinks, so copy)
 bin/dev-sync                     # then the shell hot-reloads the plugin
 bin/dev-watch                    # keep syncing on save
 omarchy plugin enable io.github.danjonesio.omarify right   # first time
 omarchy-shell shell rescanPlugins                          # if not picked up
+omarchy plugin enable io.github.danjonesio.omarify --before omarchy.tray   # re-enable keeping placement
+omarchy plugin remove io.github.danjonesio.omarify         # safe rollback: moves the dir to .<id>.bak.<ts>
+# never `omarchy refresh shell`: it resets shell.json to defaults and drops every third-party widget
 
 # drive it
 omarchy-shell shell toggle io.github.danjonesio.omarify
@@ -108,16 +122,25 @@ doubt `omarchy restart shell`.
 Poking the API by hand (token from the config file, never pasted into a shell history):
 
 ```sh
+# token via the shell builtin printf on stdin: never in argv, never in a temp file
 tok=$(jq -r '.instances[0].token' ~/.config/omarify/config.json)
-curl -sS -H "Authorization: Bearer $tok" -H "Accept: application/json" \
-  https://app.coolify.io/api/v1/deployments | jq .
+printf 'url = "%s"\nsilent\nheader = "Authorization: Bearer %s"\nheader = "Accept: application/json"\n' \
+  https://app.coolify.io/api/v1/deployments "$tok" | curl -q -S -K - | jq .
+# or, scrubbed straight into a fixture:
+bin/record-fixture deployments-active /deployments
 ```
 
 ## Coolify facts that bite
 
 - Apps carry only integer `environment_id` / `destination_id`, never a project or
-  server uuid. Build the tree from `GET /projects/{uuid}/{env}` (resources with
-  status) and `GET /servers/{uuid}/resources`. `GET /resources` is the flat everything.
+  server uuid. `GET /resources` is the flat everything with status and
+  `environment_id`; `GET /projects/{uuid}` returns environments with the integer `id`
+  that joins them; `GET /servers/{uuid}/resources` gives server membership. Do not use
+  `GET /projects/{uuid}/{env}` (it omits keydb/dragonfly/clickhouse and costs one call
+  per environment).
+- curl resets every per-transfer option at `next`. A batched config repeats `max-time`,
+  `max-filesize`, `proto`, both headers and `write-out` in every block, and `-w` in
+  argv emits one trailer for the whole batch, not one per transfer.
 - `GET /deployments/applications/{uuid}` returns `{count, deployments[]}`; the openapi
   says `Application[]` and is wrong.
 - Deployment `logs` need `read:sensitive` and are a JSON string inside JSON; parse twice.
@@ -149,6 +172,15 @@ curl -sS -H "Authorization: Bearer $tok" -H "Accept: application/json" \
 - Notifications go through `omarchy-notification-send --app-name <plugin id>`, so they
   respect Do Not Disturb and land in history. Never `notify-send`.
 - `Util.execArgv` for anything containing data; `bar.run` only for literal strings.
+- `PanelKeyCatcher` owns keys: `x` reaches the panel as `deleteRequested`, Esc as
+  `closeRequested`, `h`/`l` as `moveRequested(±1, 0)`; Return fires both
+  `returnRequested` and `activateRequested`. Never add a `Keys.onPressed`.
+- `bar.barForeground` for anything painted in the bar strip, `bar.foreground` in panels.
+- `Process` and `StdioCollector` have no `parent`; write to ids, read `.text` in `onExited`.
+- `dev-sync` copies because the validator refuses symlinks *inside* a plugin folder and
+  inotify through a symlinked dir is unverified.
+- `tokenCommand` keeps the token off disk but not away from other plugins loaded into
+  the same shell: `shell.serviceFor()` has no caller check.
 
 ## Don't
 
