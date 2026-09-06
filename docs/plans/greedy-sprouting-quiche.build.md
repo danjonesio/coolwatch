@@ -143,9 +143,9 @@ Not written as named: "eight uuids vanishing in one poll are queued once each" i
 | 14 | 4 | listed doc edits | also: AGENTS.md status line; the "poking the API by hand" snippet moved the token off argv | SR13 |
 | 15 | 4 | Change 0 before step 3 | docs reconciled in step 4, after the transport was proven | the v2 plan's own ordering |
 | 16 | 1 (review) | `dev-sync` refuses `.git`, a foreign manifest, and paths outside the plugins dir / TMPDIR | plus: target realpath-normalised, never the plugins root or TMPDIR root, basename must be the plugin id unless `OMARIFY_DEST` is set, and an existing target may only hold ship-list files | the prefix glob accepted the plugins root; see Incident |
-| 17 | 7 (review) | topology stage 2 as one batched `--next` process | stage 2 is a merged queue of single-block requests, server blocks first, one every 30 s; `/projects` fires 35 s after token-ready and never while the queue is draining; a late `/servers` answer enqueues its resource list | the plan's 20/min line is a sliding 60 s window and the whole fan-out landed inside one; `Api.config` still emits `--next` batches for arrays |
+| 17 | 7 (review) | topology stage 2 as one batched `--next` process | stage 2 is a merged queue of single-block requests, server blocks first, one every 40 s; `/projects` fires 65 s after token-ready and never while the queue is draining; a late `/servers` answer enqueues its resource list | the plan's 20/min line is a sliding 60 s window and the whole fan-out landed inside one; `Api.config` still emits `--next` batches for arrays |
 | 18 | 9 (review) | one delegate with every row variant | a `Loader` per row picking one of seven components | every row instantiated ~45 items incl. a two-Button ButtonGroup |
-| 19 | 7 (review) | `panelAlive` refreshes a known id | `panelAlive` also inserts | the plan's own re-registration requirement had not landed |
+| 19 | 7 (review) | `panelAlive` refreshes a known id | `panelAlive` also registers an unknown id after two pings within 2.5 s | the plan's own re-registration requirement had not landed; a single stray ping must not register a phantom panel |
 
 None changes **Design**; 17 changes the request shape of one poll and is the only one a reviewer might read as design. It was accepted because the plan's own acceptance line forces it.
 
@@ -160,7 +160,14 @@ None changes **Design**; 17 changes the request shape of one poll and is the onl
 | ops-analyst | opus | 2 | 2 | 2 | F1, F6 `71f2ea3`; F2, F4 `51150ac`; F3, F5 `537003d` | — |
 | perf-analyst | opus | 1 | 6 | 1 | F1–F3, F5–F7 `537003d`; F4, F8 `a70c9c9` | F8's second half: `Model.callout` re-evaluates once a second while an error is shown (one small object; only when errored) |
 
-Re-check round (one round, per the contract): security-analyst 3/3 resolved; code-reviewer 11/11 resolved; ux-api-designer 9/9 resolved; skeptic (no reply received before the record closed; its findings are fixed in the commits above and F4/F5 in this record); ops-analyst F1, F2, F5, F6 resolved, F3 and F4 restated: the paced topology queue was being replaced by the next stage-1 run so server-resources blocks at the tail never ran, and the AGENTS.md hot-reload paragraph still contradicted the corrected lines; perf-analyst 6/7 resolved, F3 restated the same queue replacement. Both restatements are fixed after the round in `HEAD` ("topology queue merges instead of restarting"): the queue is merged, server blocks go first, a tick never preempts a draining queue; verified live (queue 6 → 0 one block per 30 s, `topologyFetched` true within one cycle, panel-closed samples 17–20 with a single 20). Deferred with reason: perf's residual that the first cycle after a start or config change takes ~35 + 30 × (P + S) s during which "group by project" shows an Ungrouped fold — draining faster would reintroduce the burst; ops's observation that opening the panel produces a transient 23–26 in the 60 s window (the stale prime plus a running queue), which is under the 60 line and outside the roadmap's panel-closed wording.
+Re-check round (one round, per the contract): security-analyst 3/3 resolved; code-reviewer 11/11 resolved; ux-api-designer 9/9 resolved; ops-analyst F1, F2, F5, F6 resolved, F3 and F4 restated; perf-analyst 6/7 resolved, F3 restated; skeptic (reply arrived after the record first closed) F1, F4, F6, F7, F8, F10 resolved, F2, F3, F5, F9 restated. The restatements were all addressed after the round and re-measured:
+
+- ops/perf F3, skeptic F3 (topology queue replaced mid-drain; a window could still reach 20): the queue is merged, server blocks go first, a tick never preempts a draining queue, blocks are 40 s apart and `/projects` fires 65 s after token-ready. Measured with the panel closed: 6 min of 10 s samples 16–19 steady with two topology requests per window; after another restart the first 150 s read 6 8 11 13 16 18 17 17 17 17 18 19 18 18 19 (max 19); `topologyFetched` true within one cycle; `resources` interval back at 60 s. Commits `d0b6d8b`, `HEAD`.
+- skeptic F2 (an unconditional `panelAlive` insert could register a phantom panel): registration on the alive path now needs two pings within 2.5 s; `openPanels` read 0 in every one of the 150 s samples with nothing open, 1 while a summoned panel was open, 0 seven seconds after hiding it. The skeptic's flickering samples and its 23–26 readings coincided with this run's own summon/hide keyboard tests and shell restarts. Commit `HEAD`.
+- ops F4, skeptic F9 (AGENTS.md hot-reload prose): rewritten in `d0b6d8b`.
+- skeptic F5 (the record itself): this file, committed in the build-record commits.
+
+Deferred with reason: perf's residual that the first topology cycle after a start or config change takes ~65 + 40 × (P + S) s during which "group by project" shows an Ungrouped fold (draining faster would reintroduce the burst); ops's observation that opening the panel produces a transient overshoot in the 60 s window from the stale prime (under the 60 line and outside the roadmap's panel-closed wording); the panel-level `callout` binding re-evaluating once a second while an error is shown.
 
 Default panel; no member trimmed. Reviewers read the plan and record from `docs/plans/` rather than inline.
 
@@ -187,7 +194,7 @@ curl options, the stat-based config watch, and the paced topology fan-out that k
 idle polling under 20 requests in any 60 s window.
 
 Plan: docs/plans/greedy-sprouting-quiche.md
-Steps: 10 commits, one per plan step (step 10 is an empty commit carrying its evidence), plus 6 review-fix commits
+Steps: 10 commits, one per plan step (step 10 is an empty commit carrying its evidence), plus 7 review-fix commits
 Verification: bin/check green (47 tests, validate, qmllint); idle max 19 req/min across a topology cycle; token absent from ps and the shell log
 Needs human: restore io.github.dougfour.grok-usage (see the build record's Incident section); trigger one deployment to time the queued/finished transitions and the < 60/min loop; a real token revoke; hover/scroll/multi-monitor checks; install from the pushed git URL
 ```
