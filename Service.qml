@@ -68,6 +68,7 @@ Item {
   property var _rateLimitRemaining: null
   property double _lastPrimeAt: 0
   property var _panels: ({})           // panelId -> last alive ms
+  property var _panelCandidates: ({})  // panelId -> first alive ms seen while unregistered
   property int _openPanels: 0
   property bool _busy: false
 
@@ -112,10 +113,19 @@ Item {
     root._syncOpenPanels()
   }
   // Also the re-registration path: a hot-reloaded service starts with an empty
-  // registry and open panels ping within a second.
+  // registry and open panels ping every second. A single stray ping does not register;
+  // two within 2.5 s (a panel that is really open) do.
   function panelAlive(id) {
-    var p = root._panels; var fresh = p[String(id)] === undefined; p[String(id)] = Date.now(); root._panels = p
-    if (fresh) root._syncOpenPanels()
+    var key = String(id), now = Date.now()
+    if (root._panels[key] !== undefined) { var p = root._panels; p[key] = now; root._panels = p; return }
+    var first = root._panelCandidates[key]
+    if (first !== undefined && now - first <= 2500) {
+      var c = root._panelCandidates; delete c[key]; root._panelCandidates = c
+      var q = root._panels; q[key] = now; root._panels = q
+      root._syncOpenPanels()
+    } else {
+      var c2 = root._panelCandidates; c2[key] = now; root._panelCandidates = c2
+    }
   }
   function acknowledgeFailures() { if (root._failedUnacked.length) root._failedUnacked = [] }
 
@@ -460,8 +470,8 @@ Item {
     root._recent = Model.joinBranch(root._recent, root._resources)
   }
 
-  // Stage 2 is spread one block per topologyStep tick (30 s) so the fan-out never
-  // adds more than ~3 requests to any 60 s window; the 20/min line is a sliding window.
+  // Stage 2 is spread one block per topologyStep tick (40 s) so the fan-out never
+  // adds more than 2 requests to any 60 s window; the 20/min line is a sliding window.
   // Server membership first (few blocks, and "group by server" depends on it), then
   // the per-project environment lists. Descriptors already queued are kept, not replaced.
   function _topologyStage2() {
@@ -611,10 +621,11 @@ Item {
           onTriggered: { root._pollServers(); root._selfHeal(); if (!root._baseline.version) root._pollVersion() } }
   Timer { id: topologyTimer; interval: root._topologySec * 1000; repeat: true; triggeredOnStart: false; running: root._timersOn
           onTriggered: root._pollTopology() }
-  // Startup spreads its requests: 4 kinds at token-ready, /projects at +35 s, then one
-  // stage-2 block every 30 s, so no 60 s window holds more than ~3 topology requests.
-  Timer { id: topologyKick; interval: 35000; repeat: false; running: false; onTriggered: if (root._ready) root._pollTopology() }
-  Timer { id: topologyStep; interval: 30000; repeat: true; triggeredOnStart: false; running: root._timersOn && root._topologyQueue.length > 0
+  // Startup spreads its requests: 4 kinds at token-ready, /projects at +65 s (outside the
+  // first minute's burst), then one stage-2 block every 40 s, so no 60 s window holds
+  // more than 2 topology requests.
+  Timer { id: topologyKick; interval: 65000; repeat: false; running: false; onTriggered: if (root._ready) root._pollTopology() }
+  Timer { id: topologyStep; interval: 40000; repeat: true; triggeredOnStart: false; running: root._timersOn && root._topologyQueue.length > 0
           onTriggered: root._topologyStep() }
 
   // First 30 s after the token is ready: retry kinds that have not answered yet every 2 s.

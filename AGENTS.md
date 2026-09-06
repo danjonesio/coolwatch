@@ -52,8 +52,8 @@ Status: **Phase 1 ("see") in progress.** Read `docs/roadmap.md` before writing c
   radii or font families. `docs/design.md` is the spec, `docs/omarchy-shell-reference.md`
   the component reference.
 - Rate limit is 200 req/min per token. Idle polling is ≈17/min (deployments 4 s,
-  resources 60 s, servers 120 s, topology batched ≥600 s and capped at 3/min), ≈36/min
-  with a deployment. See the schedule in `docs/architecture.md`.
+  resources 60 s, servers 120 s, topology one block per 40 s from a ≥600 s cycle), ≈36/min
+  with a deployment; no 60 s window may reach 20. See the schedule in `docs/architecture.md`.
 
 ## Layout
 
