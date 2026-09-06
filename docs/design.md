@@ -257,6 +257,7 @@ partial > loading > healthy.
 | 429 | "RATE LIMITED" | "Backing off Ns." |
 | other ≥ 400 | "COOLIFY ERROR" | the redacted message |
 | One kind failing, others fine | "<KIND> UNAVAILABLE · SHOWING LAST KNOWN" | callout with staleness |
+| A section that has never loaded while an error is up | — | "Not loaded yet." |
 | No deployments | — | "Nothing deploying." |
 | No servers | — | "No servers on this team." |
 | No resources | — | "No resources on this team." |

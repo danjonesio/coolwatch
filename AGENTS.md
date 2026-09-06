@@ -115,9 +115,10 @@ quickshell log -p /usr/share/omarchy/shell --tail 100
 omarchy restart shell            # after Service.qml, Panel.qml or manifest changes (hot reload keeps the old objects)
 ```
 
-QML under `~/.config/omarchy/plugins/` hot-reloads on save. `Service.qml` is
-recreated on reload too, but a stuck `Process` or timer sometimes survives; when in
-doubt `omarchy restart shell`.
+Saving under `~/.config/omarchy/plugins/` triggers a plugin reload, but in practice the
+old `Service.qml` and `Panel.qml` objects stay alive (the bar keeps rendering the previous
+panel and the previous service keeps polling), so `omarchy restart shell` is required after
+changing either. `BarWidget.qml`-only edits sometimes take without it.
 
 Poking the API by hand (token from the config file, never pasted into a shell history):
 

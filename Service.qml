@@ -460,11 +460,16 @@ Item {
     root._recent = Model.joinBranch(root._recent, root._resources)
   }
 
-  // Stage 2 is spread one block per topologyStep tick (25 s) so the fan-out never
+  // Stage 2 is spread one block per topologyStep tick (30 s) so the fan-out never
   // adds more than ~3 requests to any 60 s window; the 20/min line is a sliding window.
+  // Server membership first (few blocks, and "group by server" depends on it), then
+  // the per-project environment lists. Descriptors already queued are kept, not replaced.
   function _topologyStage2() {
-    var q = root._projects.map(function(p) { return Api.reqProject(p.uuid) })
-      .concat(root._servers.map(function(s) { return Api.reqServerResources(s.uuid) }))
+    var q = root._topologyQueue.slice()
+    var have = {}
+    q.forEach(function(d) { have[d.kind + ":" + d.arg] = true })
+    root._servers.forEach(function(s) { if (!have["serverResources:" + s.uuid]) q.push(Api.reqServerResources(s.uuid)) })
+    root._projects.forEach(function(p) { if (!have["project:" + p.uuid]) q.push(Api.reqProject(p.uuid)) })
     root._topologySec = Model.topologyIntervalSec(root._cfg ? root._cfg.poll.topologySec : 600, root._projects.length, root._servers.length)
     root._topologyQueue = q
     if (!q.length) root._topologyFetched = true
@@ -569,7 +574,11 @@ Item {
   function _pollDeployments() { if (root._backoffUntil("deployments") <= Date.now()) root._launch(deploymentsReq, Api.reqDeployments(), 6) }
   function _pollResources() { if (root._backoffUntil("resources") <= Date.now()) root._launch(resourcesReq, Api.reqResources(), 10) }
   function _pollServers() { if (root._backoffUntil("servers") <= Date.now()) root._launch(serversReq, Api.reqServers(), 10) }
-  function _pollTopology() { if (root._backoffUntil("topology") <= Date.now()) root._launch(topologyReq, [Api.reqProjects()], 8) }
+  // A tick that lands while stage 2 is still draining is skipped: the queue finishes first.
+  function _pollTopology() {
+    if (root._topologyQueue.length || topologyReq.running || topologyReq.stopping) return
+    if (root._backoffUntil("topology") <= Date.now()) root._launch(topologyReq, [Api.reqProjects()], 8)
+  }
 
   // which: "all" (refresh, token ready), "stale" (panel open), "missing" (startup ramp)
   function _prime(which) {
