@@ -56,6 +56,7 @@ Item {
   property var _baseline: ({ deployments: false, resources: false, servers: false, version: false })
   property bool _baselineDone: false
   property bool _topologyFetched: false
+  property var _topologyQueue: []      // stage-2 descriptors, launched one per topologyStep tick
 
   // Scheduler state.
   property var _perKind: ({})
@@ -103,15 +104,18 @@ Item {
     root.acknowledgeFailures()
     if (root._ready) {
       root._prime("stale")
-      if (!root._topologyFetched) root._pollTopology()
+      if (!root._topologyFetched && !root._topologyQueue.length && !topologyReq.running) root._pollTopology()
     }
   }
   function panelClosed(id) {
     var p = root._panels; delete p[String(id)]; root._panels = p
     root._syncOpenPanels()
   }
+  // Also the re-registration path: a hot-reloaded service starts with an empty
+  // registry and open panels ping within a second.
   function panelAlive(id) {
-    if (root._panels[String(id)] !== undefined) { var p = root._panels; p[String(id)] = Date.now(); root._panels = p }
+    var p = root._panels; var fresh = p[String(id)] === undefined; p[String(id)] = Date.now(); root._panels = p
+    if (fresh) root._syncOpenPanels()
   }
   function acknowledgeFailures() { if (root._failedUnacked.length) root._failedUnacked = [] }
 
@@ -225,7 +229,7 @@ Item {
     root._lastPollAt = { deployments: 0, resources: 0, servers: 0, topology: 0, version: 0 }
     root._baseline = { deployments: false, resources: false, servers: false, version: false }
     root._baselineDone = false
-    root._topologyFetched = false
+    root._topologyFetched = false; root._topologyQueue = []
     root._backoff = {}; root._paused = false; root._backoffSec = 0; root._probeMode = false
     startupRamp.ticks = 0
     for (var i = 0; i < root._reqs.length; i++) root._reqs[i].kill()
@@ -303,6 +307,7 @@ Item {
     property string cfg: ""
     property double deadline: 0
     property bool stopping: false      // killed; refuse a relaunch until the exit arrives
+    property double stopSince: 0
     running: false
     command: Api.argv()
     stdout: StdioCollector { id: out; waitForEnd: true }
@@ -310,8 +315,13 @@ Item {
     // write() then stdinEnabled = false closes curl's stdin (EOF), which is what
     // makes `curl -K -` start the transfer.
     onStarted: { liveSeq = seq; write(cfg); cfg = ""; stdinEnabled = false }
-    onExited: function(code) { req.stopping = false; root._finish(req, code, out.text, err.text) }
-    function kill() { if (running) { seq += 1; stopping = true; running = false } }
+    onExited: function(code) { req.cfg = ""; req.stopping = false; root._finish(req, code, out.text, err.text) }
+    function kill() { if (running) { seq += 1; stopping = true; stopSince = Date.now(); cfg = ""; running = false } }
+    function escalate(now) {           // SIGTERM ignored: SIGKILL after 5 s, give up the flag after 10 s
+      if (!stopping) return
+      if (now - stopSince > 10000) { stopping = false; return }
+      if (now - stopSince > 5000) { try { signal(9) } catch (e) {} }
+    }
   }
 
   Req { id: versionReq }
@@ -351,9 +361,10 @@ Item {
     }
     var anyOk = false
     for (var i = 0; i < results.length; i++) {
+      if (i >= p.arg.length) break               // more trailers than blocks: malformed stream
       var r = results[i]
       root._record(p.kind, r)
-      var e = Model.errorFor({ curlExit: r.exit, httpCode: r.code, body: r.body, headers: r.headers, request: p.kind })
+      var e = Model.errorFor({ curlExit: r.exit, httpCode: r.code, body: r.body, errmsg: r.errmsg, headers: r.headers, request: p.kind })
       if (e) {
         if (!(p.kind === "deployment" && r.code === 404)) root._fail(p.kind, e, r.headers)   // 404: vanished for good
       } else {
@@ -362,8 +373,10 @@ Item {
       }
     }
     if (anyOk) root._succeeded(p.kind)
-    if (p.kind === "resources" || p.kind === "servers" || p.kind === "topology" || p.kind === "deployments") root._rejoin()
+    if (p.kind === "resources" || p.kind === "servers" || p.kind === "topology") root._rejoin()
+    else if (p.kind === "deployments") root._joinDeployments()
     if (p.kind === "deployment") root._drainTerminal()
+    if (p.kind === "topology") root._topologyFetched = root._topologyQueue.length === 0   // the next block waits for topologyStep
   }
 
   function _dispatch(req, r, kind) {
@@ -407,6 +420,7 @@ Item {
       case "servers":
         root._servers = Model.normaliseServers(json.value)
         root._markPoll("servers", now)
+        root._enqueueMissingServerResources()
         break
       case "projects":
         root._projects = Model.normaliseProjects(json.value)
@@ -415,12 +429,10 @@ Item {
         break
       case "project": {
         var envs = root._envsByProject; envs[req.arg] = Model.environmentsOf(json.value); root._envsByProject = envs
-        root._topologyFetched = true
         break
       }
       case "serverResources": {
         var bs = root._byServer; bs[req.arg] = Model.serverResourceUuids(json.value); root._byServer = bs
-        root._topologyFetched = true
         break
       }
     }
@@ -440,20 +452,50 @@ Item {
     root._resources = Model.applyJoins(root._resourcesRaw, root._tree, root._byServer, root._servers)
     var counts = Model.resourceCounts(root._byServer)
     root._servers = root._servers.map(function(x) { var o = {}; for (var k in x) o[k] = x[k]; o.resourceCount = counts[x.uuid] || 0; return o })
+    root._joinDeployments()
+  }
+
+  function _joinDeployments() {
     root._deployments = Model.joinBranch(root._deployments, root._resources)
     root._recent = Model.joinBranch(root._recent, root._resources)
   }
 
+  // Stage 2 is spread one block per topologyStep tick (25 s) so the fan-out never
+  // adds more than ~3 requests to any 60 s window; the 20/min line is a sliding window.
   function _topologyStage2() {
-    var list = root._projects.map(function(p) { return Api.reqProject(p.uuid) })
+    var q = root._projects.map(function(p) { return Api.reqProject(p.uuid) })
       .concat(root._servers.map(function(s) { return Api.reqServerResources(s.uuid) }))
     root._topologySec = Model.topologyIntervalSec(root._cfg ? root._cfg.poll.topologySec : 600, root._projects.length, root._servers.length)
-    if (list.length) root._launch(topologyReq, list, 8)
-    else root._topologyFetched = true
+    root._topologyQueue = q
+    if (!q.length) root._topologyFetched = true
+    // The first block waits for topologyStep like the rest: a burst of P + S blocks
+    // right after /projects is what pushed a 60 s window past the budget.
+  }
+
+  function _topologyStep() {
+    if (!root._ready || root._paused || root._probeMode || topologyReq.running || topologyReq.stopping) return
+    if (!root._topologyQueue.length) return
+    if (root._backoffUntil("topology") > Date.now()) return
+    var q = root._topologyQueue.slice()
+    var d = q.shift()
+    root._topologyQueue = q
+    root._launch(topologyReq, [d], 8)
+  }
+
+  // A server that answered after stage 2 was built (or a stage 2 that never ran)
+  // gets its resource list on the next ticks instead of at the next topology cycle.
+  function _enqueueMissingServerResources() {
+    if (!root._projects.length && !root._topologyFetched) return
+    var q = root._topologyQueue.slice()
+    var queued = {}
+    q.forEach(function(d) { if (d.kind === "serverResources") queued[d.arg] = true })
+    var added = false
+    root._servers.forEach(function(s) { if (!root._byServer[s.uuid] && !queued[s.uuid]) { q.push(Api.reqServerResources(s.uuid)); added = true } })
+    if (added) { root._topologyQueue = q; root._topologyFetched = false }
   }
 
   function _drainTerminal() {
-    if (!root._ready || deploymentReq.running || !root._terminalQueue.length) return
+    if (!root._ready || root._paused || root._probeMode || deploymentReq.running || deploymentReq.stopping || !root._terminalQueue.length) return
     if (root._backoffUntil("deployment") > Date.now()) return
     var q = root._terminalQueue.slice()
     var uuid = q.shift()
@@ -466,7 +508,7 @@ Item {
   function _succeeded(kind) {
     var b = root._backoff; if (b[kind]) { delete b[kind]; root._backoff = b }
     if (root._error && root._error.request === kind) root._error = null
-    if (root._probeMode) { root._probeMode = false; root._prime("all") }
+    if (root._probeMode) { root._probeMode = false; root._prime("all"); root._drainTerminal() }
   }
 
   function _record(kind, r) {
@@ -523,7 +565,7 @@ Item {
 
   // ---- scheduler -----------------------------------------------------------------------
 
-  function _pollVersion() { root._launch(versionReq, Api.reqVersion(), 6) }
+  function _pollVersion() { if (root._backoffUntil("version") <= Date.now()) root._launch(versionReq, Api.reqVersion(), 6) }
   function _pollDeployments() { if (root._backoffUntil("deployments") <= Date.now()) root._launch(deploymentsReq, Api.reqDeployments(), 6) }
   function _pollResources() { if (root._backoffUntil("resources") <= Date.now()) root._launch(resourcesReq, Api.reqResources(), 10) }
   function _pollServers() { if (root._backoffUntil("servers") <= Date.now()) root._launch(serversReq, Api.reqServers(), 10) }
@@ -557,10 +599,14 @@ Item {
   Timer { id: resourcesTimer; interval: root._resourcesSec * 1000; repeat: true; triggeredOnStart: false; running: root._timersOn
           onTriggered: root._pollResources(); onIntervalChanged: root._catchUp("resources", root._resourcesSec, root._pollResources) }
   Timer { id: serversTimer; interval: root._serversSec * 1000; repeat: true; triggeredOnStart: false; running: root._timersOn
-          onTriggered: { root._pollServers(); root._selfHeal() } }
+          onTriggered: { root._pollServers(); root._selfHeal(); if (!root._baseline.version) root._pollVersion() } }
   Timer { id: topologyTimer; interval: root._topologySec * 1000; repeat: true; triggeredOnStart: false; running: root._timersOn
           onTriggered: root._pollTopology() }
-  Timer { id: topologyKick; interval: 2000; repeat: false; running: false; onTriggered: if (root._ready) root._pollTopology() }
+  // Startup spreads its requests: 4 kinds at token-ready, /projects at +35 s, then one
+  // stage-2 block every 30 s, so no 60 s window holds more than ~3 topology requests.
+  Timer { id: topologyKick; interval: 35000; repeat: false; running: false; onTriggered: if (root._ready) root._pollTopology() }
+  Timer { id: topologyStep; interval: 30000; repeat: true; triggeredOnStart: false; running: root._timersOn && root._topologyQueue.length > 0
+          onTriggered: root._topologyStep() }
 
   // First 30 s after the token is ready: retry kinds that have not answered yet every 2 s.
   Timer {
@@ -574,7 +620,7 @@ Item {
   // 401/403: everything stops; one deployments probe a minute until a 2xx or a config change.
   Timer { id: probeTimer; interval: 60000; repeat: true; running: root._ready && root._probeMode; onTriggered: root._launch(deploymentsReq, Api.reqDeployments(), 6) }
   // 429: everything pauses for Retry-After (clamped) or the ladder.
-  Timer { id: pauseTimer; interval: 30000; repeat: false; running: false; onTriggered: { root._paused = false; root._prime("all") } }
+  Timer { id: pauseTimer; interval: 30000; repeat: false; running: false; onTriggered: { root._paused = false; root._prime("all"); root._drainTerminal() } }
 
   // Reaper: armed once, never restarted (tailscale lesson). A Req past its deadline is
   // killed; bumping seq first makes its onExited a no-op. Also expires dead panels.
@@ -587,6 +633,7 @@ Item {
       var now = Date.now()
       for (var i = 0; i < root._reqs.length; i++) {
         var p = root._reqs[i]
+        p.escalate(now)
         if (p.running && p.deadline > 0 && now > p.deadline) {
           p.kill()
           var pk = root._perKindEntry(p.kind)
@@ -610,7 +657,7 @@ Item {
   Component.onDestruction: {
     reaper.running = false
     deploymentsTimer.running = false; resourcesTimer.running = false; serversTimer.running = false; topologyTimer.running = false
-    startupRamp.running = false; probeTimer.running = false; pauseTimer.running = false; topologyKick.running = false
+    startupRamp.running = false; probeTimer.running = false; pauseTimer.running = false; topologyKick.running = false; topologyStep.running = false
     tokenCmd.running = false
     statProc.running = false
     mkdirProc.running = false
@@ -642,7 +689,8 @@ Item {
       terminalQueue: root._terminalQueue.length,
       error: root._error ? { kind: root._error.kind, request: root._error.request, httpCode: root._error.httpCode, curlExit: root._error.curlExit } : null,
       warning: root._warning ? root._warning.kind : null,
-      bar: { glyph: "U+" + root.bar.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: root.bar.dimmed, active: root.bar.active, tooltip: root.bar.tooltip }
+      bar: { glyph: "U+" + root.bar.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: root.bar.dimmed, active: root.bar.active },
+      topologyQueue: root._topologyQueue.length
     }
   }
 
