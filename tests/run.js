@@ -132,6 +132,78 @@ test("Api.base strips trailing slashes", () => {
   eq(A.base({ url: "https://app.coolify.io///" }), "https://app.coolify.io/api/v1")
 })
 
+// ---- Api.js: Phase 2 action blocks ------------------------------------------------
+
+test("Api.block GET output is byte-identical for every Phase 1 descriptor (SR1)", () => {
+  const gets = [A.reqVersion(), A.reqDeployments(), A.reqDeployment("u1"), A.reqResources(), A.reqServers(), A.reqProjects(), A.reqProject("p1"), A.reqServerResources("s1")]
+  for (const r of gets) {
+    const b = A.block(inst, TOK, r, 6)
+    eq(count(b, "request = "), 0, "no method line on a GET")
+    eq(count(b, "data-raw"), 0)
+    eq(count(b, "Content-Type"), 0)
+    eq(b.split("\n").filter(l => l.length).length, 9, "nine lines per GET block")
+  }
+})
+
+test("Api.block POST shape: one request, one Content-Type, one constant data-raw, all nine GET lines (SR1)", () => {
+  const b = A.block(inst, TOK, A.reqLifecycle("application", "u1", "stop"), 10)
+  eq(count(b, 'request = "POST"'), 1)
+  eq(count(b, 'header = "Content-Type: application/json"'), 1)
+  eq(count(b, 'data-raw = "{}"'), 1)
+  eq(count(b, "url = "), 1)
+  eq(count(b, "write-out = "), 1)
+  eq(count(b, 'max-time = "10"'), 1)
+  eq(count(b, 'proto = "=https,http"'), 1)
+  eq(count(b, "header = \"Authorization: Bearer " + TOK + "\""), 1)
+  eq(count(b, "silent\n"), 1)
+  assert(b.indexOf("https://app.coolify.io/api/v1/applications/u1/stop") >= 0)
+})
+
+test("Api.config: two GETs around one POST carry request once; no location anywhere (SR1, SR2)", () => {
+  const cfg = A.config(inst, TOK, [A.reqServers(), A.reqCancel("d1"), A.reqResources()], 8)
+  eq(count(cfg, "request = "), 1)
+  eq(count(cfg, "data-raw"), 1)
+  eq(count(cfg, "url = "), 3)
+  eq(count(cfg, "write-out = "), 3)
+  eq(count(cfg, "next\n"), 2)
+  assert(cfg.indexOf("location") < 0, "no location line")
+  assert(cfg.indexOf("proto-redir") < 0, "no proto-redir line")
+  eq(count(cfg, 'proto = "=https,http"'), 3)
+})
+
+test("Api.block / Api.config reject unknown and prototype methods with null (SR1)", () => {
+  for (const m of ["DELETE", "toString", "constructor", "valueOf", "__proto__"]) {
+    const r = { kind: "action", path: "/x", method: m }
+    eq(A.block(inst, TOK, r, 6), null, "block null for " + m)
+    eq(A.config(inst, TOK, [A.reqServers(), r], 6), null, "config null for " + m)
+  }
+  assert(A.block(inst, TOK, { kind: "x", path: "/x", method: "GET" }, 6) !== null)
+})
+
+test("Api.reqDeploy: hostile uuid is percent-encoded in the query; force only when true; one url line (SR1)", () => {
+  const d = A.reqDeploy("a/../b?x=1", true)
+  const b = A.block(inst, TOK, d, 10)
+  eq(count(b, "url = "), 1)
+  assert(b.indexOf("uuid=a%2F..%2Fb%3Fx%3D1&force=true") >= 0, b)
+  eq(d.verb, "redeploy"); eq(d.kind, "action"); eq(d.method, "POST")
+  const plain = A.reqDeploy("u1", false)
+  eq(plain.path, "/deploy?uuid=u1"); eq(plain.verb, "deploy")
+})
+
+test("Api.reqLifecycle / reqCancel / reqValidate: families and verbs; unknown or prototype kind and verb are null (SR3)", () => {
+  eq(A.reqLifecycle("application", "u1", "stop").path, "/applications/u1/stop")
+  eq(A.reqLifecycle("database", "u1", "restart").path, "/databases/u1/restart")
+  eq(A.reqLifecycle("service", "u/1", "start").path, "/services/u%2F1/start")
+  eq(A.reqLifecycle("unknown", "u1", "stop"), null)
+  eq(A.reqLifecycle("constructor", "u1", "stop"), null)
+  eq(A.reqLifecycle("toString", "u1", "stop"), null)
+  eq(A.reqLifecycle("application", "u1", "delete"), null)
+  eq(A.reqLifecycle("application", "u1", "hasOwnProperty"), null)
+  eq(A.reqCancel("d/1").path, "/deployments/d%2F1/cancel")
+  eq(A.reqValidate("s1").path, "/servers/s1/validate")
+  eq(A.reqValidate("s1").verb, "validate"); eq(A.reqCancel("d1").verb, "cancel")
+})
+
 // ---- Model.js: transport ----------------------------------------------------------
 
 test("Model.splitResponses: single 200 with whitelisted headers (SR4)", () => {
