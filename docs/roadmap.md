@@ -76,13 +76,15 @@ Acceptance
 - One push yields exactly: Queued (optional, skipped when the first poll already sees
   the build in progress), Building, Deployed or Failed. Never a duplicate, never a replay
   after `omarchy restart shell` mid-deployment (a deployment that finishes while the
-  shell is down is never toasted; it appears in Recent at the next fetch).
+  shell is down is neither toasted nor recorded: it never vanishes from an active list
+  the plugin saw).
 - A container stopped outside the plugin (Coolify UI or `docker stop`) produces
   "stopped" once within 0–120 s, and a deploy-caused restart or a Stop/Start from the
   plugin produces nothing extra.
 - Do Not Disturb silences everything to history except a critical event, which is sent
-  as `omarchy-action` and shown. The failed-deployment path is verified by fixture and
-  node tests; live it needs a deliberately broken build (declined for this run).
+  as `omarchy-action` and shown. The critical-under-DND path (a failed deployment or an
+  unreachable server) is verified by fixture and node tests only; live it needs a
+  deliberately broken build or a server outage (neither produced for this run).
 - `recent.json` lives in a 0700 directory (the file is umask-mode) and the panel's
   Recent section is back within 2 s of a restart for deployments under an hour old.
 

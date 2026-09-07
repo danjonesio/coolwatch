@@ -148,8 +148,8 @@ omarchy-shell io.github.danjonesio.omarify status | jq '{baseline, notify, recen
 quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'omarify (notify|recent|drain) '   # unanchored: the log prefixes "DEBUG qml:"
 omarchy-shell io.github.danjonesio.omarify deploy|restart|stop|start <uuid>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`
 
-# rollback of a Phase 3 build (placement in shell.json survives; a notify{} block and recent.json are ignored by Phase 2; bin/check stays green)
-git checkout b38379c -- manifest.json Service.qml BarWidget.qml Panel.qml Model.js Api.js && bin/dev-sync && omarchy restart shell
+# rollback of a Phase 3 build (placement in shell.json survives; a notify{} block and recent.json are ignored by Phase 2; tests/run.js goes back too so bin/check stays green)
+git checkout b38379c -- manifest.json Service.qml BarWidget.qml Panel.qml Model.js Api.js tests/run.js && bin/dev-sync && omarchy restart shell
 
 # logs
 quickshell log -p /usr/share/omarchy/shell --tail 100

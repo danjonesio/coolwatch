@@ -46,8 +46,10 @@ directory as 0700):
 
 `poll` is optional; those are the defaults. `notify` is optional too: every key
 defaults to `true`, `"notify": false` switches every toast off, a cancelled deployment
-rides `deploymentFinished`, and the values are booleans, unquoted (a bad value shows a
-warning in the panel and keeps its default; polling continues). Editing `notify` takes
+rides `deploymentFinished`, and the values are booleans, unquoted (a bad value keeps its
+default and polling continues; the panel shows a warning unless a plaintext or
+permissions warning already occupies the callout, and `status | jq .notify` always shows
+the effective values and the warning text). Editing `notify` takes
 effect on the next poll without resetting anything else.
 
 Notifications land in Omarchy's notification history and respect Do Not Disturb, with

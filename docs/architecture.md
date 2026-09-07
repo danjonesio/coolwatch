@@ -268,9 +268,11 @@ byServer:  { serverUuid: [resourceUuid…] }
   config load (keyed on the instance origin, not the token, so a `tokenCommand` vault is
   never waited on) and again after every `_resetStore`; `_resetStore` never writes. The
   file is untrusted input: `Model.parseRecent` bounds the text at 262 144 chars, requires
-  `version 1` and a non-empty matching instance, whitelists fields, validates `uuid` and a
+  `version 1` and a non-empty matching instance (the bound applies after FileView has read the
+  whole file: there is no size-capped read, and no remote path writes a large file), whitelists fields, validates `uuid` and a
   terminal `status`, drops unparseable or > 24 h timestamps, caps at 20, never throws;
   `branch`/`appUuid` are recomputed by `joinBranch`; `url` passes `openUrl` on every use;
+  `status.recentPersisted` is the count accepted at the last load, not the file's current length;
   every string is redacted and elided on the way out. Loading never notifies and never
   touches `_failedUnacked` or `_activeUuids`; neither the tracked active set nor
   `_failedUnacked` is persisted. `FileView` has no mode API and its atomic write is a
