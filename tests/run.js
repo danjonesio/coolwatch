@@ -132,6 +132,80 @@ test("Api.base strips trailing slashes", () => {
   eq(A.base({ url: "https://app.coolify.io///" }), "https://app.coolify.io/api/v1")
 })
 
+// ---- Api.js: Phase 2 action blocks ------------------------------------------------
+
+test("Api.block GET output is byte-identical for every Phase 1 descriptor (SR1)", () => {
+  const gets = [A.reqVersion(), A.reqDeployments(), A.reqDeployment("u1"), A.reqResources(), A.reqServers(), A.reqProjects(), A.reqProject("p1"), A.reqServerResources("s1")]
+  for (const r of gets) {
+    const b = A.block(inst, TOK, r, 6)
+    const want = 'url = "' + A.quote(A.base(inst) + r.path) + '"\nsilent\nconnect-timeout = "5"\nmax-time = "6"\nmax-filesize = "8388608"\nproto = "=https,http"\nheader = "Authorization: Bearer ' + TOK + '"\nheader = "Accept: application/json"\nwrite-out = "' + A.quote(A.TRAILER) + '"\n'
+    eq(b, want, "byte-identical Phase 1 block for " + r.kind)
+    eq(count(b, "request = "), 0, "no method line on a GET")
+    eq(count(b, "data-raw"), 0)
+    eq(count(b, "Content-Type"), 0)
+    eq(b.split("\n").filter(l => l.length).length, 9, "nine lines per GET block")
+  }
+})
+
+test("Api.block POST shape: one request, one Content-Type, one constant data-raw, all nine GET lines (SR1)", () => {
+  const b = A.block(inst, TOK, A.reqLifecycle("application", "u1", "stop"), 10)
+  eq(count(b, 'request = "POST"'), 1)
+  eq(count(b, 'header = "Content-Type: application/json"'), 1)
+  eq(count(b, 'data-raw = "{}"'), 1)
+  eq(count(b, "url = "), 1)
+  eq(count(b, "write-out = "), 1)
+  eq(count(b, 'max-time = "10"'), 1)
+  eq(count(b, 'proto = "=https,http"'), 1)
+  eq(count(b, "header = \"Authorization: Bearer " + TOK + "\""), 1)
+  eq(count(b, "silent\n"), 1)
+  assert(b.indexOf("https://app.coolify.io/api/v1/applications/u1/stop") >= 0)
+})
+
+test("Api.config: two GETs around one POST carry request once; no location anywhere (SR1, SR2)", () => {
+  const cfg = A.config(inst, TOK, [A.reqServers(), A.reqCancel("d1"), A.reqResources()], 8)
+  eq(count(cfg, "request = "), 1)
+  eq(count(cfg, "data-raw"), 1)
+  eq(count(cfg, "url = "), 3)
+  eq(count(cfg, "write-out = "), 3)
+  eq(count(cfg, "next\n"), 2)
+  assert(cfg.indexOf("location") < 0, "no location line")
+  assert(cfg.indexOf("proto-redir") < 0, "no proto-redir line")
+  eq(count(cfg, 'proto = "=https,http"'), 3)
+})
+
+test("Api.block / Api.config reject unknown and prototype methods with null (SR1)", () => {
+  for (const m of ["DELETE", "toString", "constructor", "valueOf", "__proto__"]) {
+    const r = { kind: "action", path: "/x", method: m }
+    eq(A.block(inst, TOK, r, 6), null, "block null for " + m)
+    eq(A.config(inst, TOK, [A.reqServers(), r], 6), null, "config null for " + m)
+  }
+  assert(A.block(inst, TOK, { kind: "x", path: "/x", method: "GET" }, 6) !== null)
+})
+
+test("Api.reqDeploy: hostile uuid is percent-encoded in the query; force only when true; one url line (SR1)", () => {
+  const d = A.reqDeploy("a/../b?x=1", true)
+  const b = A.block(inst, TOK, d, 10)
+  eq(count(b, "url = "), 1)
+  assert(b.indexOf("uuid=a%2F..%2Fb%3Fx%3D1&force=true") >= 0, b)
+  eq(d.verb, "rebuild"); eq(d.kind, "action"); eq(d.method, "POST")
+  const plain = A.reqDeploy("u1", false)
+  eq(plain.path, "/deploy?uuid=u1"); eq(plain.verb, "deploy")
+})
+
+test("Api.reqLifecycle / reqCancel / reqValidate: families and verbs; unknown or prototype kind and verb are null (SR3)", () => {
+  eq(A.reqLifecycle("application", "u1", "stop").path, "/applications/u1/stop")
+  eq(A.reqLifecycle("database", "u1", "restart").path, "/databases/u1/restart")
+  eq(A.reqLifecycle("service", "u/1", "start").path, "/services/u%2F1/start")
+  eq(A.reqLifecycle("unknown", "u1", "stop"), null)
+  eq(A.reqLifecycle("constructor", "u1", "stop"), null)
+  eq(A.reqLifecycle("toString", "u1", "stop"), null)
+  eq(A.reqLifecycle("application", "u1", "delete"), null)
+  eq(A.reqLifecycle("application", "u1", "hasOwnProperty"), null)
+  eq(A.reqCancel("d/1").path, "/deployments/d%2F1/cancel")
+  eq(A.reqValidate("s1").path, "/servers/s1/validate")
+  eq(A.reqValidate("s1").verb, "validate"); eq(A.reqCancel("d1").verb, "cancel")
+})
+
 // ---- Model.js: transport ----------------------------------------------------------
 
 test("Model.splitResponses: single 200 with whitelisted headers (SR4)", () => {
@@ -584,10 +658,261 @@ test("Model.GLYPHS: every emitted glyph is in the allowlist and the list has no 
   eq(M.G.cloud, String.fromCodePoint(0xF015F)); eq(M.G.cloudOutline, String.fromCodePoint(0xF0163)); eq(M.G.half, String.fromCodePoint(0xF1396))
 })
 
-test("Model.footerHints: hero, fold, leaf", () => {
+// ---- Model.js: Phase 2 actions ------------------------------------------------------
+
+const ORIGIN = "https://app.coolify.io"
+const APP = "h0wxyg40kc0lz727dom9l03i", SVC_EXITED = "ulg0n467viqx9g7nb25pwm6t", SVC_RUNNING = "iyoi5i0ot4nwvoz9zbkbnjsp", SRV = "qo4go8kswocog0gg0ckk8kk8"
+function rec(code, body, exit) { return M.splitResponses((body || "") + trailer(exit || 0, code === 0 ? "000" : code, 0.2, (body || "").length, exit ? "curl failed" : "", "{}"))[0] }
+function actSnap(extra) {
+  const dep = M.normaliseDeployments(fx("deployments-active.json"))
+  return loadedSnap(Object.assign({ deployments: dep }, extra || {}))
+}
+function rowOf(s, uuid) { return M.panelRows(s, {}).find(r => r.uuid === uuid) }
+
+test("Model.environmentsOf keeps uuid; applyJoins carries environmentUuid", () => {
+  const envs = M.environmentsOf(fx("project-detail.json"))
+  eq(envs[0].uuid, "vokooc88s8cssgow0ww44ssw"); eq(envs[0].id, 15640)
+  const s = loadedSnap()
+  const app = s.resources.find(r => r.uuid === APP)
+  eq(app.environmentUuid, "vokooc88s8cssgow0ww44ssw"); eq(app.projectUuid, "iwo4oo0cw0kc8s4g8s0og88c")
+  const tree = M.buildTree([], {}, s.resources)
+  eq(tree[0].environments[0].uuid, "", "Ungrouped env has an empty uuid")
+})
+
+test("Model.openUrl: deployment joins the relative deployment_url; hostile values yield empty (SR9)", () => {
+  eq(M.openUrl("deployment", { url: "/project/p/environment/e/application/a/deployment/d" }, ORIGIN + "/"), ORIGIN + "/project/p/environment/e/application/a/deployment/d")
+  for (const bad of ["javascript:alert(1)", "--app=https://evil", "file:///etc/passwd", "https://evil.example/x", "//evil.example/x", "project/x", "/javascript:alert(1)", "", null]) {
+    eq(M.openUrl("deployment", { url: bad }, ORIGIN), "", "rejects " + bad)
+  }
+  eq(M.openUrl("deployment", { url: "/x" }, "ftp://x"), "", "origin must be http(s)")
+  eq(M.openUrl("deployment", { url: "/x" }, "https://ops.example.com/coolify/"), "https://ops.example.com/coolify/x", "a path prefix is kept")
+  eq(M.openUrl("deployment", { url: "/x" }, "https://app.coolify.io/?x=1"), "", "no query in the origin")
+  eq(M.openUrl("deployment", { url: "/x" }, "https://app.coolify.io/#f"), "", "no fragment in the origin")
+})
+
+test("Model.openUrl: resource shape from topology, server shape, missing parts yield empty (SR9)", () => {
+  const s = loadedSnap()
+  const app = s.resources.find(r => r.uuid === APP)
+  eq(M.openUrl("resource", app, ORIGIN), ORIGIN + "/project/iwo4oo0cw0kc8s4g8s0og88c/environment/vokooc88s8cssgow0ww44ssw/application/" + APP)
+  eq(M.openUrl("resource", { uuid: "u", kind: "service", projectUuid: "p", environmentUuid: "e" }, ORIGIN), ORIGIN + "/project/p/environment/e/service/u")
+  eq(M.openUrl("resource", { uuid: "u", kind: "database", projectUuid: "p", environmentUuid: "e" }, ORIGIN), ORIGIN + "/project/p/environment/e/database/u")
+  eq(M.openUrl("resource", { uuid: "u", kind: "unknown", projectUuid: "p", environmentUuid: "e" }, ORIGIN), "")
+  eq(M.openUrl("resource", { uuid: "u", kind: "application", projectUuid: "p", environmentUuid: null }, ORIGIN), "")
+  eq(M.openUrl("resource", { uuid: "u/x", kind: "application", projectUuid: "p q", environmentUuid: "e" }, ORIGIN), ORIGIN + "/project/p%20q/environment/e/application/u%2Fx")
+  eq(M.openUrl("server", { uuid: SRV }, ORIGIN + "///"), ORIGIN + "/server/" + SRV)
+  eq(M.openUrl("server", { uuid: "" }, ORIGIN), "")
+  eq(M.openUrl("resource", app, ""), "", "no origin, no url")
+})
+
+test("Model.actionsFor: the applicability table; Open only with a url", () => {
+  const ids = r => M.actionsFor(r).map(a => a.id).join(",")
+  eq(ids({ type: "resource", kind: "application", state: "running", url: "u" }), "redeploy,rebuild,restart,stop,open")
+  eq(ids({ type: "resource", kind: "application", state: "exited", url: "u" }), "deploy,start,open")
+  const vis = M.actionsFor({ type: "resource", kind: "application", state: "running", url: "u" }).filter(a => a.button).map(a => a.id).join(",")
+  eq(vis, "redeploy,restart,stop,open", "rebuild is keyboard-only")
+  assert(M.actionsFor({ type: "resource", kind: "application", state: "running" }).find(a => a.id === "rebuild").confirm === true)
+  assert(M.actionsFor({ type: "resource", kind: "application", state: "running" }).find(a => a.id === "redeploy").confirm === false)
+  eq(ids({ type: "resource", kind: "service", state: "restarting", url: "u" }), "restart,stop,open")
+  eq(ids({ type: "resource", kind: "database", state: "paused", url: "u" }), "start,open")
+  eq(ids({ type: "resource", kind: "application", state: "unknown", url: "u" }), "open")
+  eq(ids({ type: "resource", kind: "application", state: "unknown", url: "" }), "")
+  eq(ids({ type: "server", url: "u" }), "validate,open")
+  eq(ids({ type: "deployment", status: "queued", url: "u" }), "cancel,open")
+  eq(ids({ type: "deployment", status: "in_progress", url: "" }), "cancel")
+  eq(ids({ type: "deployment", status: "finished", url: "u" }), "open")
+  eq(ids({ type: "fold" }), ""); eq(ids(null), "")
+  const stop = M.actionsFor({ type: "resource", kind: "application", state: "running" }).find(a => a.id === "stop")
+  assert(stop.destructive && stop.confirm, "stop confirms")
+  assert(M.actionsFor({ type: "resource", kind: "application", state: "exited" }).find(a => a.id === "deploy").confirm === false)
+})
+
+test("Model.actionFor: s resolves to stop or start; d/deploy to deploy or redeploy; D to rebuild; unknown verb null", () => {
+  eq(M.actionFor({ type: "resource", kind: "application", state: "running" }, "d").id, "redeploy")
+  eq(M.actionFor({ type: "resource", kind: "application", state: "running" }, "deploy").id, "redeploy")
+  eq(M.actionFor({ type: "resource", kind: "application", state: "exited" }, "d").id, "deploy")
+  eq(M.actionFor({ type: "resource", kind: "application", state: "exited" }, "deploy").id, "deploy")
+  eq(M.actionFor({ type: "resource", kind: "application", state: "exited" }, "D"), null, "no rebuild on a stopped app")
+  eq(M.actionFor({ type: "resource", kind: "application", state: "running" }, "s").id, "stop")
+  eq(M.actionFor({ type: "resource", kind: "service", state: "exited" }, "s").id, "start")
+  eq(M.actionFor({ type: "resource", kind: "application", state: "running" }, "D").id, "rebuild")
+  eq(M.actionFor({ type: "resource", kind: "service", state: "running" }, "D"), null)
+  eq(M.actionFor({ type: "resource", kind: "application", state: "running" }, "bogus"), null)
+  eq(M.actionFor({ type: "server" }, "validate").id, "validate")
+})
+
+test("Model.actionRequest: the single gate — invalid, unknown, not applicable, and the ok shape (SR3)", () => {
+  const s = actSnap()
+  eq(M.actionRequest(s, "stop", "../x").why, "invalid")
+  eq(M.actionRequest(s, "stop", "%2e%2e").why, "invalid")
+  eq(M.actionRequest(s, "stop", "").why, "invalid")
+  eq(M.actionRequest(s, "stop", "deadbeefdeadbeefdeadbeef").why, "unknown")
+  eq(M.actionRequest(s, "deploy", SVC_RUNNING).why, "notapplicable", "deploy on a service")
+  eq(M.actionRequest(s, "start", APP).why, "notapplicable", "start on a running app")
+  eq(M.actionRequest(s, "stop", SVC_EXITED).why, "notapplicable", "stop on an exited service")
+  eq(M.actionRequest(s, "open", APP).why, "notapplicable", "open never reaches the service")
+  eq(M.actionRequest(s, "cancel", APP).why, "notapplicable")
+  const a = M.actionRequest(s, "stop", APP)
+  assert(a.ok); eq(a.targetType, "resource"); eq(a.kind, "application"); eq(a.confirm, true); eq(a.verb, "stop"); eq(a.status, "running:healthy")
+  assert(a.name.indexOf("storefront") === 0)
+  const d = s.deployments[0]
+  const c = M.actionRequest(s, "cancel", d.uuid)
+  assert(c.ok); eq(c.targetType, "deployment"); eq(c.kind, null); eq(c.confirm, true)
+  const fin = actSnap({ deployments: [Object.assign({}, d, { status: "finished" })] })
+  eq(M.actionRequest(fin, "cancel", d.uuid).why, "notapplicable", "finished deployment cannot be cancelled")
+  const v = M.actionRequest(s, "validate", SRV)
+  assert(v.ok); eq(v.targetType, "server"); eq(v.confirm, false)
+  eq(M.actionRequest(s, "s", APP).verb, "stop", "s resolves through actionFor")
+  eq(M.actionRequest(s, "restart", SVC_RUNNING).kind, "service")
+})
+
+test("Model.canAct: pending and inflight dedupe by uuid; inflight or 1 s spacing is busy (SR6)", () => {
+  const now = NOW
+  eq(M.canAct({ u1: { verb: "stop" } }, null, "u1", now, 0), "already pending")
+  eq(M.canAct({}, { uuid: "u1" }, "u1", now, now - 5000), "already pending")
+  eq(M.canAct({}, { uuid: "u2" }, "u1", now, now - 5000), "busy")
+  eq(M.canAct({}, null, "u1", now, now - 200), "busy")
+  eq(M.canAct({}, null, "u1", now, now - 1500), "")
+  eq(M.canAct({}, null, "u1", now, 0), "")
+  eq(M.canAct({ constructor: 1 }, null, "toString", now, 0), "", "prototype keys are not pending")
+})
+
+test("Model.confirmCopy: three verbs; every label fits the cell (SR8)", () => {
+  eq(M.confirmCopy("stop", "api").message, "Stop api?")
+  eq(M.confirmCopy("rebuild", "api").message, "Rebuild api without cache?")
+  const c = M.confirmCopy("cancel", "api")
+  eq(c.message, "Cancel the deployment of api?"); eq(c.cancelText, "Keep it"); eq(c.confirmText, "Cancel it")
+  for (const v of ["stop", "rebuild", "cancel"]) {
+    const x = M.confirmCopy(v, "api")
+    assert(x.cancelText.length <= 9 && x.confirmText.length <= 9, v + " labels fit")
+  }
+})
+
+test("Model.pendingVerb / gerund: seven verbs with and without stale", () => {
+  const want = { deploy: "deploying", redeploy: "redeploying", rebuild: "rebuilding", restart: "restarting", stop: "stopping", start: "starting", validate: "validating", cancel: "cancelling" }
+  for (const v in want) {
+    eq(M.gerund(v), want[v])
+    eq(M.pendingVerb(v, false), want[v] + "…")
+    eq(M.pendingVerb(v, true), want[v] + "… · still pending")
+  }
+})
+
+test("Model.withPending: resource replaces statusWords; deployment and server append to sub; rowRev and sameRows notice (SR7)", () => {
+  const s = actSnap()
+  const app = rowOf(s, APP), srv = rowOf(s, SRV), dep = rowOf(s, s.deployments[0].uuid)
+  const pa = M.withPending(app, { verb: "stop", stale: false })
+  eq(pa.statusWords, "stopping…"); eq(pa.tone, "accent"); eq(pa.dot, M.G.half); eq(pa.pendingVerb, "stopping…")
+  eq(app.statusWords, "running · healthy", "original row untouched")
+  const ps = M.withPending(srv, { verb: "validate", stale: true })
+  assert(ps.sub.indexOf(srv.sub) === 0 && ps.sub.endsWith(" · validating… · still pending"), ps.sub)
+  const pd = M.withPending(dep, { verb: "cancel" })
+  assert(pd.sub.indexOf(dep.sub) === 0 && pd.sub.endsWith(" · cancelling…"), pd.sub)
+  assert(M.rowRev(pa) !== M.rowRev(app)); assert(!M.sameRows([app], [pa]))
+  eq(M.withPending(app, null), app)
+  const pending = {}; pending[APP] = { verb: "stop" }
+  const rows = M.panelRows(s, { pending })
+  eq(rows.find(r => r.uuid === APP).statusWords, "stopping…", "panelRows applies ui.pending")
+  eq(rows.find(r => r.uuid === SRV).pendingVerb, "", "others untouched")
+})
+
+test("Model.actionOutcome: every fixture maps to its exact line and tone (SR4, SR10)", () => {
+  const o = (verb, tt, code, name, exit) => M.actionOutcome(verb, tt, rec(code, name ? fixture(name) : "", exit))
+  let r = o("deploy", "resource", 200, "action-deploy-ok.json")
+  assert(r.ok); eq(r.text, "Deployment queued"); eq(r.tone, "dim"); eq(r.deploymentUuid, "n3wd3pl0ym3ntuu1dxk2q9pr"); eq(r.error, null)
+  r = o("redeploy", "resource", 200, "action-deploy-ok.json"); eq(r.text, "Redeploy queued")
+  r = o("rebuild", "resource", 200, "action-deploy-ok.json"); eq(r.text, "Rebuild queued")
+  r = o("deploy", "resource", 200, "action-deploy-queue-full.json")
+  assert(!r.ok); eq(r.text, "Coolify's build queue is full"); eq(r.tone, "urgent"); eq(r.deploymentUuid, null); assert(r.error && r.error.kind !== "ratelimited", "never pauses the instance")
+  r = o("stop", "resource", 200, "action-stop-ok.json"); assert(r.ok); eq(r.text, "Stop requested"); eq(r.deploymentUuid, null)
+  r = o("start", "resource", 200, "action-stop-ok.json"); eq(r.text, "Start requested")
+  r = o("restart", "resource", 200, "action-restart-ok.json"); eq(r.text, "Restart queued"); eq(r.deploymentUuid, fx("action-restart-ok.json").deployment_uuid); assert(r.deploymentUuid, "recorded body carries a deployment uuid")
+  r = o("restart", "resource", 200, "action-service-restart-ok.json"); eq(r.text, "Restart requested"); eq(r.deploymentUuid, null)
+  r = o("cancel", "deployment", 200, "action-cancel-ok.json"); assert(r.ok); eq(r.text, "Deployment cancelled")
+  r = o("cancel", "deployment", 400, "action-cancel-400.json"); assert(!r.ok); eq(r.text, "Coolify said: Deployment cannot be cancelled. Current status: finished"); eq(r.tone, "urgent")
+  r = o("validate", "server", 201, "action-validate-201.json"); assert(r.ok); eq(r.text, "Validation started")
+})
+
+test("Model.actionOutcome: abilities, auth, rate limit, transport, 404, redaction (SR4, SR10)", () => {
+  const o = (verb, tt, code, body, exit) => M.actionOutcome(verb, tt, rec(code, body, exit))
+  let r = o("deploy", "resource", 403, fixture("error-403-ability.json"))
+  eq(r.text, "Token lacks the deploy permission"); eq(r.error.kind, "ability"); eq(r.tone, "urgent")
+  r = o("validate", "server", 403, '{"message":"Missing required permissions: write"}'); eq(r.text, "Token lacks the write permission")
+  r = o("stop", "resource", 403, '{"message":"You do not have permission to do this."}'); eq(r.text, "Coolify said: You do not have permission to do this.")
+  r = o("stop", "resource", 403, fixture("error-403-api-disabled.json")); eq(r.text, "Coolify's API is disabled on this instance")
+  r = o("stop", "resource", 403, '{"message":"IP address not allowed."}'); eq(r.text, "This IP is not allowed by the token")
+  r = o("stop", "resource", 401, fixture("error-401.json")); eq(r.text, "Token rejected"); eq(r.error.kind, "auth")
+  r = o("stop", "resource", 429, fixture("error-429.json")); eq(r.error.kind, "ratelimited"); assert(/^Rate limited · try again in \d+s$/.test(r.text), r.text)
+  r = o("stop", "resource", 0, "", 7); eq(r.text, "Coolify is unreachable"); eq(r.error.kind, "offline")
+  r = o("stop", "resource", 0, "", 63); eq(r.text, "Coolify's response was too large")
+  r = M.actionOutcome("stop", "resource", { exit: 1, code: 0, body: "", timeMs: 0, bytes: 0, errmsg: "", headers: { retryAfter: null, rateLimitRemaining: null, rateLimitLimit: null } })
+  eq(r.text, "Coolify returned nothing (curl 1)"); assert(!r.ok)
+  eq(o("stop", "resource", 404, '{"message":"Resource not found."}').text, "Coolify no longer has that resource")
+  eq(o("cancel", "deployment", 404, '{"message":"Deployment not found."}').text, "Coolify no longer has that deployment")
+  eq(o("validate", "server", 404, "").text, "Coolify no longer has that server")
+  eq(o("stop", "resource", 500, "").text, "Coolify returned 500")
+  const tok = "Bearer " + "x".repeat(43) + " 67|" + "a".repeat(30)
+  r = o("stop", "resource", 500, JSON.stringify({ message: "boom " + tok + " " + "y".repeat(200) }))
+  assert(r.text.indexOf("Coolify said: ") === 0); assert(r.text.indexOf("x".repeat(43)) < 0 && r.text.indexOf("a".repeat(30)) < 0, "redacted"); assert(r.text.length <= "Coolify said: ".length + 111, "elided")
+  eq(M.actionOutcome("stop", "resource", null).ok, false)
+})
+
+test("Model.panelRows with expandedKey: the actions row follows its parent, is not selectable, vanishes with it, survives the empty-resources path", () => {
+  const s = actSnap()
+  const rows = M.panelRows(s, { expandedKey: "res:" + APP })
+  const i = M.indexOfKey(rows, "res:" + APP)
+  eq(rows[i + 1].type, "actions"); eq(rows[i + 1].key, "act:res:" + APP); eq(rows[i + 1].parentKey, "res:" + APP); eq(rows[i + 1].uuid, APP)
+  eq(rows[i + 1].actions.map(a => a.id).join(","), "redeploy,restart,stop,open")
+  eq(rows[i + 1].targetType, "resource"); assert(rows[i + 1].name.length > 0)
+  assert(M.nextSelectable(rows, i, 1) !== i + 1, "actions row is skipped by j")
+  assert(M.nextSelectable(rows, i + 2, -1) !== i + 1, "and by k")
+  eq(M.panelRows(s, { expandedKey: "res:nope" }).filter(r => r.type === "actions").length, 0)
+  eq(M.panelRows(s, {}).filter(r => r.type === "actions").length, 0)
+  const empty = actSnap({ resources: [], tree: [], byServer: {} })
+  const er = M.panelRows(empty, { expandedKey: "srv:" + SRV })
+  const j = M.indexOfKey(er, "srv:" + SRV)
+  eq(er[j + 1].type, "actions", "early-return path splices too"); eq(er[j + 1].actions.map(a => a.id).join(","), "validate,open")
+  const a1 = M.panelRows(s, { expandedKey: "res:" + APP }), a2 = M.panelRows(s, { expandedKey: "res:" + APP })
+  assert(M.sameRows(a1, a2))
+  const exited = actSnap({ resources: s.resources.map(r => r.uuid === APP ? Object.assign({}, r, { state: "exited", status: "exited", health: "unknown" }) : r) })
+  const b = M.panelRows(exited, { expandedKey: "res:" + APP })
+  assert(!M.sameRows(a1, b), "rowRev changes when the action id list changes")
+  const noUrl = actSnap({ instance: Object.assign({}, s.instance, { url: "" }) })
+  const c = M.panelRows(noUrl, { expandedKey: "res:" + APP })
+  eq(c[M.indexOfKey(c, "res:" + APP) + 1].actions.map(a => a.id).join(","), "redeploy,restart,stop", "no Open without a url")
+  assert(!M.sameRows(a1, c), "url presence is in rowRev")
+})
+
+test("Model.nextAction: clamps; h from the first returns to the row; a vanished id counts as the first", () => {
+  const acts = [{ id: "deploy" }, { id: "start" }, { id: "open" }]
+  eq(M.nextAction(acts, "deploy", 1), "start"); eq(M.nextAction(acts, "open", 1), "open")
+  eq(M.nextAction(acts, "start", -1), "deploy"); eq(M.nextAction(acts, "deploy", -1), "")
+  eq(M.nextAction(acts, "stop", 1), "start"); eq(M.nextAction(acts, "stop", -1), "")
+  eq(M.nextAction([], "x", 1), "")
+})
+
+test("Model.GLYPHS: the pending dot and every glyph a pending row can emit are in the allowlist", () => {
+  const s = actSnap()
+  const pending = {}; pending[APP] = { verb: "stop" }; pending[SRV] = { verb: "validate", stale: true }
+  for (const r of M.panelRows(s, { pending })) {
+    for (const g of [r.dot, r.glyph]) if (g) assert(M.GLYPHS.indexOf(g) >= 0, "glyph " + g + " in allowlist")
+  }
+  assert(M.GLYPHS.indexOf(M.G.half) >= 0)
+})
+
+test("Model.footerHints: every cursor position; no o open without a url", () => {
   eq(M.footerHints("hero", null), "enter refresh · j down · r refresh · esc close")
   eq(M.footerHints("list", { type: "fold" }), "j/k move · enter fold · g group · r refresh · esc close")
-  eq(M.footerHints("list", { type: "resource" }), "j/k move · g group · r refresh · esc close")
+  eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }), "enter actions · d redeploy · s stop · t restart · o open")
+  eq(M.footerHints("list", { type: "resource", kind: "application", state: "exited", url: "u" }), "enter actions · d deploy · s start · o open")
+  eq(M.footerHints("list", { type: "resource", kind: "service", state: "running", url: "u" }), "enter actions · s stop · t restart · o open")
+  eq(M.footerHints("list", { type: "resource", kind: "database", state: "exited", url: "u" }), "enter actions · s start · o open")
+  eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "" }), "enter actions · d redeploy · s stop · t restart")
+  eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }, { expanded: true, actionFocus: "stop" }), "h/l pick · enter run · esc collapse")
+  eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }, { expanded: true, actionFocus: "" }), "l pick · enter collapse · esc collapse")
+  eq(M.footerHints("list", { type: "server", url: "u" }), "enter actions · v validate · o open")
+  eq(M.footerHints("list", { type: "deployment", status: "in_progress", url: "u" }), "enter actions · x cancel · o open")
+  eq(M.footerHints("list", { type: "deployment", status: "finished", url: "u" }), "o open · j/k move")
+  eq(M.footerHints("list", { type: "deployment", status: "finished", url: "" }), "j/k move · g group · r refresh · esc close")
+  eq(M.footerHints("list", { type: "resource" }, { confirmOpen: true }), "h/l pick · enter confirm · esc cancel")
 })
 
 console.log(passed + " passed, " + failed + " failed")

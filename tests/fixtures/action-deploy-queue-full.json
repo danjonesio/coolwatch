@@ -1,0 +1,1 @@
+{"_note": "hand-written from docs/coolify-api.md:180 (per-item queue_full inside a 200)", "deployments": [{"message": "Deployment queue is full for this server (queue_full).", "resource_uuid": "h0wxyg40kc0lz727dom9l03i", "deployment_uuid": null, "status": 429}]}

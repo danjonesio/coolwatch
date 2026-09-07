@@ -35,6 +35,20 @@ var ACTIVE = { queued: true, in_progress: true }
 var RECENT_RENDER_CAP = 5
 var RECENT_MAX_AGE_MS = 60 * 60 * 1000   // finished deployments leave the panel after an hour
 
+// ---- actions (Phase 2) ---------------------------------------------------------------
+// A uuid the service will act on must look like one before it reaches a path (SR3).
+var UUID_RE = /^[A-Za-z0-9]{1,64}$/
+// Coolify UI path segment per resource kind (application proven by deployment_url;
+// service and database inferred, verified live).
+var UI_SEGMENT = { application: "application", service: "service", database: "database" }
+// A stop/start pending entry gains " · still pending" after the sweep (60 s) plus the
+// panel-closed resources interval (60 s) plus margin; every entry is dropped at 300 s.
+var PENDING_STALE_MS = 150 * 1000
+var PENDING_DROP_MS = 300 * 1000
+var GERUND = { deploy: "deploying", redeploy: "redeploying", rebuild: "rebuilding", restart: "restarting", stop: "stopping", start: "starting", validate: "validating", cancel: "cancelling" }
+var RUNNING_STATES = { running: true, starting: true, restarting: true, degraded: true }
+var STOPPED_STATES = { exited: true, paused: true }
+
 // ---- config --------------------------------------------------------------------------
 
 var POLL_DEFAULTS = { deploymentsSec: 4, resourcesSec: 60, serversSec: 120, topologySec: 600 }
@@ -355,7 +369,7 @@ function normaliseProjects(arr) {
 
 function environmentsOf(detail) {
   var envs = detail && Array.isArray(detail.environments) ? detail.environments : []
-  return envs.map(function (e) { e = e || {}; return { id: typeof e.id === "number" ? e.id : Number(e.id), name: String(e.name || "") } })
+  return envs.map(function (e) { e = e || {}; return { id: typeof e.id === "number" ? e.id : Number(e.id), name: String(e.name || ""), uuid: String(e.uuid || "") } })
 }
 
 function serverResourceUuids(arr) {
@@ -375,12 +389,12 @@ function buildTree(projects, envsByProject, resources) {
       environments: envs.map(function (e) {
         var uuids = (resources || []).filter(function (r) { return r.environmentId !== null && r.environmentId === e.id })
           .map(function (r) { placed[r.uuid] = true; return r.uuid })
-        return { id: e.id, name: e.name, resourceUuids: uuids }
+        return { id: e.id, name: e.name, uuid: e.uuid || "", resourceUuids: uuids }
       })
     })
   })
   var left = (resources || []).filter(function (r) { return !placed[r.uuid] }).map(function (r) { return r.uuid })
-  if (left.length) tree.push({ projectUuid: "", projectName: "Ungrouped", environments: [{ id: null, name: "", resourceUuids: left }] })
+  if (left.length) tree.push({ projectUuid: "", projectName: "Ungrouped", environments: [{ id: null, name: "", uuid: "", resourceUuids: left }] })
   return tree
 }
 
@@ -394,7 +408,7 @@ function applyJoins(resources, tree, byServer, servers) {
   var env = {}
   ;(tree || []).forEach(function (p) {
     p.environments.forEach(function (e) {
-      e.resourceUuids.forEach(function (u) { env[u] = { projectUuid: p.projectUuid, projectName: p.projectName, environmentName: e.name } })
+      e.resourceUuids.forEach(function (u) { env[u] = { projectUuid: p.projectUuid, projectName: p.projectName, environmentName: e.name, environmentUuid: e.uuid || null } })
     })
   })
   var srv = {}
@@ -406,6 +420,7 @@ function applyJoins(resources, tree, byServer, servers) {
     o.projectUuid = e ? e.projectUuid : null
     o.projectName = e ? e.projectName : null
     o.environmentName = e ? e.environmentName : null
+    o.environmentUuid = e && e.environmentUuid ? e.environmentUuid : null
     o.serverUuid = srv[r.uuid] || null
     return o
   })
@@ -641,16 +656,51 @@ function kindHint(res) {
   return KIND_HINT[res.type] || res.type || ""
 }
 
-function deploymentRow(d) {
+// ---- browser URLs (SR9) -------------------------------------------------------------------
+// Every browser URL is the configured instance origin plus a path built here. The only
+// returned string ever used is a deployment's relative `deployment_url`; it must start
+// with exactly one "/" and carry no scheme. Resource and server paths are built from
+// uuids only. "" means "no page": the Open button is absent and `o` does nothing.
+
+function origin(instanceUrl) {
+  var u = String(instanceUrl === undefined || instanceUrl === null ? "" : instanceUrl).trim().replace(/\/+$/, "")
+  return /^https?:\/\/[^\/\s?#]+(\/[^\s?#]*)?$/.test(u) ? u : ""     // scheme + host, optional path prefix; no query, no fragment
+}
+
+function enc(v) { return encodeURIComponent(String(v === undefined || v === null ? "" : v)) }
+
+function openUrl(targetType, obj, originStr) {
+  var o = origin(originStr)
+  if (!o || !obj) return ""
+  if (targetType === "deployment") {
+    var p = typeof obj.url === "string" ? obj.url : ""
+    if (!/^\/(?!\/)/.test(p)) return ""
+    if (/^[^\/]*:/.test(p.slice(1))) return ""
+    return o + p
+  }
+  if (targetType === "resource") {
+    if (!obj.projectUuid || !obj.environmentUuid || !obj.uuid) return ""
+    if (!Object.prototype.hasOwnProperty.call(UI_SEGMENT, obj.kind)) return ""
+    return o + "/project/" + enc(obj.projectUuid) + "/environment/" + enc(obj.environmentUuid) + "/" + UI_SEGMENT[obj.kind] + "/" + enc(obj.uuid)
+  }
+  if (targetType === "server") {
+    if (!obj.uuid) return ""
+    return o + "/server/" + enc(obj.uuid)
+  }
+  return ""
+}
+
+function deploymentRow(d, originStr) {
   var g = deploymentGlyph(d)
   return {
     type: "deployment", key: "dep:" + d.uuid, uuid: d.uuid, glyph: g.glyph, tone: g.tone,
     name: d.appName || d.uuid, sub: [d.branch, d.commitMessage].filter(function (x) { return !!x }).join(" · "),
-    createdAt: d.createdAt, updatedAt: d.updatedAt, terminal: !!TERMINAL[d.status], status: d.status
+    createdAt: d.createdAt, updatedAt: d.updatedAt, terminal: !!TERMINAL[d.status], status: d.status,
+    url: openUrl("deployment", d, originStr), pendingVerb: ""
   }
 }
 
-function serverRow(x) {
+function serverRow(x, originStr) {
   var bits = [x.ip]
   bits.push(plural(x.resourceCount || 0, "resource"))
   if (!x.reachable && !x.disabled) bits.push("unreachable")
@@ -659,13 +709,186 @@ function serverRow(x) {
   var dot = x.disabled || !x.reachable ? G.dotOff : (x.usable ? G.dotOn : G.half)
   var tone = !x.reachable && !x.disabled ? "urgent" : (x.disabled ? "dim" : (x.usable ? "fg" : "urgent"))
   return { type: "server", key: "srv:" + x.uuid, uuid: x.uuid, dot: dot, tone: tone, name: x.name,
-           sub: bits.filter(function (b) { return !!b }).join(" · "), dim: !x.reachable || x.disabled }
+           sub: bits.filter(function (b) { return !!b }).join(" · "), dim: !x.reachable || x.disabled,
+           url: openUrl("server", x, originStr), pendingVerb: "" }
 }
 
-function resourceRow(r, indent) {
+function resourceRow(r, indent, originStr) {
   var d = statusDot(r)
   return { type: "resource", key: "res:" + r.uuid, uuid: r.uuid, dot: d.dot, tone: d.tone, name: r.name,
-           statusWords: statusWords(r), kindHint: kindHint(r), dim: r.state === "exited" || r.state === "paused", indent: indent || 0 }
+           statusWords: statusWords(r), kindHint: kindHint(r), dim: r.state === "exited" || r.state === "paused", indent: indent || 0,
+           kind: r.kind, state: r.state, health: r.health, url: openUrl("resource", r, originStr), pendingVerb: "" }
+}
+
+// ---- pending (Phase 2) ------------------------------------------------------------------
+// The service owns the pending map; rows render it. A resource row's status words are
+// replaced by the verb; deployment and server rows keep their caption and gain it.
+
+function gerund(verb) { return GERUND[verb] || String(verb || "") }
+function pendingVerb(verb, stale) { return gerund(verb) + "…" + (stale ? " · still pending" : "") }
+
+function withPending(row, entry) {
+  if (!entry) return row
+  var o = {}
+  for (var k in row) o[k] = row[k]
+  var v = pendingVerb(entry.verb, !!entry.stale)
+  if (row.type === "resource") o.statusWords = v
+  else o.sub = (row.sub ? row.sub + " · " : "") + v
+  o.tone = "accent"
+  o.dot = G.half
+  o.pendingVerb = v
+  return o
+}
+
+// ---- applicability (Phase 2) --------------------------------------------------------------
+// THE table: which buttons a row offers, in order. Hidden, never disabled. Every other
+// applicability decision (keys, IPC, the confirm) is a lookup over this list (SR3).
+
+function act(id, label, destructive, confirm, button) { return { id: id, label: label, destructive: !!destructive, confirm: !!confirm, button: button !== false } }
+var OPEN = act("open", "Open", false, false)
+function buttons(list) { return list.filter(function (a) { return a.button }) }
+
+function actionsFor(row) {
+  if (!row) return []
+  var out = []
+  if (row.type === "resource") {
+    var running = !!RUNNING_STATES[row.state], stopped = !!STOPPED_STATES[row.state]
+    if (running || stopped) {
+      // One button follows the state: Deploy brings a stopped application up, Redeploy
+      // rebuilds a running one (both POST /deploy). The no-cache rebuild (`D`) is
+      // keyboard-only and confirms.
+      if (row.kind === "application") {
+        if (running) { out.push(act("redeploy", "Redeploy")); out.push(act("rebuild", "Rebuild", true, true, false)) }
+        else out.push(act("deploy", "Deploy"))
+      }
+      if (running) { out.push(act("restart", "Restart")); out.push(act("stop", "Stop", true, true)) }
+      else out.push(act("start", "Start"))
+    }
+  } else if (row.type === "server") {
+    out.push(act("validate", "Validate"))
+  } else if (row.type === "deployment") {
+    if (ACTIVE[row.status]) out.push(act("cancel", "Cancel", true, true))
+  } else return []
+  if (row.url) out.push(OPEN)
+  return out
+}
+
+// `s` resolves to stop or start, `d`/`deploy` to deploy or redeploy, `D` to rebuild;
+// canonical ids pass through.
+function actionFor(row, verb) {
+  var list = actionsFor(row)
+  var running = !!RUNNING_STATES[row && row.state]
+  var want = verb === "s" ? (running ? "stop" : "start")
+           : (verb === "d" || verb === "deploy") ? (running ? "redeploy" : "deploy")
+           : (verb === "D" ? "rebuild" : verb)
+  for (var i = 0; i < list.length; i++) if (list[i].id === want) return list[i]
+  return null
+}
+
+function targetTypeOf(row) { return row.type === "resource" ? "resource" : (row.type === "server" ? "server" : (row.type === "deployment" ? "deployment" : "")) }
+
+// The single gate for panel and IPC: is this uuid in the store, and does this verb apply?
+// Returns no Api descriptor (Model never imports Api); the service builds it from `kind`.
+function actionRequest(s, verb, uuid) {
+  uuid = String(uuid === undefined || uuid === null ? "" : uuid)
+  if (!UUID_RE.test(uuid)) return { ok: false, why: "invalid" }
+  s = s || {}
+  var o = origin(s.instance && s.instance.url)
+  var row = null, obj = null
+  ;(s.resources || []).forEach(function (r) { if (!row && r.uuid === uuid) { obj = r; row = resourceRow(r, 0, o) } })
+  ;(s.deployments || []).forEach(function (d) { if (!row && d.uuid === uuid) { obj = d; row = deploymentRow(d, o) } })
+  ;(s.servers || []).forEach(function (x) { if (!row && x.uuid === uuid) { obj = x; row = serverRow(x, o) } })
+  if (!row) return { ok: false, why: "unknown" }
+  var a = verb === "open" ? null : actionFor(row, verb)
+  if (!a) return { ok: false, why: "notapplicable" }
+  return { ok: true, verb: a.id, uuid: uuid, name: row.name, targetType: targetTypeOf(row),
+           kind: row.type === "resource" ? row.kind : null, confirm: a.confirm, destructive: a.destructive,
+           status: row.type === "resource" ? obj.status : null }
+}
+
+// "" when the action may launch now (SR6).
+function canAct(pending, inflight, uuid, nowMs, lastLaunchAt) {
+  if ((pending && Object.prototype.hasOwnProperty.call(pending, uuid)) || (inflight && inflight.uuid === uuid)) return "already pending"
+  if (inflight) return "busy"
+  if (lastLaunchAt && (nowMs || Date.now()) - lastLaunchAt < 1000) return "busy"
+  return ""
+}
+
+function confirmCopy(verb, name) {
+  var n = String(name || "it")
+  switch (verb) {
+    case "stop": return { message: "Stop " + n + "?", cancelText: "Cancel", confirmText: "Stop" }
+    case "rebuild": return { message: "Rebuild " + n + " without cache?", cancelText: "Cancel", confirmText: "Rebuild" }
+    case "cancel": return { message: "Cancel the deployment of " + n + "?", cancelText: "Keep it", confirmText: "Cancel it" }
+    default: return { message: gerund(verb) + " " + n + "?", cancelText: "Cancel", confirmText: "Confirm" }
+  }
+}
+
+var TARGET_WORD = { resource: "resource", deployment: "deployment", server: "server" }
+var OK_TEXT = { deploy: "Deployment queued", redeploy: "Redeploy queued", rebuild: "Rebuild queued", stop: "Stop requested", start: "Start requested",
+                cancel: "Deployment cancelled", validate: "Validation started" }
+
+// One splitResponses record (or the service's empty-stream fallback) -> the status line.
+// errorFor classifies; only the sink differs from polling (SR4, SR10). Never echoes a body.
+function actionOutcome(verb, targetType, rec) {
+  if (!rec || typeof rec !== "object" || rec.code === undefined) rec = { exit: 1, code: 0, body: "", errmsg: "", headers: null }
+  var e = errorFor({ curlExit: rec.exit, httpCode: rec.code, body: rec.body, errmsg: rec.errmsg, request: "action" })
+  var out = { ok: false, text: "", tone: "urgent", deploymentUuid: null, error: e }
+  if (e) {
+    var ab
+    switch (e.kind) {
+      case "ability": ab = abilityOf(e.detail); out.text = ab ? "Token lacks the " + ab + " permission" : "Coolify said: " + elide(e.detail, 110); break
+      case "apidisabled": out.text = "Coolify's API is disabled on this instance"; break
+      case "ipblocked": out.text = "This IP is not allowed by the token"; break
+      case "auth": out.text = "Token rejected"; break
+      case "ratelimited": out.text = "Rate limited · try again in " + retryAfterSec(rec.headers, 1) + "s"; break
+      case "offline": out.text = "Coolify is unreachable"; break
+      case "toolarge": out.text = "Coolify's response was too large"; break
+      default:
+        if (e.curlExit) out.text = "Coolify returned nothing (curl " + e.curlExit + ")"
+        else if (e.httpCode === 404) out.text = "Coolify no longer has that " + (TARGET_WORD[targetType] || "resource")
+        else { var m = messageOf(rec.body); out.text = m ? "Coolify said: " + elide(redact(m), 110) : "Coolify returned " + e.httpCode }
+    }
+    return out
+  }
+  var body = parseJson(rec.body)
+  var v = body.ok && body.value && typeof body.value === "object" ? body.value : {}
+  var item = Array.isArray(v.deployments) && v.deployments.length ? (v.deployments[0] || {}) : null
+  if (item && (Number(item.status) === 429 || /queue_full/i.test(String(item.message || "")))) {
+    out.error = makeError("http", String(item.message || "queue_full"), { httpCode: 429, request: "action" })
+    out.error.kind = "http"
+    out.text = "Coolify's build queue is full"
+    return out
+  }
+  var dep = item && typeof item.deployment_uuid === "string" ? item.deployment_uuid : (typeof v.deployment_uuid === "string" ? v.deployment_uuid : null)
+  out.ok = true; out.tone = "dim"; out.error = null; out.deploymentUuid = dep || null
+  if (verb === "restart") out.text = dep ? "Restart queued" : "Restart requested"
+  else out.text = OK_TEXT[verb] || (gerund(verb) + " requested")
+  return out
+}
+
+// Keyboard focus inside the action strip; an id no longer in the list counts as the first.
+function nextAction(actions, id, dx) {
+  var ids = (actions || []).map(function (a) { return a.id })
+  if (!ids.length) return ""
+  var i = ids.indexOf(id)
+  if (i < 0) i = 0
+  if (dx < 0 && i === 0) return ""
+  var j = Math.max(0, Math.min(ids.length - 1, i + (dx < 0 ? -1 : 1)))
+  return ids[j]
+}
+
+// The non-selectable `actions` row directly after the expanded leaf, if it still exists.
+function spliceActions(rows, ui) {
+  if (!ui || !ui.expandedKey) return rows
+  var i = indexOfKey(rows, ui.expandedKey)
+  if (i < 0) return rows
+  var row = rows[i]
+  var list = buttons(actionsFor(row))
+  if (!list.length) return rows
+  rows.splice(i + 1, 0, { type: "actions", key: "act:" + row.key, parentKey: row.key, uuid: row.uuid,
+                          targetType: targetTypeOf(row), name: row.name, actions: list })
+  return rows
 }
 
 function panelRows(s, ui) {
@@ -673,8 +896,11 @@ function panelRows(s, ui) {
   var nowMs = ui.nowMs || Date.now()
   var folded = ui.folded || {}
   var groupBy = ui.groupBy === "server" ? "server" : "project"
+  var pending = ui.pending || {}
   var rows = []
   s = s || {}
+  var o = origin(s.instance && s.instance.url)
+  function pend(row) { return withPending(row, Object.prototype.hasOwnProperty.call(pending, row.uuid) ? pending[row.uuid] : null) }
   var sep = 0
   // DEPLOYMENTS
   rows.push({ type: "section", key: "sec:deployments", title: "DEPLOYMENTS", control: null })
@@ -684,25 +910,25 @@ function panelRows(s, ui) {
     return isNaN(t) || nowMs - t <= RECENT_MAX_AGE_MS
   }).slice(0, RECENT_RENDER_CAP)
   if (!active.length && !recent.length) rows.push({ type: "note", key: "note:deployments", text: noteFor(s, "deployments") })
-  active.forEach(function (d) { rows.push(deploymentRow(d)) })
-  recent.forEach(function (d) { rows.push(deploymentRow(d)) })
+  active.forEach(function (d) { rows.push(pend(deploymentRow(d, o))) })
+  recent.forEach(function (d) { rows.push(pend(deploymentRow(d, o))) })
   rows.push({ type: "separator", key: "sep:" + (++sep) })
   // SERVERS
   rows.push({ type: "section", key: "sec:servers", title: "SERVERS", control: null })
   var servers = s.servers || []
   if (!servers.length) rows.push({ type: "note", key: "note:servers", text: noteFor(s, "servers") })
-  servers.forEach(function (x) { rows.push(serverRow(x)) })
+  servers.forEach(function (x) { rows.push(pend(serverRow(x, o))) })
   rows.push({ type: "separator", key: "sep:" + (++sep) })
   // RESOURCES
   rows.push({ type: "section", key: "sec:resources", title: "RESOURCES", control: "groupBy" })
   var resources = s.resources || []
-  if (!resources.length) { rows.push({ type: "note", key: "note:resources", text: noteFor(s, "resources") }); return rows }
+  if (!resources.length) { rows.push({ type: "note", key: "note:resources", text: noteFor(s, "resources") }); return spliceActions(rows, ui) }
   var byUuid = {}
   resources.forEach(function (r) { byUuid[r.uuid] = r })
   function fold(key, title, uuids, indent) {
     var open = !folded[key]
     rows.push({ type: "fold", key: key, title: title, open: open, count: uuids.length, indent: indent || 0 })
-    if (open) uuids.forEach(function (u) { if (byUuid[u]) rows.push(resourceRow(byUuid[u], (indent || 0) + 1)) })
+    if (open) uuids.forEach(function (u) { if (byUuid[u]) rows.push(pend(resourceRow(byUuid[u], (indent || 0) + 1, o))) })
   }
   if (groupBy === "project") {
     var tree = s.tree && s.tree.length ? s.tree : [{ projectUuid: "", projectName: "Ungrouped", environments: [{ id: null, name: "", resourceUuids: resources.map(function (r) { return r.uuid }) }] }]
@@ -723,7 +949,7 @@ function panelRows(s, ui) {
     var left = resources.filter(function (r) { return !placed[r.uuid] }).map(function (r) { return r.uuid })
     if (left.length) fold("fold:s:unassigned", "Unassigned", left, 0)
   }
-  return rows
+  return spliceActions(rows, ui)
 }
 
 var SELECTABLE = { fold: true, deployment: true, server: true, resource: true }
@@ -731,7 +957,8 @@ var SELECTABLE = { fold: true, deployment: true, server: true, resource: true }
 function rowRev(r) {
   return [r.type, r.glyph || r.dot || "", r.tone || "", r.name || r.title || r.text || "", r.sub || r.statusWords || "",
           r.open === undefined ? "" : String(r.open), r.count === undefined ? "" : String(r.count),
-          r.dim === undefined ? "" : String(r.dim), r.kindHint || "", r.terminal === undefined ? "" : String(r.terminal), r.control || ""].join("")
+          r.dim === undefined ? "" : String(r.dim), r.kindHint || "", r.terminal === undefined ? "" : String(r.terminal), r.control || "",
+          r.pendingVerb || "", r.url ? "u" : "", r.actions ? r.actions.map(function (a) { return a.id }).join(",") : ""].join("")
 }
 
 function sameRows(a, b) {
@@ -767,10 +994,23 @@ function firstSelectableInSection(rows, title) {
   return -1
 }
 
-function footerHints(focusSection, row) {
+var HINT_KEY = { deploy: "d deploy", redeploy: "d redeploy", stop: "s stop", start: "s start", restart: "t restart", validate: "v validate", cancel: "x cancel", open: "o open" }
+var HINT_ORDER = ["deploy", "redeploy", "stop", "start", "restart", "validate", "cancel", "open"]
+
+function footerHints(focusSection, row, ui) {
+  ui = ui || {}
+  if (ui.confirmOpen) return "h/l pick · enter confirm · esc cancel"
   if (focusSection === "hero") return "enter refresh · j down · r refresh · esc close"
   if (row && row.type === "fold") return "j/k move · enter fold · g group · r refresh · esc close"
-  return "j/k move · g group · r refresh · esc close"
+  if (ui.expanded && ui.actionFocus) return "h/l pick · enter run · esc collapse"
+  if (ui.expanded) return "l pick · enter collapse · esc collapse"
+  var list = buttons(actionsFor(row))
+  if (!list.length) return "j/k move · g group · r refresh · esc close"
+  var ids = {}
+  list.forEach(function (a) { ids[a.id] = true })
+  var bits = HINT_ORDER.filter(function (id) { return ids[id] }).map(function (id) { return HINT_KEY[id] })
+  if (list.length === 1 && ids.open) return "o open · j/k move"
+  return ["enter actions"].concat(bits).join(" · ")
 }
 
 // ---- format -------------------------------------------------------------------------------------

@@ -27,6 +27,16 @@ if compgen -G "$root/*.qml" >/dev/null && grep -nE '#[0-9a-fA-F]{3,8}\b|font\.fa
   fail "hardcoded colour/size/font"
 fi
 
+# SR9: the browser launcher is only ever called through Util.execArgv with one argument
+# (the URL Model.openUrl built from the instance origin), and fqdn never reaches the UI.
+# Comments are stripped to end of line first, so a comment can neither satisfy the floor nor hide a call.
+launch=$(sed 's#//.*##' "$root"/*.qml | grep 'omarchy-launch-browser' || true)
+n=$(printf '%s\n' "$launch" | grep -c 'omarchy-launch-browser' || true)
+[[ $n -ge 1 ]] || fail "SR9 gate matched nothing; the launcher was renamed"
+bad=$(printf '%s\n' "$launch" | grep -vcE 'Util\.execArgv\(\["omarchy-launch-browser", [A-Za-z_.]+\]\)' || true)
+[[ $bad -eq 0 ]] || fail "omarchy-launch-browser must be called as Util.execArgv([\"omarchy-launch-browser\", <one identifier>])"
+if grep -n 'fqdn' "$root"/*.qml; then fail "fqdn must never reach the UI"; fi
+
 [[ ${1:-} == --no-shell ]] && { echo ok; exit 0; }
 
 need omarchy; need rsync; need flock

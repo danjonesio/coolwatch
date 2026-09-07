@@ -8,7 +8,8 @@ deployments, and the actions to deploy, redeploy, restart, stop, start and cance
 Notifications when deployments queue, build, finish or fail. It is a Quickshell plugin
 that runs inside `omarchy-shell`; there is no daemon and no second process.
 
-Status: **Phase 1 ("see") in progress.** Read `docs/roadmap.md` before writing code.
+Status: **Phase 2 ("act") built on branch `phase-2-act`; Phase 1 ("see") merged.** Read
+`docs/roadmap.md` before writing code.
 
 ## Product locks
 
@@ -16,7 +17,8 @@ Status: **Phase 1 ("see") in progress.** Read `docs/roadmap.md` before writing c
   (The older omasnitch id used `danjones`; the GitHub handle is `danjonesio`.)
 - API first, SSH last. Anything the REST API can answer comes from the REST API. SSH
   is only for Sentinel metrics, Phase 5, opt-in per server.
-- Token abilities are per phase. **Phase 1: `read` only.** `deploy` is added in Phase 2.
+- Token abilities are per phase. **Phase 2: `read` + `deploy`.** Coolify's UI has no
+  edit-abilities flow, so a new token is swapped in, not edited.
   `read:sensitive` is added in Phase 4 for the log viewer; it also makes
   `GET /deployments` carry every deployment's full build log on every poll, so do not
   hold it before then. `write` is optional and only gates "Validate server".
@@ -47,13 +49,28 @@ Status: **Phase 1 ("see") in progress.** Read `docs/roadmap.md` before writing c
   `finished`, `failed`, `cancelled-by-user`.
 - Lifecycle endpoints are POST only. Restart of an application is itself a deployment
   (`restart_only: true`) and will appear in the deployments list.
-- Stop and Redeploy-without-cache confirm. Deploy, Restart, Start do not.
+- Stop, Rebuild-without-cache (`D`, keyboard only) and Cancel confirm (in the panel).
+  Deploy, Redeploy, Restart, Start, Validate do not. CLI verbs never confirm: typing the
+  verb is the confirmation.
+- One deploy button follows the state: Deploy on a stopped application, Redeploy on a
+  running one (both `POST /deploy`; `d` and IPC `deploy` resolve the same way). Only
+  applications get it (`POST /deploy` accepts services and databases but that is Start
+  under another name). A left click on a row opens its strip; the buttons are clickable. Open targets the resource's
+  Coolify page, built from the instance origin; never `fqdn`. No page → no Open button.
+- No compensating polls after an action. Pending is a service-owned map applied at
+  render time and cleared per verb (deploy/redeploy/restart: the created deployment
+  appears, or two deployments polls pass without it; stop/start: the status *state*
+  changes, "still pending" at 150 s; validate and a service/database restart: the first
+  poll after the action; everything: dropped at 300 s). Any non-2xx clears it; only a
+  reap keeps it. An action's outcome is the status line and nothing else: never `_fail`, not
+  even its 429 arm (`_pauseFor` is the one escalation).
 - Look native or do not ship: only `qs.Ui` + `qs.Commons`, no hardcoded colours, sizes,
   radii or font families. `docs/design.md` is the spec, `docs/omarchy-shell-reference.md`
   the component reference.
 - Rate limit is 200 req/min per token. Idle polling is ≈17/min (deployments 4 s,
   resources 60 s, servers 120 s, topology one block per 40 s from a ≥600 s cycle), ≈36/min
-  with a deployment; no 60 s window may reach 20. See the schedule in `docs/architecture.md`.
+  with a deployment; no 60 s window may reach 20 with the panel closed (≈ 20 with a panel
+  open, measured). See the schedule in `docs/architecture.md`.
 
 ## Layout
 
@@ -93,7 +110,7 @@ bin/check --no-shell             # the CI-able subset (no omarchy, no Qt)
 # qmllint only resolves `import qs.Ui` from an import root that contains qs/; bin/check
 # builds one in a temp dir (qs -> /usr/share/omarchy/shell). `-I /usr/share/omarchy/shell`
 # alone resolves nothing and exits 0.
-bin/record-fixture servers /servers   # record a scrubbed fixture with the read-only token
+bin/record-fixture servers /servers   # record a scrubbed GET fixture (POST bodies are pasted by hand through the same scrubber)
 
 # dev loop (validator refuses symlinks, so copy)
 bin/dev-sync                     # Panel/Bar QML hot-reload sometimes; Service.qml and Panel.qml changes need `omarchy restart shell`
@@ -108,7 +125,10 @@ omarchy plugin remove io.github.danjonesio.omarify         # safe rollback: move
 omarchy-shell shell toggle io.github.danjonesio.omarify
 omarchy-shell io.github.danjonesio.omarify refresh
 omarchy-shell io.github.danjonesio.omarify status
-omarchy-shell io.github.danjonesio.omarify deploy <uuid>   # Phase 2; Phase 1 registers only refresh and status
+omarchy-shell io.github.danjonesio.omarify deploy|restart|stop|start <uuid>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`
+
+# rollback of a Phase 2 build (placement in shell.json survives; the config format is unchanged)
+git checkout 29f3a76 -- manifest.json Service.qml BarWidget.qml Panel.qml Model.js Api.js && bin/dev-sync && omarchy restart shell
 
 # logs
 quickshell log -p /usr/share/omarchy/shell --tail 100
@@ -149,6 +169,10 @@ bin/record-fixture deployments-active /deployments
   need `sub_service_name` equal to `applications[].name` from `GET /services/{uuid}`.
 - `403` means one of three things: API disabled (self-hosted), IP not allowed, or a
   missing ability. Read `message`.
+- `deployment_url` is a relative path; `POST /deploy` reports a full queue (`queue_full`)
+  inside a 200; validate and a service/database restart have no observable end state;
+  a lifecycle POST block carries `request = "POST"`, a JSON `Content-Type` and
+  `data-raw = "{}"` (never `data`, which reads a file for a leading `@`); never `location`.
 - Coolify refreshes stored statuses about once a minute. After an action, show
   "pending" and wait; do not poll the resource faster to compensate.
 - Cloud (`https://app.coolify.io`) has the API always on and no IP allowlist.
@@ -177,6 +201,11 @@ bin/record-fixture deployments-active /deployments
   `closeRequested`, `h`/`l` as `moveRequested(±1, 0)`; Return fires both
   `returnRequested` and `activateRequested`. Never add a `Keys.onPressed`.
 - `bar.barForeground` for anything painted in the bar strip, `bar.foreground` in panels.
+- `ConfirmDialog` is driven from `PanelKeyCatcher` signals (`handleKey` needs a raw
+  `KeyEvent` from a `Keys.onPressed`); it preselects Confirm and moves selection on
+  hover, so reset `selectedIndex` on open and arm it 250 ms later. `Button` has no
+  `hoverColor`: `foreground: root.urgent` tints the label and the hover fill. A `Timer`
+  cannot live in `KeyboardPanel`'s content list (Items only).
 - `Process` and `StdioCollector` have no `parent`; write to ids, read `.text` in `onExited`.
 - `dev-sync` copies because the validator refuses symlinks *inside* a plugin folder and
   inotify through a symlinked dir is unverified.
@@ -194,6 +223,10 @@ bin/record-fixture deployments-active /deployments
 - Don't edit `/usr/share/omarchy`.
 - Don't call create/delete/env-var endpoints. Read, deploy, lifecycle, validate only.
 - Don't commit fixtures with real tokens; uuids and names are fine.
+- Don't route an action result through `_fail` (not even its 429 arm), and don't store
+  objects in `_requestLog` (both filters subtract bare timestamps).
+- Don't let the panel or a reviewer run `bin/dev-sync` or any `--delete` tool against a
+  real path; staging is `OMARIFY_DEST=$(mktemp -d)/plugin`.
 
 ## Docs
 
