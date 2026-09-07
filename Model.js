@@ -493,6 +493,93 @@ function diffActive(prevUuids, next) {
   return { added: added, vanished: vanished }
 }
 
+// ---- change detection (Phase 3) ---------------------------------------------------------
+// Every diff takes the previous store list (still in hand when the _dispatch arm runs) and
+// the next one; `first` is the kind's own _baseline flag captured before _markPoll, so a
+// baseline poll yields no events (never _baselineDone: one broken kind must not silence
+// everything). Events carry the diff-time object for STATE fields only; notifyPlan
+// re-resolves the render object from the joined snapshot.
+// event: { kind: deployment|resource|server, event, uuid, obj }
+
+function byUuid(list) { var m = {}; (list || []).forEach(function (x) { if (x && x.uuid) m[x.uuid] = x }); return m }
+
+function diffDeployments(prevList, nextList, first) {
+  var prev = byUuid(prevList)
+  var out = { vanished: diffActive((prevList || []).map(function (d) { return d.uuid }), nextList).vanished, events: [] }
+  if (first) return out
+  ;(nextList || []).forEach(function (d) {
+    if (!d || !d.uuid) return
+    var p = prev[d.uuid], ev = null
+    if (!p) {
+      if (d.status === "queued") ev = d.restartOnly ? "restarting" : "queued"
+      else if (d.status === "in_progress") ev = d.restartOnly ? "restarting" : "started"
+    } else if (p.status === "queued" && d.status === "in_progress" && !d.restartOnly) ev = "started"
+    if (ev) out.events.push({ kind: "deployment", event: ev, uuid: d.uuid, obj: d })
+  })
+  return out
+}
+
+// The terminal drain result -> one event, or null for a status that is not terminal.
+function terminalEvent(d) {
+  if (!d || !d.uuid) return null
+  var ev = null
+  if (d.status === "finished") ev = d.restartOnly ? "restarted" : "finished"
+  else if (d.status === "failed") ev = "failed"
+  else if (d.status === "cancelled-by-user") ev = "cancelled"
+  return ev ? { kind: "deployment", event: ev, uuid: d.uuid, obj: d } : null
+}
+
+// Intra-session terminal dedupe: `recent` is already a uuid-keyed terminal set.
+function hasTerminal(recent, uuid) {
+  return (recent || []).some(function (d) { return !!d && d.uuid === uuid && !!TERMINAL[d.status] })
+}
+
+// State prefix only, never health (AGENTS.md prefix-match lock); unknown and paused on
+// either side are a status-refresh gap or a deliberate act, not an event.
+var STOP_FROM = { running: true, starting: true, restarting: true, degraded: true }
+var DEGRADE_FROM = { running: true, starting: true, restarting: true }
+var RECOVER_FROM = { exited: true, degraded: true }
+var RECOVER_TO = { running: true, starting: true }
+
+function resourceEvents(prevRaw, nextRaw, first) {
+  if (first) return []
+  var prev = byUuid(prevRaw), out = []
+  ;(nextRaw || []).forEach(function (r) {
+    if (!r || !r.uuid) return
+    var p = prev[r.uuid]
+    if (!p || p.state === r.state) return
+    var ev = null
+    if (r.state === "exited" && STOP_FROM[p.state]) ev = "stopped"
+    else if (r.state === "degraded" && DEGRADE_FROM[p.state]) ev = "degraded"
+    else if (RECOVER_TO[r.state] && RECOVER_FROM[p.state]) ev = "recovered"
+    if (ev) out.push({ kind: "resource", event: ev, uuid: r.uuid, obj: r })
+  })
+  return out
+}
+
+function serverEvents(prevServers, nextServers, first) {
+  if (first) return []
+  var prev = byUuid(prevServers), out = []
+  ;(nextServers || []).forEach(function (s) {
+    if (!s || !s.uuid || s.disabled) return
+    var p = prev[s.uuid]
+    if (!p || p.reachable === s.reachable) return
+    out.push({ kind: "server", event: s.reachable ? "reachable" : "unreachable", uuid: s.uuid, obj: s })
+  })
+  return out
+}
+
+// A uuid is not charset-validated at normalise; everything that reaches a log line goes
+// through here so a hostile deployment_uuid cannot forge a second line (SR15).
+function uuid8(uuid) { return String(uuid === undefined || uuid === null ? "" : uuid).replace(/[^A-Za-z0-9]/g, "").slice(0, 8) }
+
+// Coolify decorates git-sourced names as "<repo>:<branch>-<app uuid>" (44 chars, one
+// unbreakable token wider than the toast). One rule for every toast headline.
+function appLabel(name, uuid) {
+  var n = String(name === undefined || name === null ? "" : name).trim().replace(/:[^:]*-[a-z0-9]{20,}$/, "")
+  return elide(n || uuid8(uuid), 32)
+}
+
 // ---- bar + hero + callout ---------------------------------------------------------------
 
 function activeDeployments(s) { return (s && s.deployments ? s.deployments : []).filter(function (d) { return ACTIVE[d.status] }) }

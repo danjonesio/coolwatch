@@ -491,6 +491,74 @@ test("Model.diffActive: added, vanished, eight vanishing at once, a uuid vanishi
   eq(twice.vanished.length, 1)
 })
 
+// ---- Model.js: Phase 3 change detection ---------------------------------------------------
+
+function dep(o) { return Object.assign({ uuid: "d1", status: "queued", restartOnly: false, appName: "api" }, o || {}) }
+function res(o) { return Object.assign({ uuid: "r1", name: "api", state: "running", health: "healthy", kind: "application" }, o || {}) }
+
+test("Model.diffDeployments: vanished carried over, first poll yields no events, queued/started/restarting transitions", () => {
+  const active = M.normaliseDeployments(fx("deployments-active.json"))
+  const fresh = M.diffDeployments([], active, false)
+  eq(fresh.events.length, active.length); eq(fresh.events[0].kind, "deployment"); eq(fresh.events[0].obj.uuid, active[0].uuid)
+  assert(fresh.events.every(e => e.event === "started" || e.event === "queued"), "new active entries")
+  eq(M.diffDeployments([], active, true).events.length, 0, "baseline")
+  const v = M.diffDeployments([dep({ uuid: "a" }), dep({ uuid: "b" })], [dep({ uuid: "b" }), dep({ uuid: "c" })], false)
+  eq(JSON.stringify(v.vanished), JSON.stringify(["a"])); eq(v.events.length, 1); eq(v.events[0].event, "queued"); eq(v.events[0].uuid, "c")
+  const started = M.diffDeployments([dep({ status: "queued" })], [dep({ status: "in_progress" })], false)
+  eq(started.events.length, 1); eq(started.events[0].event, "started")
+  eq(M.diffDeployments([dep({ status: "in_progress" })], [dep({ status: "in_progress" })], false).events.length, 0)
+  const r1 = M.diffDeployments([], [dep({ status: "queued", restartOnly: true })], false)
+  eq(r1.events[0].event, "restarting")
+  eq(M.diffDeployments([dep({ status: "queued", restartOnly: true })], [dep({ status: "in_progress", restartOnly: true })], false).events.length, 0, "restart never yields started")
+  eq(M.diffDeployments([], [dep({ status: "in_progress", restartOnly: true })], false).events[0].event, "restarting")
+  const big = []; for (let i = 0; i < 2000; i++) big.push(dep({ uuid: "u" + i, status: "in_progress" }))
+  const t0 = Date.now(); M.diffDeployments(big.map(d => dep({ uuid: d.uuid })), big, false); assert(Date.now() - t0 < 50, "O(N) diff")
+})
+
+test("Model.terminalEvent / hasTerminal: finished, restarted, failed, cancelled, in_progress -> null", () => {
+  eq(M.terminalEvent(M.normaliseDeployment(fx("deployment-finished.json"))).event, "finished")
+  eq(M.terminalEvent(M.normaliseDeployment(fx("deployment-failed.json"))).event, "failed")
+  eq(M.terminalEvent(dep({ status: "finished", restartOnly: true })).event, "restarted")
+  eq(M.terminalEvent(dep({ status: "cancelled-by-user" })).event, "cancelled")
+  eq(M.terminalEvent(dep({ status: "in_progress" })), null)
+  eq(M.terminalEvent(null), null)
+  eq(M.hasTerminal([dep({ uuid: "x", status: "finished" })], "x"), true)
+  eq(M.hasTerminal([dep({ uuid: "x", status: "finished" })], "y"), false)
+  eq(M.hasTerminal([dep({ uuid: "x", status: "in_progress" })], "x"), false, "an active entry is not terminal")
+})
+
+test("Model.resourceEvents: ten transitions, first poll yields nothing", () => {
+  const raw = M.normaliseResources(fx("resources.json"))
+  const flipped = raw.map(r => r.uuid === "h0wxyg40kc0lz727dom9l03i" ? Object.assign({}, r, { state: "exited", health: "unhealthy", status: "exited" }) : r)
+  const ev = M.resourceEvents(raw, flipped, false)
+  eq(ev.length, 1); eq(ev[0].event, "stopped"); eq(ev[0].uuid, "h0wxyg40kc0lz727dom9l03i"); eq(ev[0].kind, "resource")
+  eq(M.resourceEvents(raw, flipped, true).length, 0, "baseline")
+  const one = (from, to) => M.resourceEvents([res({ state: from })], [res({ state: to })], false)
+  eq(one("running", "exited")[0].event, "stopped"); eq(one("starting", "exited")[0].event, "stopped"); eq(one("degraded", "exited")[0].event, "stopped")
+  eq(one("running", "degraded")[0].event, "degraded"); eq(one("exited", "running")[0].event, "recovered"); eq(one("degraded", "starting")[0].event, "recovered")
+  eq(one("exited", "exited").length, 0); eq(one("unknown", "exited").length, 0); eq(one("running", "unknown").length, 0); eq(one("running", "paused").length, 0)
+  eq(M.resourceEvents([res({ health: "healthy" })], [res({ health: "unhealthy" })], false).length, 0, "health-only is silent")
+  eq(M.resourceEvents([], [res({ state: "exited" })], false).length, 0, "absent from prev")
+})
+
+test("Model.serverEvents: both flips, disabled never, absent never, first poll nothing", () => {
+  const srv = M.normaliseServers(fx("servers.json"))
+  const down = srv.map(s => Object.assign({}, s, { reachable: false }))
+  eq(M.serverEvents(srv, down, false)[0].event, "unreachable"); eq(M.serverEvents(down, srv, false)[0].event, "reachable")
+  eq(M.serverEvents(srv, down, true).length, 0)
+  eq(M.serverEvents(srv, down.map(s => Object.assign({}, s, { disabled: true })), false).length, 0)
+  eq(M.serverEvents([], down, false).length, 0)
+})
+
+test("Model.appLabel / uuid8: Coolify suffix stripped, plain names kept, empty -> uuid8, newline filtered", () => {
+  eq(M.appLabel("storefront:main-h0wxyg40kc0lz727dom9l03i", "h0wx"), "storefront")
+  eq(M.appLabel("worker", "u"), "worker"); eq(M.appLabel("umami-prod", "u"), "umami-prod"); eq(M.appLabel("Storefront Prod WP", "u"), "Storefront Prod WP")
+  eq(M.appLabel("xyhpwdxqu33omjgwuo6c7cjp-200537415987", "xyhpwdxqu33omjgwuo6c7cjp"), "xyhpwdxqu33omjgwuo6c7cjp-200537…")
+  eq(M.appLabel("", "abcdefghijkl"), "abcdefgh"); eq(M.appLabel(null, "abcdefghijkl"), "abcdefgh")
+  eq(M.appLabel("a".repeat(60), "u").length, 32)
+  eq(M.uuid8("ab\ncd-ef gh!ijklmnop"), "abcdefgh"); eq(M.uuid8(null), "")
+})
+
 // ---- Model.js: bar, hero, callout --------------------------------------------------------------
 
 test("Model.barState: all 14 rows (glyph, dimmed, active, tooltip)", () => {
