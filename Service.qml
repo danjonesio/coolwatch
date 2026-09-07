@@ -414,7 +414,8 @@ Item {
     if (p.kind === "deployment") root._drainTerminal()
     // Only a successful block can mark the cycle complete: a failed /projects leaves the
     // flag false so the 65 s kick, a panel open and the next cycle all retry it.
-    if (p.kind === "topology" && anyOk) { root._topologyFetched = root._topologyQueue.length === 0; if (root._topologyFetched) root._topologyLoaded = true }   // the next block waits for topologyStep
+    // (A failed stage-2 block after a successful /projects still counts: the tree is usable.)
+    if (p.kind === "topology" && (anyOk || root._projects.length)) { root._topologyFetched = root._topologyQueue.length === 0; if (root._topologyFetched) root._topologyLoaded = true }   // the next block waits for topologyStep
   }
 
   function _dispatch(req, r, kind) {
@@ -930,6 +931,7 @@ Item {
       openPanels: root._openPanels,
       baselineDone: root._baselineDone,
       topologyFetched: root._topologyFetched,
+      topologyLoaded: root._topologyLoaded,
       terminalQueue: root._terminalQueue.length,
       error: root._error ? { kind: root._error.kind, request: root._error.request, httpCode: root._error.httpCode, curlExit: root._error.curlExit } : null,
       warning: root._warning ? root._warning.kind : null,
