@@ -60,6 +60,11 @@ BarWidget {
     tooltipText: root.svc ? root.svc.bar.tooltip : "Omarify — starting"
     onPressed: function(b) {
       if (b === Qt.LeftButton) root.toggle()
+      // Right click opens the instance itself; the origin is validated by Model (SR9).
+      else if (b === Qt.RightButton && root.svc && root.svc.snapshot && root.svc.snapshot.instance) {
+        var o = Model.origin(root.svc.snapshot.instance.url)
+        if (o) Util.execArgv(["omarchy-launch-browser", o])
+      }
     }
   }
 }
