@@ -62,22 +62,29 @@ Acceptance
   ability message on Validate exercised the same code path.
 - Cancel on an in-progress deployment returns `cancelled-by-user` and the row updates.
 
-## Phase 3 — notify
+## Phase 3 — notify (built 2026-09-07 on `phase-3-notify`; see `docs/plans/phase-3-notify.build.md`)
 
 Deliverables
 
-- Diff-based change detection with baseline-on-start.
-- Notifications for deployment transitions, unexpected resource stops, server
-  reachability, with per-event toggles and click-to-open.
+- Diff-based change detection with baseline-on-start (per poll kind).
+- Notifications for deployment transitions, unexpected resource stops (and recovery),
+  server reachability, with per-event toggles, click-to-open, and bounded volume.
 - Recent deployments persisted to `~/.local/state/omarify/recent.json`.
 
 Acceptance
 
-- One push yields exactly: Queued (optional), Building, Deployed or Failed. Never a
-  duplicate, never a replay after `omarchy restart shell` mid-deployment.
-- A `docker stop` on a server produces "stopped" once, and a deploy-caused restart
-  produces nothing extra.
-- Do Not Disturb silences everything but critical.
+- One push yields exactly: Queued (optional, skipped when the first poll already sees
+  the build in progress), Building, Deployed or Failed. Never a duplicate, never a replay
+  after `omarchy restart shell` mid-deployment (a deployment that finishes while the
+  shell is down is never toasted; it appears in Recent at the next fetch).
+- A container stopped outside the plugin (Coolify UI or `docker stop`) produces
+  "stopped" once within 0–120 s, and a deploy-caused restart or a Stop/Start from the
+  plugin produces nothing extra.
+- Do Not Disturb silences everything to history except a critical event, which is sent
+  as `omarchy-action` and shown. The failed-deployment path is verified by fixture and
+  node tests; live it needs a deliberately broken build (declined for this run).
+- `recent.json` lives in a 0700 directory (the file is umask-mode) and the panel's
+  Recent section is back within 2 s of a restart for deployments under an hour old.
 
 ## Phase 4 — depth
 

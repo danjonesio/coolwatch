@@ -785,10 +785,17 @@ glyph rendered on the toast via the `omarchy-glyph` hint), `-u low|normal|critic
 `-i <icon>`, `--image <path>`, `-t <ms>`, `-r <id>` / `-p` (replace / print id),
 `--app-name`, and `--exec <program> [args...]` (click action stored as
 `omarchy-exec-argv` JSON, executed via `Util.execArgv`). Behaviour notes from
-`NotificationLogic.js`: app name `omarchy-action` (the CLI default) and `notify-send`
-are *ephemeral* (never written to history) and `omarchy-action` bypasses Do Not
-Disturb; `notify-send` bypasses DND only at critical urgency. Pass `--app-name <your
-id>` if you want the notification to land in history and respect DND. First-party code
+`NotificationLogic.js` (verified in the Phase 3 plan, 2026-09-07): only app name
+`omarchy-action` (the CLI default) passes `shouldBypassDnd` (`:118-122`; the
+`notify-send`-at-critical arm is dead because the caller passes one argument). Any other
+sender, at any urgency, is silenced to history under DND (`Service.qml:173-181`).
+`isEphemeral` (`omarchy-action`, `notify-send`) is consulted only inside that silenced
+branch, so a *shown* `omarchy-action` toast is archived to history like any other (an
+earlier version of this note said ephemeral senders are never written to history; that
+is wrong). Pass `--app-name <your id>` if you want the notification attributed to you
+and to respect DND. The helper keeps parsing options after the headline (`:85-115`), so
+a data-supplied headline or body must not begin with `-`; `--exec` must be last and
+swallows the rest of argv. First-party code
 also shells out this way (`weather/BarWidget.qml`, `reminders/ReminderFlow.qml`,
 battery → `omarchy-battery-low`).
 

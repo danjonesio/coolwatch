@@ -125,5 +125,8 @@ Phases are defined in `docs/roadmap.md`. Every feature below names the API it re
    held earlier). `write` is optional and only unlocks "Validate server"; without it the
    button explains what is missing. Server proxy status needs `GET /servers/{uuid}` per
    server and is deferred to Phase 4 (decided 2026-09-07 by the Phase 2 plan).
-5. **Failed deployments and unreachable servers notify at `critical`**, which bypasses
-   Do Not Disturb. Everything else is `low` or `normal`.
+5. **Failed deployments and unreachable servers notify at `critical`.** Everything else
+   is `low` or `normal`. The shell silences a plugin-id sender under Do Not Disturb even
+   at `critical`, so a critical event while DND is on is sent as `omarchy-action`, the one
+   sender the shell shows through DND (decided 2026-09-07 by the Phase 3 plan; the cost
+   is that sender name in history for those toasts).

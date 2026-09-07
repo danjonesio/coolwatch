@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.danjonesio.omarify",
   "name": "Omarify",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "Dan Jones",
   "license": "MIT",
   "description": "Coolify in the Omarchy bar: servers, resources, deployments and their status.",
