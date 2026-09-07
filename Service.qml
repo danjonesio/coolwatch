@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.Commons                    // Util.execArgv for the notification helper (Phase 3)
 import "Model.js" as Model
 import "Api.js" as Api
 
@@ -91,6 +92,19 @@ Item {
   readonly property var pending: root._pending
   readonly property string actionStatus: root._actionStatus
   readonly property string actionTone: root._actionTone
+
+  // Notifications (Phase 3). Events are produced inside _dispatch from the previous store
+  // value and drained once per _finish; Model.notifyPlan decides everything (toggles,
+  // suppression, ordering, caps, argv) so tests/run.js covers it. Nothing here enters
+  // `snapshot` (the `pending` precedent). Every diff is gated on its kind's own _baseline
+  // flag, never _baselineDone.
+  readonly property string pluginId: "io.github.danjonesio.omarify"
+  property var _notifyQueue: []
+  property var _actionAt: ({})         // uuid -> last user action ms (resource uuid; deployment uuid for cancel); pruned > 300 s
+  property var _lastNotified: ({})     // "<kind>:<uuid>:<event>" -> ms; the dedupe/flap ledger; pruned > 3600 s
+  property var _notifyLog: []          // bare timestamps, the _actionLog idiom (filter-push-reassign)
+  property var _suppressed: ({})       // rule -> cumulative count, for status
+  property var _lastEvent: null
 
   readonly property int _activeCount: root._deployments.filter(function(d) { return d.status === "queued" || d.status === "in_progress" }).length
   readonly property bool _deploying: root._activeCount > 0
@@ -273,6 +287,7 @@ Item {
     var interrupted = root._inflightAction !== null
     root._pending = {}; root._inflightAction = null; root._ipcAbilityStreak = 0; root._lastAbility = ""
     root._actionStatus = ""; actionStatusTimer.stop()
+    root._notifyQueue = []; root._actionAt = {}; root._lastNotified = {}; root._notifyLog = []; root._suppressed = {}; root._lastEvent = null
     for (var i = 0; i < root._reqs.length; i++) root._reqs[i].kill()
     root._syncBusy()
     if (interrupted) root._say("Action interrupted by a config change", "urgent")
@@ -425,6 +440,52 @@ Item {
     // flag false so the 65 s kick, a panel open and the next cycle all retry it.
     // (A failed stage-2 block after a successful /projects still counts: the tree is usable.)
     if (p.kind === "topology" && (anyOk || root._projects.length)) { root._topologyFetched = root._topologyQueue.length === 0; if (root._topologyFetched) root._topologyLoaded = true }   // the next block waits for topologyStep
+    root._flushNotify()                // last: after the joins, so every toast reads the joined snapshot
+  }
+
+  // ---- notifications (Phase 3) ---------------------------------------------------------
+
+  function _queueNotify(evs) { root._notifyQueue = root._notifyQueue.concat((evs || []).filter(function(e) { return !!e })) }
+
+  // true | false | null (the notifications service is unreachable: the toast keeps the
+  // plugin id and is silenced under DND; status.notify.dnd reports null).
+  function _dnd() {
+    var n = root.shell && typeof root.shell.serviceFor === "function" ? root.shell.serviceFor("omarchy.notifications") : null
+    if (!n || typeof n.doNotDisturb !== "boolean") return null
+    return n.doNotDisturb
+  }
+
+  function _flushNotify() {
+    var q = root._notifyQueue
+    if (!q.length) return
+    root._notifyQueue = []
+    var now = Date.now()
+    var log = root._notifyLog.filter(function(t) { return now - t < 60000 })
+    var ctx = { notify: root._cfg ? root._cfg.notify : Model.notifyDefaults(),
+                origin: root._instance ? Model.origin(root._instance.url) : "",
+                dnd: root._dnd(), pending: root._pending, actionAt: root._actionAt,
+                lastNotified: root._lastNotified, sentLastMin: log.length, now: now, pluginId: root.pluginId }
+    var out = Model.notifyPlan(q, root.snapshot, ctx)
+    out.notified.forEach(function(n) { root._lastNotified[n.key] = n.at }); root._lastNotified = root._lastNotified
+    out.log.forEach(function(l) { console.log("omarify notify " + l) })          // event + uuid8 only, at intent
+    for (var i = 0; i < out.argvs.length; i++) { Util.execArgv(out.argvs[i]); log.push(now) }
+    root._notifyLog = log
+    for (var k in out.suppressed) root._suppressed[k] = (root._suppressed[k] || 0) + out.suppressed[k]
+    root._suppressed = root._suppressed
+    if (out.argvs.length) root._lastEvent = { kind: out.lastKind, at: now }
+  }
+
+  function _notifiedLastMin() { var now = Date.now(); return root._notifyLog.filter(function(t) { return now - t < 60000 }).length }
+
+  // Reaper tick: the action ledger keeps 300 s (the longest window a rule reads), the
+  // dedupe ledger 3600 s (the "recovered" window). Mutate-then-self-assign, only on change.
+  function _pruneNotify(now) {
+    var a = root._actionAt, ka = Object.keys(a), changed = false
+    for (var i = 0; i < ka.length; i++) if (now - a[ka[i]] > 300000) { delete a[ka[i]]; changed = true }
+    if (changed) root._actionAt = a
+    var l = root._lastNotified, kl = Object.keys(l); changed = false
+    for (var j = 0; j < kl.length; j++) if (now - l[kl[j]] > 3600000) { delete l[kl[j]]; changed = true }
+    if (changed) root._lastNotified = l
   }
 
   function _dispatch(req, r, kind) {
@@ -438,7 +499,8 @@ Item {
         break
       case "deployments": {
         var norm = Model.normaliseDeployments(json.value)
-        var diff = Model.diffActive(root._activeUuids, norm)
+        // root._deployments still holds the previous poll; the baseline flag is read before _markPoll flips it.
+        var diff = Model.diffDeployments(root._deployments, norm, !root._baseline.deployments)
         if (diff.vanished.length) {
           var q = root._terminalQueue.slice()
           diff.vanished.forEach(function(u) { if (q.indexOf(u) < 0 && q.length < 20) q.push(u) })
@@ -447,12 +509,18 @@ Item {
         root._activeUuids = norm.map(function(d) { return d.uuid })
         root._deployments = norm
         root._markPoll("deployments", now)
+        root._queueNotify(diff.events)
         root._drainTerminal()
         break
       }
       case "deployment": {
-        var d = Model.normaliseDeployment(json.value)
+        // Joined here (the deployments-kind join at the end of _finish does not run for this
+        // kind) so the toast body has a branch and recent carries appUuid at once. The
+        // terminal toast fires once per uuid: `recent` is the intra-session ledger, and a
+        // non-terminal status (a transient vanish) yields no event.
+        var d = Model.joinBranch([Model.normaliseDeployment(json.value)], root._resources)[0]
         if (d.uuid) {
+          if (!Model.hasTerminal(root._recent, d.uuid)) root._queueNotify([Model.terminalEvent(d)])
           var rec = root._recent.filter(function(x) { return x.uuid !== d.uuid })
           rec.unshift(d)
           root._recent = rec.slice(0, 20)
@@ -461,15 +529,21 @@ Item {
         }
         break
       }
-      case "resources":
-        root._resourcesRaw = Model.normaliseResources(json.value)
+      case "resources": {
+        var nextRes = Model.normaliseResources(json.value)
+        root._queueNotify(Model.resourceEvents(root._resourcesRaw, nextRes, !root._baseline.resources))
+        root._resourcesRaw = nextRes
         root._markPoll("resources", now)
         break
-      case "servers":
-        root._servers = Model.normaliseServers(json.value)
+      }
+      case "servers": {
+        var nextSrv = Model.normaliseServers(json.value)
+        root._queueNotify(Model.serverEvents(root._servers, nextSrv, !root._baseline.servers))
+        root._servers = nextSrv
         root._markPoll("servers", now)
         root._enqueueMissingServerResources()
         break
+      }
       case "projects":
         root._projects = Model.normaliseProjects(json.value)
         root._markPoll("topology", now)
@@ -739,6 +813,7 @@ Item {
                   baseState: a.targetType === "resource" ? Model.parseStatus(a.status || "").state : null,
                   deploymentUuid: depUuid || (ex ? ex.deploymentUuid : null), stale: !!(ex && ex.stale) }
     root._pending = p
+    root._actionAt[a.uuid] = Date.now(); root._actionAt = root._actionAt   // a user action explains a later flap (Phase 3)
   }
 
   function _clearPending(uuid) {
@@ -901,6 +976,7 @@ Item {
       for (var id in root._panels) if (now - root._panels[id] > 5000) { delete root._panels[id]; changed = true }
       if (changed) { root._panels = root._panels; root._syncOpenPanels() }
       root._expirePending(now)
+      root._pruneNotify(now)
       root._syncBusy()
     }
   }
@@ -950,7 +1026,16 @@ Item {
       pending: Object.keys(root._pending).length,
       pendingStale: Object.keys(root._pending).filter(function(k) { return !!root._pending[k].stale }).length,
       actionsLastMin: root._actionsLastMin(),
-      inflightAction: root._inflightAction !== null
+      inflightAction: root._inflightAction !== null,
+      baseline: { deployments: root._baseline.deployments, resources: root._baseline.resources, servers: root._baseline.servers, version: root._baseline.version },
+      notify: {
+        enabled: root._cfg ? root._cfg.notify : Model.notifyDefaults(),
+        sentLastMin: root._notifiedLastMin(),
+        suppressed: root._suppressed,     // cumulative per rule since the last config change
+        queued: root._notifyQueue.length,
+        lastEvent: root._lastEvent,       // { kind: <event name>, at }; never a name
+        dnd: (function() { var d = root._dnd(); return d === null ? null : (d ? "on" : "off") })()
+      }
     }
   }
 
