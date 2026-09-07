@@ -65,8 +65,10 @@ Phases are defined in `docs/roadmap.md`. Every feature below names the API it re
 
 - Row actions: Deploy, Redeploy (force, no cache), Restart, Stop or Start, Open in
   browser. Deployment rows: Cancel, Open. Server rows: Validate, Open.
-- Confirm dialog for Stop and for Redeploy without cache.
-- Optimistic "pending" state on the row until Coolify's status catches up.
+- Confirm dialog for Stop, Redeploy without cache and Cancel. Deploy and Redeploy on
+  applications only. Open goes to the resource's Coolify page (never `fqdn`).
+- Optimistic "pending" state on the row until Coolify's status catches up (or, for an
+  action with no visible end state, until the first poll after it landed).
 - Full keyboard map (see `docs/design.md`).
 
 ### Phase 3 — notify
@@ -121,6 +123,6 @@ Phases are defined in `docs/roadmap.md`. Every feature below names the API it re
    logs (it also makes every `GET /deployments` poll carry the full logs, so it is not
    held earlier). `write` is optional and only unlocks "Validate server"; without it the
    button explains what is missing. Server proxy status needs `GET /servers/{uuid}` per
-   server and ships with Validate in Phase 2.
+   server and is deferred to Phase 4 (decided 2026-09-07 by the Phase 2 plan).
 5. **Failed deployments and unreachable servers notify at `critical`**, which bypasses
    Do Not Disturb. Everything else is `low` or `normal`.

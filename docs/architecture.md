@@ -36,7 +36,11 @@ No daemon, no second Quickshell, no Python collector. The shell is the runtime.
 - The service registers `IpcHandler { target: "io.github.danjonesio.omarify" }` with
   `refresh` and `status` (Phase 1; `status` returns fixed-shape JSON with counts,
   per-kind timings and the rolling request count, never a secret, body or URL).
-  `deploy <uuid>`, `restart <uuid>`, `stop <uuid>`, `start <uuid>` are Phase 2.
+  Phase 2 adds `deploy <uuid>`, `restart <uuid>`, `stop <uuid>`, `start <uuid>`: each
+  returns `queued <verb> <uuid>` or a refusal token (`unknown uuid <uuid>`,
+  `not applicable <verb> <uuid>`, `already pending <uuid>`, `busy`, `not configured`,
+  `config unsafe`, `rate limited`, `token rejected`); the outcome is `status.lastAction`.
+  CLI verbs never confirm.
 - Hot reload: saving under `~/.config/omarchy/plugins/` reloads the plugin. `bin/dev-sync`
   copies the repo there (the validator refuses symlinks).
 
@@ -80,7 +84,8 @@ Secrets and behaviour live in one file the plugin owns, not in `shell.json`, bec
   shows "Token unavailable (exit N)". While it runs the bar shows "waiting for token".
   `tokenCommand` keeps the token off disk but not away from other plugins loaded into
   the same shell.
-- Token abilities are per phase: Phase 1 `read` only; `deploy` from Phase 2;
+- Token abilities are per phase: Phase 1 `read` only; `read` + `deploy` from Phase 2
+  (a new token; abilities cannot be edited);
   `read:sensitive` from Phase 4 (it also makes `GET /deployments` carry full build
   logs). `write` is only needed for "Validate server"; the panel gates that action on
   it and names the missing ability instead of failing silently.
@@ -215,8 +220,8 @@ server:    { uuid, name, ip, reachable, usable, disabled, buildServer, resourceC
 resource:  { uuid, name, kind (application|service|database), type, status,
              state (running|starting|restarting|degraded|paused|exited|unknown),
              health (healthy|unhealthy|unknown), fqdn, environmentId, serverUuid,
-             projectUuid, projectName, environmentName, gitBranch,
-             pending (Phase 2) }
+             projectUuid, projectName, environmentName, environmentUuid, gitBranch }
+           // pending is NOT a resource field: it is a service-owned map applied at render
 deployment:{ uuid (from deployment_uuid), appUuid, appName, branch, status, commit,
              commitMessage, createdAt, updatedAt, url, restartOnly, force, isApi, isWebhook }
 tree:      [ { projectUuid, projectName, environments: [ { id, name, resourceUuids } ] } ]
@@ -288,12 +293,40 @@ All actions are `POST` with an empty JSON body (the lifecycle routes reject `GET
 | Validate server | `POST /servers/{uuid}/validate` | server `validating: true` until `is_reachable` changes |
 | Open | `omarchy-launch-browser <url>` | — |
 
-`pending` clears when the polled status changes, or after 90 s with an inline "still
-pending" note. The action process's stderr and any non-2xx body become a short
-`actionStatus` line in the panel for 2.2 s (tailscale's `actionStatusTimer`).
+Every action block adds `request = "POST"`, `header = "Content-Type: application/json"`
+and `data-raw = "{}"` (constants; `data` would read a file for a leading `@`) and never
+`location`. `Model.actionRequest` is the single gate for the panel and the IPC verbs
+(uuid shape, presence in the store, the applicability table); the service builds the
+`Api` descriptor from the stored kind. One single-flight `actionReq` goes through
+`_launch` like a poll; `act()` refuses while an action is in flight or within 1 s of the
+last launch, while the same uuid is pending, when not ready / probing / paused, and
+after 120 requests in the last minute. There is no queue and no compensating poll.
+
+Pending is a service-owned map `{ uuid: { verb, targetType, kind, since, baseStatus,
+deploymentUuid, stale } }` applied at render through `Model.panelRows`'s `ui.pending`
+(a value written into the store would be erased by the next poll). It is set at launch,
+cleared on any non-2xx except a rate limit or a reap (the POST may have landed), and
+resolved on the 5 s reaper tick by verb: deploy/redeploy/restart clear when the created
+deployment appears in the active list or in recent (or, for an application with no
+deployment uuid yet, when any active deployment belongs to it; for a service/database
+restart, on the first resources poll after the action); stop/start clear when the status
+string differs from `baseStatus` and gain " · still pending" at 150 s (sweep 60 s plus
+the panel-closed resources interval 60 s plus margin); validate clears on the first
+servers poll after the action; cancel clears when the deployment leaves the active list;
+everything is dropped when its target is gone or at 300 s.
+
+The outcome is one status line under the hero (`Model.actionOutcome`, 2.2 s for success
+and dim refusals, 6 s for failures), never the callout, never `_error`, `_backoff`,
+`_probeMode` or `consecutiveFailures`. The one escalation is a 429, which enters the
+instance-wide pause through `_pauseFor` (extracted from `_fail`). A reaped action says
+"Sent, but Coolify did not answer", keeps its pending entry, and is never retried.
+`status` gains `lastAction { verb, uuid8, code, curlExit, ms, at, result }`, `pending`,
+`pendingStale`, `actionsLastMin` and `inflightAction`; the log line is
+`omarify action <verb> <code> exit=<n> <ms>ms <uuid8>`.
 
 Ability errors are surfaced as text, not swallowed: "Token lacks the deploy
-permission" tells the user exactly what to add in Coolify.
+permission" tells the user exactly what to add in Coolify. IPC-originated actions are
+refused after three consecutive ability failures until a 2xx or a config change.
 
 ## Security
 
@@ -329,8 +362,21 @@ permission" tells the user exactly what to add in Coolify.
     plugin's manifest, or a path outside the plugins dir and `$TMPDIR`, and locks.
 13. Verification never puts the token prefix in argv: greps read it through process
     substitution.
-14. Destructive actions (Phase 2) confirm; every browser URL is one Coolify returned,
-    passed as a single argv element.
+14. Destructive actions confirm: `selectedIndex = 0` on open and again when the dialog
+    arms 250 ms later; only `activateRequested` resolves it and only once armed; the
+    target is captured immutably at open; every other key is swallowed while it is up;
+    the dialog fills the card above every row; a panel close resets it; the Esc ladder
+    descends one rung per 250 ms.
+15. Browser URLs: `Model.openUrl` joins the configured instance origin with a path it
+    builds from uuids (resource, server) or with a deployment's relative
+    `deployment_url` (rejected if it carries a scheme, `//`, or no leading `/`); `fqdn`
+    is never opened; the launcher receives exactly one argv element through
+    `Util.execArgv`; `bin/check` fails unless every `omarchy-launch-browser` call has
+    that form and no `.qml` mentions `fqdn`.
+16. Actions never poison polling (see Actions), the POST body is a constant, the
+    method comes from a whitelist checked with `hasOwnProperty`, and IPC verbs are
+    exactly `deploy restart stop start`: a no-confirm destructive surface open to any
+    local process, documented in the README.
 
 ## Testing
 

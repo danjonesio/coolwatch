@@ -5,7 +5,7 @@ deployments, and the buttons to deploy, redeploy, restart, stop and cancel, in a
 [Omarchy](https://omarchy.org/) panel. Works with Coolify Cloud and self-hosted Coolify
 through the REST API.
 
-**Status: Phase 1 (read-only bar icon and panel) in progress.** See [docs/roadmap.md](docs/roadmap.md).
+**Status: Phase 2 (actions: deploy, redeploy, restart, stop, start, cancel, validate, open) built; Phase 1 (read-only bar icon and panel) merged.** See [docs/roadmap.md](docs/roadmap.md).
 
 ## What it will do
 
@@ -43,11 +43,19 @@ directory as 0700):
 ```
 
 `poll` is optional; those are the defaults. Create the token in Coolify under
-Security → API Tokens with the `read` permission (`deploy` is needed once Phase 2 adds
-actions). Instead of `token` you can give
+Security → API Tokens with the `read` and `deploy` permissions (`write` only if you want
+"Validate server" to succeed; without it the panel says "Token lacks the write
+permission"). Coolify cannot change a token's abilities afterwards: create a new one and
+swap it in. Instead of `token` you can give
 `"tokenCommand": ["op", "read", "op://Private/Coolify/credential"]` so the secret never
 sits on disk; note that this keeps it off disk but not away from other plugins loaded
 into the same shell.
+
+From the command line, `omarchy-shell io.github.danjonesio.omarify deploy|restart|stop|start <uuid>`
+queues the action without a confirmation (typing the verb is the confirmation) and
+prints `queued <verb> <uuid>` or the reason it was refused; `… status | jq .lastAction`
+shows the outcome. Any local process can call these, and any plugin loaded into the
+same shell can call the service directly, so treat the machine as the trust boundary.
 
 ## Docs
 

@@ -54,7 +54,7 @@ Opening any panel acknowledges failures; a failure that lands while a panel is o
 already seen and never sets row 10.
 
 Clicks: left toggles the panel; middle cycles instances (Phase 4); right opens the
-instance in the browser (Phase 2). Wheel does nothing.
+instance in the browser. Wheel does nothing.
 
 ## Panel anatomy
 
@@ -147,8 +147,8 @@ queued (dim), `󰄬` finished (dim), `󰅙` failed (`Color.accent`: red in Aethe
 body weight, "branch · commit message" in caption dim (the branch is the joined
 application's `git_branch`; the first seven characters of the commit when the join
 misses), right-aligned elapsed or age. Expanded row (Phase 2) shows an action row:
-**Cancel** (only while queued or in progress, urgent hover), **Logs** (Phase 4),
-**Open**. The section shows all active plus the newest 5 terminal deployments from the
+**Cancel** (only while queued or in progress; `foreground: root.urgent`), **Logs** (Phase 4),
+**Open**. A pending cancel appends " · cancelling…" to the caption in accent. The section shows all active plus the newest 5 terminal deployments from the
 last hour; older ones drop out on their own (Phase 3 persists them across restarts, Phase 4
 adds history and "show more").
 
@@ -161,8 +161,9 @@ Row per server: dot glyph (`●` reachable and usable, `󱎖` reachable but not 
 `○` unreachable or disabled), name, caption "<ip> · N resources" plus "unreachable"
 in urgent, "disabled", "build server" as they apply. Unreachable and disabled servers
 dim the whole row. Proxy status and `unreachable_count` need `GET /servers/{uuid}` per
-server and arrive with Validate in Phase 2. Expanded row (Phase 2): **Validate**,
-**Open**, and the resources on that server when grouping by server is off.
+server and are deferred to Phase 4. Expanded row: **Validate**, **Open**. A pending
+validate appends " · validating…" to the caption in accent and clears on the next
+servers poll (the API exposes no result).
 
 ### Resources section
 
@@ -176,28 +177,47 @@ rows:
 - Dot: `●` running (foreground), `󱎖` (U+F1396) starting/restarting/degraded (urgent),
   `○` exited/paused (dim), `◌` unknown. `◐` U+25D0 is not in JetBrainsMono Nerd Font.
 - Name bold body, status words in caption: "running · healthy", "exited", "restarting",
-  or (Phase 2) the pending verb in accent: "deploying…", "stopping…".
+  or the pending verb in accent with the half glyph: "deploying…", "rebuilding…",
+  "restarting…", "stopping…", "starting…" ("stopping… · still pending" after 150 s).
 - Kind hint on the right in caption dim: `app`, `service`, `postgres`, `redis`.
 
-Expanded row (Phase 2) shows the action row. Actions that do not apply are hidden, not disabled:
-Stop hides when exited, Start hides when running, Redeploy only on applications.
+Enter (or `l`) on a leaf row emits a non-selectable action strip under it. Actions that
+do not apply are hidden, not disabled: applications running → Deploy · Redeploy ·
+Restart · Stop · Open; applications stopped → Deploy · Redeploy · Start · Open;
+services and databases → Restart · Stop · Open or Start · Open; unknown state → Open;
+servers → Validate · Open; active deployments → Cancel · Open; terminal → Open. Open is
+present only when a Coolify page URL can be built (it arrives with the topology, about
+a minute after start).
 
 ### Action row (Phase 2)
 
-`Row` of `Button { bordered: true; fontSize: Style.font.bodySmall }` with equal cell
-width. `h`/`l` move between them when the cursor is on the expanded row; Enter
-activates. Destructive buttons (Stop, Cancel, Redeploy) use `hoverColor: bar.urgent`.
+`Row` of `Button { bordered: true; focusable: false; fontSize: Style.font.bodySmall }`
+with content-derived widths. `h`/`l` move between them (an id, not an index, so a
+button that disappears hands focus to the first); Enter runs. While a button is ringed
+the parent row paints `CursorSurface.current`. Destructive buttons (Stop, Cancel,
+Redeploy) use `foreground: root.urgent`, which tints the label and the hover fill;
+`Button` has no hover-colour property.
 
 ### Confirm dialog (Phase 2)
 
-`ConfirmDialog` inside the panel: "Stop api?" / "Rebuild api without cache?" with Cancel
-and an urgent-tinted Confirm. Its `handleKey` runs first in the key catcher.
+`ConfirmDialog` as a sibling of the key catcher inside the `KeyboardPanel` (it fills the
+card above every row): "Stop api?" (Cancel / Stop), "Rebuild api without cache?"
+(Cancel / Rebuild), "Cancel the deployment of api?" (Keep it / Cancel it). Cancel is
+preselected on open and again when the dialog arms 250 ms later (the component moves
+selection on hover); Enter resolves it only once armed. It is driven from the catcher's
+signals (`h`/`l` toggle, Enter resolves, Esc cancels, every other key is swallowed);
+its raw key-event function is never called.
 
 ### Status line (Phase 2)
 
-A single caption line under the hero, visible for 2.2 s after an action: "Deployment
-queued", "Token lacks the deploy permission", "Coolify said: Application is not
-running." Mirrors the tailscale `actionStatus`.
+A single caption line between the hero and the callout, dim for 2.2 s after a success
+("Deployment queued", "Stop requested", "Deployment cancelled", "Validation started")
+or a dim refusal ("api is already stopping", "Busy, try again"), urgent for 6 s after a
+failure ("Token lacks the deploy permission", "Coolify said: Deployment cannot be
+cancelled. Current status: finished", "Coolify's build queue is full", "Coolify is
+unreachable", "Sent, but Coolify did not answer"). Mirrors the tailscale
+`actionStatus`. A 403 ability from a poll still uses the callout; from an action it is
+only this line.
 
 ### Footer
 
@@ -216,21 +236,24 @@ enter fold · g group · r refresh · esc close"; leaf row "j/k move · g group 
 |---|---|---|
 | `j` / `k`, arrows | anywhere | move cursor down / up through hero, chips, rows; `k` from the first row lands on the hero |
 | `h` / `l` | hero | previous / next instance (Phase 4) |
-| `h` / `l` | expanded row | previous / next action button (Phase 2) |
+| `h` / `l` | fold row | fold / unfold |
+| `l` | collapsed leaf row | expand and focus the first action |
+| `h` / `l` | action button | previous / next button; `h` on the first returns to the row |
+| `h` | expanded row, no button focused | collapse |
 | Enter, Space | fold row | expand / collapse |
 | Enter, Space | hero | refresh |
-| Enter, Space | leaf row | nothing in Phase 1; expand with the action row (Phase 2) |
-| `d` | resource row | deploy (Phase 2) |
-| `D` | resource row | redeploy without cache (confirm) (Phase 2) |
-| `s` | resource row | stop (confirm) or start, whichever applies (Phase 2) |
-| `t` | resource row | restart (Phase 2) |
-| `x` | deployment row | cancel (confirm) (Phase 2, via `deleteRequested`) |
-| `o` | any row | open in browser (Phase 2) |
+| Enter, Space | leaf row | expand (first button focused); on an expanded row: run the focused button, or collapse |
+| `d` | application row | deploy |
+| `D` | application row | redeploy without cache (confirm); the one case-sensitive pair |
+| `s` / `S` | resource row | stop (confirm) or start, whichever applies |
+| `t` / `T` | resource row | restart |
+| `x` / `X` | active deployment row | cancel (confirm) (via `deleteRequested`; a no-op elsewhere) |
+| `o` / `O` | any row with a page | open in browser |
 | `g` | anywhere | toggle grouping |
 | `r` | anywhere | refresh now |
-| `v` | server row | validate (Phase 2) |
-| Tab / Shift+Tab | anywhere | neighbouring bar panel |
-| Esc | anywhere | close confirm (Phase 2), else collapse row (Phase 2), else close panel |
+| `v` / `V` | server row | validate |
+| Tab / Shift+Tab | anywhere, confirm closed | neighbouring bar panel |
+| Esc | anywhere | close confirm, else collapse row, else close panel; one rung per 250 ms |
 
 Mouse: hover moves the cursor (never colours from `containsMouse`), click activates,
 right-click on a row opens it in the browser.
@@ -252,7 +275,7 @@ partial > loading > healthy.
 | 401 | "TOKEN REJECTED" | "Create a token in Coolify → Security → API Tokens with the read ability." |
 | 403 API disabled | "API DISABLED" | "Enable it in Settings → Advanced → API Access." |
 | 403 IP not allowed | "IP NOT ALLOWED" | callout |
-| 403 ability | normal | callout naming the missing ability (Phase 2: status line after an action) |
+| 403 ability | normal | from a poll: callout naming the missing ability; from an action: the status line only |
 | curl failure | "OFFLINE · RETRYING" | last snapshot stays; "Showing data from N ago." |
 | curl exit 63 | "RESPONSE TOO LARGE" | callout |
 | 429 | "RATE LIMITED" | "Backing off Ns." |
