@@ -171,8 +171,9 @@ Header row pairs `PanelSectionHeader "RESOURCES"` with a right-aligned
 `ButtonGroup { options: [by project, by server]; focusable: false }` (the network
 panel's header-plus-control pairing, with the `topPadding / 2` vertical offset). `g`
 toggles the same property. Grouping folds are `▾ / ▸` rows like omasnitch's System
-fold; a resource whose environment is unknown lands in an "Ungrouped" fold. Resource
-rows:
+fold; a resource whose environment is unknown lands in an "Ungrouped" fold, titled
+"Ungrouped · loading" while the topology blocks are still arriving after a start (a
+minute or so with a panel open, five with it closed). Resource rows:
 
 - Dot: `●` running (foreground), `󱎖` (U+F1396) starting/restarting/degraded (urgent),
   `○` exited/paused (dim), `◌` unknown. `◐` U+25D0 is not in JetBrainsMono Nerd Font.
