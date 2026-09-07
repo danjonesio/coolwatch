@@ -19,6 +19,10 @@ Item {
   readonly property string configDirPath: Quickshell.env("HOME") + "/.config/omarify"
   readonly property string configPath: configDirPath + "/config.json"
   readonly property string me: Quickshell.env("USER")
+  // State (Phase 3): recent terminal deployments. The directory is the permission control
+  // (FileView has no mode API and its atomic rename discards a chmod on the file).
+  readonly property string stateDirPath: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/omarify"
+  readonly property string recentPath: stateDirPath + "/recent.json"
 
   // Private. `_` is a naming convention, not access control: any plugin in this
   // shell can read these through shell.serviceFor(). The token is never placed in
@@ -110,6 +114,14 @@ Item {
   // most; a 404 is final. The existing `deployment` backoff and pause gate the next launch.
   property var _drainTries: ({})       // uuid -> attempts so far; deleted on success, 404 or give-up
   property int _drainRetries: 0        // cumulative, for status
+  // recent.json: written from the deployment arm only (never from a property change, never
+  // from _resetStore), armed only after the state dir exists and the file was read once.
+  property bool _stateDirReady: false
+  property bool _recentLoaded: false
+  property string _recentKey: ""       // Model.origin(instance.url) the loaded file was checked against; "" never arms
+  property string _lastRecentKey: ""   // stamp-free guard key of the last write
+  property int _recentPersisted: 0
+  property bool _recentRejected: false
 
   readonly property int _activeCount: root._deployments.filter(function(d) { return d.status === "queued" || d.status === "in_progress" }).length
   readonly property bool _deploying: root._activeCount > 0
@@ -195,12 +207,51 @@ Item {
   Process {
     id: mkdirProc
     running: false
-    command: ["mkdir", "-m", "700", "-p", root.configDirPath]
+    // -m is create-only, so the chmod repairs a state dir that already existed at 0755;
+    // both paths are positional parameters, never interpolated. The exit code stays unread
+    // (a missing state dir surfaces as "omarify recent save failed").
+    command: ["bash", "-c", 'mkdir -m 700 -p "$1" "$2" && chmod 700 "$2"', "bash", root.configDirPath, root.stateDirPath]
     onExited: function(code) {
       configDir.path = ""
       configDir.path = root.configDirPath
+      root._stateDirReady = true
+      root._armRecent()
       Qt.callLater(function() { if (!root._cfg) configFile.reload(); root._stat() })
     }
+  }
+  // Write-only shape (plugins/agents/Main.qml): no watch on a file this service writes.
+  FileView {
+    id: recentFile
+    path: ""
+    watchChanges: false
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root._loadRecent(text())
+    onLoadFailed: function(err) { root._loadRecent(null) }
+    onSaveFailed: function(err) { console.log("omarify recent save failed") }
+  }
+
+  // Called from _configText (after _instance is set) and from mkdirProc.onExited; needs both.
+  // Do not hoist the path assignment to Component.onCompleted: the directory must exist first.
+  function _armRecent() {
+    if (!root._stateDirReady || !root._instance) return
+    var key = Model.origin(root._instance.url)
+    if (key === root._recentKey && recentFile.path === root.recentPath) return
+    root._recentKey = key; root._recentLoaded = false
+    if (recentFile.path === root.recentPath) recentFile.reload(); else recentFile.path = root.recentPath
+  }
+  function _loadRecent(text) {         // idempotent: onLoaded may fire more than once
+    var r = Model.parseRecent(text, root._recentKey, Date.now())
+    root._recent = Model.joinBranch(Model.mergeRecent(root._recent, r.recent), root._resources)
+    root._recentPersisted = r.recent.length; root._recentRejected = r.rejected; root._recentLoaded = true
+    console.log(r.rejected ? "omarify recent rejected" : "omarify recent loaded " + r.recent.length)
+  }
+  function _saveRecent() {             // the deployment arm is the only caller
+    if (!root._recentLoaded || !root._stateDirReady || root._recentKey === "") return
+    var out = Model.serialiseRecent(root._recent, root._recentKey, Date.now())
+    if (out.key === root._lastRecentKey) return
+    root._lastRecentKey = out.key
+    recentFile.setText(out.text)
   }
   Process {
     id: statProc
@@ -272,6 +323,7 @@ Item {
     root._cfg = c
     var i = c.instances[0]
     root._instance = { id: i.id, name: i.name, url: i.url, plaintext: i.plaintext }
+    root._armRecent()                  // the file is keyed on the instance, not the token: no wait on a vault
     root._topologySec = c.poll.topologySec
     root._needToken = true
     root._error = null
@@ -294,6 +346,7 @@ Item {
     root._actionStatus = ""; actionStatusTimer.stop()
     root._notifyQueue = []; root._actionAt = {}; root._lastNotified = {}; root._notifyLog = []; root._suppressed = {}; root._lastEvent = null
     root._drainTries = {}; deploymentReq.inflight = null
+    root._recentLoaded = false; root._recentKey = ""; root._lastRecentKey = ""   // never writes; _configText re-arms the read
     for (var i = 0; i < root._reqs.length; i++) root._reqs[i].kill()
     root._syncBusy()
     if (interrupted) root._say("Action interrupted by a config change", "urgent")
@@ -531,6 +584,7 @@ Item {
           var rec = root._recent.filter(function(x) { return x.uuid !== d.uuid })
           rec.unshift(d)
           root._recent = rec.slice(0, 20)
+          root._saveRecent()
           if (d.status === "failed" && root._baselineDone && root._openPanels === 0 && root._failedUnacked.indexOf(d.uuid) < 0)
             root._failedUnacked = root._failedUnacked.concat([d.uuid])
         }
@@ -1046,6 +1100,8 @@ Item {
       topologyLoaded: root._topologyLoaded,
       terminalQueue: root._terminalQueue.length,
       drainRetries: root._drainRetries,
+      recentPersisted: root._recentPersisted,
+      recentRejected: root._recentRejected,
       error: root._error ? { kind: root._error.kind, request: root._error.request, httpCode: root._error.httpCode, curlExit: root._error.curlExit } : null,
       warning: root._warning ? root._warning.kind : null,
       bar: { glyph: "U+" + root.bar.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: root.bar.dimmed, active: root.bar.active },
