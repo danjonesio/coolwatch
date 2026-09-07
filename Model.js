@@ -501,7 +501,10 @@ function diffActive(prevUuids, next) {
 // re-resolves the render object from the joined snapshot.
 // event: { kind: deployment|resource|server, event, uuid, obj }
 
-function byUuid(list) { var m = {}; (list || []).forEach(function (x) { if (x && x.uuid) m[x.uuid] = x }); return m }
+// Every map keyed by a Coolify string is prototype-free: a resource named "toString" or a
+// uuid "constructor" must neither read truthy before it is stored nor vanish (SR15).
+function bare() { return Object.create(null) }
+function byUuid(list) { var m = bare(); (list || []).forEach(function (x) { if (x && x.uuid) m[x.uuid] = x }); return m }
 
 function diffDeployments(prevList, nextList, first) {
   var prev = byUuid(prevList)
@@ -531,7 +534,7 @@ function terminalEvent(d) {
 
 // Intra-session terminal dedupe: `recent` is already a uuid-keyed terminal set.
 function hasTerminal(recent, uuid) {
-  return (recent || []).some(function (d) { return !!d && d.uuid === uuid && !!TERMINAL[d.status] })
+  return (recent || []).some(function (d) { return !!d && d.uuid === uuid && Object.prototype.hasOwnProperty.call(TERMINAL, String(d.status)) })
 }
 
 // State prefix only, never health (AGENTS.md prefix-match lock); unknown and paused on
@@ -577,6 +580,9 @@ function uuid8(uuid) { return String(uuid === undefined || uuid === null ? "" : 
 // unbreakable token wider than the toast). One rule for every toast headline.
 function appLabel(name, uuid) {
   var n = String(name === undefined || name === null ? "" : name).trim().replace(/:[^:]*-[a-z0-9]{20,}$/, "")
+  // An unnamed app is "<app uuid>-<digits>" (no colon): the first 8 of that uuid beats a
+  // stub cut mid-timestamp, and matches the log lines. fqdn is never used (AGENTS.md).
+  if (/^[a-z0-9]{20,}-\d{6,}$/.test(n)) n = n.slice(0, 8)
   return elide(n || uuid8(uuid), 32)
 }
 
@@ -609,6 +615,8 @@ var NOTIFY_ROWS = {
   reachable:   { toggle: "serverReachability",   glyph: "finished",  urgency: "low",      target: "server" }
 }
 var NOTIFY_URGENCY_RANK = { critical: 0, normal: 1, low: 2 }
+var NOTIFY_RULES = ["toggle", "selfCancel", "pending", "actionWindow", "activeDeployment", "postDeployGrace", "serverDown", "cooldown", "resourceCap", "minuteCap"]
+function suppressedZero() { var o = {}; NOTIFY_RULES.forEach(function (r) { o[r] = 0 }); return o }
 
 // Every positional handed to the notifier passes here (SR15): the helper keeps parsing
 // options after the headline, so a Coolify string beginning with "-" would be read as one.
@@ -684,7 +692,7 @@ function notifyPlan(events, s, ctx) {
   var pending = ctx.pending || {}, actionAt = ctx.actionAt || {}, last = ctx.lastNotified || {}
   function within(map, k, ms) { return has(map, k) && now - Number(map[k]) < ms }
   var resources = byUuid(s.resources), deployments = byUuid(s.deployments), servers = byUuid(s.servers), recent = byUuid(s.recent)
-  var activeApp = {}, activeName = {}, lastFinish = {}, downServers = {}, downCount = {}
+  var activeApp = bare(), activeName = bare(), lastFinish = bare(), downServers = bare(), downCount = bare()
   ;(s.deployments || []).forEach(function (d) { if (ACTIVE[d.status]) { if (d.appUuid) activeApp[d.appUuid] = true; if (d.appName) activeName[d.appName] = true } })
   ;(s.recent || []).forEach(function (d) {
     var t = Date.parse(d.finishedAt || d.updatedAt || ""); if (isNaN(t)) return
@@ -726,10 +734,13 @@ function notifyPlan(events, s, ctx) {
     if (v.row.urgency !== "critical") { if (budget <= 0) return drop("minuteCap"); budget-- }
     emitted.push(v)
   })
-  if (over.length) {
-    var srvs = {}; over.forEach(function (v) { srvs[v.obj.serverUuid || ""] = true })
+  // The summary names stops only; an overflow "recovered" row is dropped under the cap without
+  // inflating the count (low sorts after normal, so it is what overflows first).
+  var overStopped = over.filter(function (v) { return v.e.event === "stopped" || v.e.event === "degraded" })
+  if (overStopped.length) {
+    var srvs = bare(); overStopped.forEach(function (v) { srvs[v.obj.serverUuid || ""] = true })
     var keys = Object.keys(srvs)
-    var sum = { kind: "resource", event: "summary", uuid: "", obj: {}, count: over.length, serverLabel: keys.length === 1 && keys[0] ? serverLabelFor(s, keys[0]) : "" }
+    var sum = { kind: "resource", event: "summary", uuid: "", obj: {}, count: overStopped.length, serverLabel: keys.length === 1 && keys[0] ? serverLabelFor(s, keys[0]) : "" }
     if (budget > 0) { budget--; emitted.push({ e: sum, obj: {}, row: NOTIFY_ROWS.summary, key: "" }) } else drop("minuteCap")
   }
 
@@ -775,7 +786,7 @@ function parseRecent(text, instanceKey, nowMs) {
   if (!v || typeof v !== "object" || Array.isArray(v) || v.version !== RECENT_FILE_VERSION || v.instance !== instanceKey || !Array.isArray(v.recent)) {
     out.rejected = true; return out
   }
-  var now = nowMs || Date.now(), seen = {}
+  var now = nowMs || Date.now(), seen = bare()
   for (var i = 0; i < v.recent.length && out.recent.length < RECENT_CAP; i++) {
     var d = v.recent[i]
     if (!d || typeof d !== "object" || typeof d.uuid !== "string" || !UUID_RE.test(d.uuid) || seen[d.uuid]) continue
@@ -791,7 +802,7 @@ function parseRecent(text, instanceKey, nowMs) {
 
 // -> { text, key }: `key` omits savedAt so an unchanged list is a no-op write.
 function serialiseRecent(recent, instanceKey, nowMs) {
-  var list = (recent || []).filter(function (d) { return !!d && typeof d.uuid === "string" && UUID_RE.test(d.uuid) && !!TERMINAL[d.status] })
+  var list = (recent || []).filter(function (d) { return !!d && typeof d.uuid === "string" && UUID_RE.test(d.uuid) && Object.prototype.hasOwnProperty.call(TERMINAL, String(d.status)) })
     .slice(0, RECENT_CAP).map(recentEntry)
   list.forEach(function (e) { delete e.appUuid; delete e.branch })
   var key = JSON.stringify({ version: RECENT_FILE_VERSION, instance: instanceKey, recent: list })
@@ -800,7 +811,7 @@ function serialiseRecent(recent, instanceKey, nowMs) {
 }
 
 function mergeRecent(memory, loaded) {
-  var seen = {}, out = []
+  var seen = bare(), out = []
   ;(memory || []).concat(loaded || []).forEach(function (d) { if (!d || !d.uuid || seen[d.uuid]) return; seen[d.uuid] = true; out.push(d) })
   function at(d) { var t = Date.parse(d.finishedAt || d.updatedAt || ""); return isNaN(t) ? 0 : t }
   out.sort(function (a, b) { return at(b) - at(a) })

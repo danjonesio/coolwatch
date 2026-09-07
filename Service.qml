@@ -107,7 +107,7 @@ Item {
   property var _actionAt: ({})         // uuid -> last user action ms (resource uuid; deployment uuid for cancel); pruned > 300 s
   property var _lastNotified: ({})     // "<kind>:<uuid>:<event>" -> ms; the dedupe/flap ledger; pruned > 3600 s
   property var _notifyLog: []          // bare timestamps, the _actionLog idiom (filter-push-reassign)
-  property var _suppressed: ({})       // rule -> cumulative count, for status
+  property var _suppressed: Model.suppressedZero()   // every rule present at 0; cumulative since the last config change
   property var _lastEvent: null
   // The terminal fetch is now the only source of the Deployed/Failed toast, so a vanished
   // uuid whose fetch fails (transport, 5xx, 429, reap) is re-queued at the back, twice at
@@ -210,12 +210,13 @@ Item {
     running: false
     // -m is create-only, so the chmod repairs a state dir that already existed at 0755;
     // both paths are positional parameters, never interpolated. The exit code stays unread
-    // (a missing state dir surfaces as "omarify recent save failed").
+    // (a failed mkdir or chmod leaves _stateDirReady false: recent.json is neither read nor written).
     command: ["bash", "-c", 'mkdir -m 700 -p "$1" "$2" && chmod 700 "$2"', "bash", root.configDirPath, root.stateDirPath]
     onExited: function(code) {
       configDir.path = ""
       configDir.path = root.configDirPath
-      root._stateDirReady = true
+      root._stateDirReady = code === 0             // a failed mkdir/chmod means no read and no write: the 0700 dir is the control
+      if (code !== 0) console.warn("omarify state dir unavailable (mkdir exit " + code + ")")
       root._armRecent()
       Qt.callLater(function() { if (!root._cfg) configFile.reload(); root._stat() })
     }
@@ -345,7 +346,7 @@ Item {
     var interrupted = root._inflightAction !== null
     root._pending = {}; root._inflightAction = null; root._ipcAbilityStreak = 0; root._lastAbility = ""
     root._actionStatus = ""; actionStatusTimer.stop()
-    root._notifyQueue = []; root._actionAt = {}; root._lastNotified = {}; root._notifyLog = []; root._suppressed = {}; root._lastEvent = null
+    root._notifyQueue = []; root._actionAt = {}; root._lastNotified = {}; root._notifyLog = []; root._suppressed = Model.suppressedZero(); root._lastEvent = null
     root._drainTries = {}; deploymentReq.inflight = null
     root._recentLoaded = false; root._recentKey = ""; root._lastRecentKey = ""   // never writes; _configText re-arms the read
     for (var i = 0; i < root._reqs.length; i++) root._reqs[i].kill()
@@ -713,9 +714,10 @@ Item {
     }
     var n = (t[f.uuid] || 0) + 1
     if (n > 2) { delete t[f.uuid]; root._drainTries = t; console.log("omarify drain gave up " + Model.uuid8(f.uuid)); return }
-    t[f.uuid] = n; root._drainTries = t; root._drainRetries += 1
     var q = root._terminalQueue.slice()
-    if (q.indexOf(f.uuid) < 0 && q.length < 20) q.push(f.uuid)      // the back: one failing uuid must not stall the healthy ones twice
+    if (q.indexOf(f.uuid) >= 0 || q.length >= 20) { delete t[f.uuid]; root._drainTries = t; return }   // already queued, or the cap: no retry is scheduled, so none is counted
+    t[f.uuid] = n; root._drainTries = t; root._drainRetries += 1
+    q.push(f.uuid)                                                   // the back: one failing uuid must not stall the healthy ones twice
     root._terminalQueue = q
   }
 
@@ -1121,6 +1123,7 @@ Item {
       baseline: { deployments: root._baseline.deployments, resources: root._baseline.resources, servers: root._baseline.servers, version: root._baseline.version },
       notify: {
         enabled: root._cfg ? root._cfg.notify : Model.notifyDefaults(),
+        warning: root._cfg && root._cfg.warning ? root._cfg.warning : null,   // visible even when another warning holds the callout
         sentLastMin: root._notifiedLastMin(),
         suppressed: root._suppressed,     // cumulative per rule since the last config change
         queued: root._notifyQueue.length,

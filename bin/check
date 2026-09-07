@@ -42,13 +42,13 @@ if grep -n 'fqdn' "$root"/*.qml; then fail "fqdn must never reach the UI"; fi
 # "At most once" keeps a rollback of Model.js to Phase 2 green; comments are stripped first,
 # so no comment in Model.js may name either program.
 mjs=$(sed 's#//.*##' "$root/Model.js")
-ln=$(printf '%s\n' "$mjs" | grep -c 'omarchy-launch-browser' || true)
+ln=$(printf '%s\n' "$mjs" | grep -o 'omarchy-launch-browser' | wc -l)     # occurrences, not lines
 [[ $ln -le 1 ]] || fail "SR16: omarchy-launch-browser appears $ln times in Model.js; one --exec tail at most"
 if [[ $ln -eq 1 ]]; then
   printf '%s\n' "$mjs" | grep 'omarchy-launch-browser' | grep -qE '"--exec", "omarchy-launch-browser", [A-Za-z_.]+\]' \
     || fail "SR16: the launcher in Model.js must be the tail \"--exec\", \"omarchy-launch-browser\", <one identifier>]"
 fi
-nn=$(printf '%s\n' "$mjs" | grep -c 'omarchy-notification-send' || true)
+nn=$(printf '%s\n' "$mjs" | grep -o 'omarchy-notification-send' | wc -l)
 [[ $nn -le 1 ]] || fail "SR16: omarchy-notification-send appears $nn times in Model.js; argv[0] once at most"
 if [[ $nn -eq 1 ]]; then
   printf '%s\n' "$mjs" | grep 'omarchy-notification-send' | grep -qF '["omarchy-notification-send", ' \

@@ -553,7 +553,9 @@ test("Model.serverEvents: both flips, disabled never, absent never, first poll n
 test("Model.appLabel / uuid8: Coolify suffix stripped, plain names kept, empty -> uuid8, newline filtered", () => {
   eq(M.appLabel("storefront:main-h0wxyg40kc0lz727dom9l03i", "h0wx"), "storefront")
   eq(M.appLabel("worker", "u"), "worker"); eq(M.appLabel("umami-prod", "u"), "umami-prod"); eq(M.appLabel("Storefront Prod WP", "u"), "Storefront Prod WP")
-  eq(M.appLabel("xyhpwdxqu33omjgwuo6c7cjp-200537415987", "xyhpwdxqu33omjgwuo6c7cjp"), "xyhpwdxqu33omjgwuo6c7cjp-200537…")
+  eq(M.appLabel("xyhpwdxqu33omjgwuo6c7cjp-200537415987", "xyhpwdxqu33omjgwuo6c7cjp"), "xyhpwdxq", "an unnamed app's generated name falls back to uuid8")
+  eq(M.appLabel("abcdefghijklmnopqrstuv-123456", "zz"), "abcdefgh", "the generated shape yields the first 8 of its own uuid")
+  eq(M.appLabel("umami-prod", "u"), "umami-prod", "a short uuid never masks a real name")
   eq(M.appLabel("", "abcdefghijkl"), "abcdefgh"); eq(M.appLabel(null, "abcdefghijkl"), "abcdefgh")
   eq(M.appLabel("a".repeat(60), "u").length, 32)
   eq(M.uuid8("ab\ncd-ef gh!ijklmnop"), "abcdefgh"); eq(M.uuid8(null), "")
@@ -606,7 +608,7 @@ test("Model.notifyCopy: thirteen rows, glyphs in GLYPHS, urgency, toggle, fallba
   eq(M.notifyCopy({ kind: "deployment", event: "failed", uuid: "u" }, Object.assign({}, fail, { url: null }), s, ctx).body, "1m 4s · main", "no url -> branch")
   const can = M.normaliseDeployment(fx("deployment-cancelled.json"))
   const cc = M.notifyCopy({ kind: "deployment", event: "cancelled", uuid: can.uuid }, can, s, ctx)
-  eq(cc.headline, "Cancelled xyhpwdxqu33omjgwuo6c7cjp-200537…"); eq(cc.body, ""); eq(cc.urgency, "low"); eq(cc.toggle, "deploymentFinished")
+  eq(cc.headline, "Cancelled xyhpwdxq"); eq(cc.body, ""); eq(cc.urgency, "low"); eq(cc.toggle, "deploymentFinished")
   const act = M.joinBranch(M.normaliseDeployments(fx("deployments-active.json")), s.resources)
   eq(M.notifyCopy({ kind: "deployment", event: "started", uuid: act[0].uuid }, act[0], s, ctx).headline, "Building storefront")
   eq(M.notifyCopy({ kind: "deployment", event: "started", uuid: act[0].uuid }, act[0], s, ctx).body, "main · Merge pull request #117 from example/feature/checkout")
@@ -721,6 +723,12 @@ test("Model.notifyPlan: critical-first ordering, resource cap + summary, minute 
   const crit = []; for (let i = 0; i < 20; i++) crit.push({ kind: "server", event: "unreachable", uuid: "srv" + i, obj: { uuid: "srv" + i, name: "s" + i, reachable: false, disabled: false } })
   const burst = M.notifyPlan(crit, s, nctx())
   eq(burst.argvs.length, 20, "critical never capped"); eq(burst.nonCritical, 0, "critical toasts do not charge the minute ring")
+  const mix = M.notifyPlan([stopEv("n0"), stopEv("n1"), { kind: "resource", event: "recovered", uuid: "m0", obj: rawRes("m0", "running") }, { kind: "resource", event: "recovered", uuid: "m1", obj: rawRes("m1", "running") }, { kind: "resource", event: "recovered", uuid: "m2", obj: rawRes("m2", "running") }, stopEv("n2"), stopEv("n3")], s,
+    nctx({ lastNotified: { "resource:m0:stopped": NOW - 1000, "resource:m1:stopped": NOW - 1000, "resource:m2:stopped": NOW - 1000 } }))
+  eq(mix.argvs.length, 4, "3 resource toasts + one summary"); eq(mix.argvs[3][7], "1 more resources stopped", "the summary counts stops only, never recoveries"); eq(mix.suppressed.resourceCap, 4)
+  const proto = M.notifyPlan([{ kind: "resource", event: "stopped", uuid: "toString", obj: rawRes("toString") }], nsnap({ deployments: [dep({ status: "in_progress", appName: "constructor" })] }), nctx())
+  eq(proto.argvs.length, 1, "a resource named toString is not swallowed by a prototype key"); eq(M.hasTerminal([dep({ uuid: "x", status: "constructor" })], "x"), false)
+  eq(M.mergeRecent([{ uuid: "valueOf", status: "finished", finishedAt: "2026-09-06T21:00:00Z" }], []).length, 1)
   const after = M.notifyPlan([stopEv(NAPP)], s, nctx({ sentLastMin: burst.nonCritical }))
   eq(after.argvs.length, 1, "a non-critical toast right after a critical burst is not dropped"); eq(after.nonCritical, 1)
   const big = []; for (let i = 0; i < 2000; i++) big.push(stopEv("big" + i))
@@ -757,6 +765,7 @@ test("Model.parseRecent / serialiseRecent / mergeRecent: round-trip, corrupt, nu
   const two = []; for (let i = 0; i < 2000; i++) two.push(entry(i))
   const twoText = JSON.stringify({ version: 1, instance: KEY, recent: two }); assert(twoText.length < 262144, "under the bound")
   eq(M.parseRecent(twoText, KEY, NOW).recent.length, 20, "array capped at 20")
+  eq(M.parseRecent(JSON.stringify({ version: 1, instance: KEY, recent: [entry(1, { uuid: "constructor" })] }), KEY, NOW).recent.length, 1, "a uuid that names a prototype member survives")
   const mixed = { version: 1, instance: KEY, recent: [entry(1, { finishedAt: null, updatedAt: null }), entry(2, { finishedAt: new Date(NOW - 25 * 3600 * 1000).toISOString() }), entry(3, { status: "in_progress" }), entry(4, { uuid: "../x" }), entry(5), entry(5)] }
   const m = M.parseRecent(JSON.stringify(mixed), KEY, NOW); eq(m.recent.length, 1); eq(m.recent[0].uuid, "u5")
   for (const u of ["https://evil/x", "//evil/x", "javascript:x", "-private", "project/x"]) {
