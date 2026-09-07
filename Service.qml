@@ -930,7 +930,7 @@ Item {
   // CLI verbs never confirm: typing the verb is the confirmation. The result is the
   // stdout token and status.lastAction; omarchy-shell exits 0 on dispatch regardless.
   function _ipcAct(verb, uuid) {
-    var u = String(uuid === undefined || uuid === null ? "" : uuid).trim()
+    var u = String(uuid === undefined || uuid === null ? "" : uuid).replace(/[\r\n\t]/g, " ").trim()
     if (!u) return "usage: " + verb + " <uuid>"
     var r = root.act(verb, u, true)
     var token = r === "queued" ? "queued " + verb + " " + u.slice(0, 64) : r

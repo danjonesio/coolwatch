@@ -29,8 +29,8 @@ fi
 
 # SR9: the browser launcher is only ever called through Util.execArgv with one argument
 # (the URL Model.openUrl built from the instance origin), and fqdn never reaches the UI.
-# Comment lines are ignored on both sides so a comment can neither satisfy the floor nor hide a call.
-launch=$(grep -h 'omarchy-launch-browser' "$root"/*.qml | grep -vE '^[[:space:]]*//' || true)
+# Comments are stripped to end of line first, so a comment can neither satisfy the floor nor hide a call.
+launch=$(sed 's#//.*##' "$root"/*.qml | grep 'omarchy-launch-browser' || true)
 n=$(printf '%s\n' "$launch" | grep -c 'omarchy-launch-browser' || true)
 [[ $n -ge 1 ]] || fail "SR9 gate matched nothing; the launcher was renamed"
 bad=$(printf '%s\n' "$launch" | grep -vcE 'Util\.execArgv\(\["omarchy-launch-browser", [A-Za-z_.]+\]\)' || true)
