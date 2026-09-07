@@ -132,6 +132,13 @@ Phase 1 human checks touched by this run: "< 60/min with a deployment" closed (m
 
 Panel as in the plan's record (six members; `data-analyst` skipped, no persistence). Reviewers read the plan and the record from the repo rather than inline (same content). Re-check round: code-reviewer 7/8 resolved, the eighth (the confirm path's target noun) fixed in `cd63b35`; ux 5/6 resolved plus `cd63b35` and `e3bbb0b`; perf 4/4 resolved; ops 5/7 resolved, the Phase 1 record rows and two stale sentences fixed in the second record commit; security 4/6 resolved plus two nits fixed in the final commit (comments stripped to end of line in the SR9 gate; `_ipcAct` sanitises the uuid before logging 8 chars); skeptic 8/10 resolved, F7 (the Phase 1 record rows) fixed in `f010386` after the re-check caught the omission, F4's wording ("v2 observed, v1 inferred") fixed in the final commit.
 
+## Changes after the review (user request)
+
+| # | request | done | commit | evidence |
+|---|---|---|---|---|
+| 1 | Deploy and Redeploy are not side by side: Deploy on a stopped item, Redeploy on a running one | `Model.actionsFor` offers `deploy` (stopped applications) or `redeploy` (running applications), both `POST /deploy` without confirm; the no-cache rebuild is the keyboard-only `D` (`rebuild`, confirms); `d` and IPC `deploy` resolve to whichever applies; pending verbs `deploying…` / `redeploying…` / `rebuilding…`; status lines "Deployment queued" / "Redeploy queued" / "Rebuild queued"; docs (design, architecture, AGENTS, product) updated | `4ac4edb` | `node tests/run.js` 68/0; `r1.png`, `r2.png`: the strip on a running application reads Redeploy · Restart · Stop |
+| 2 | Rows must be clickable, not only Enter | a left click on a leaf row places the cursor and opens its strip (or closes the open one); the strip's buttons and the confirm's buttons were already clickable; right-click still opens the browser | `4ac4edb` | `bin/check` ok; installed and restarted; a mouse click itself needs human (`wtype` has no mouse) |
+
 ## Noticed, not done
 
 - A panel open on any monitor drops the resources interval to 30 s and `_catchUp` polls at once; a deployment drops it to 15 s. Both are documented cadences, but they make any live test of the 150 s / 300 s pending transitions need every monitor's panel closed and no deployment anywhere for five minutes (`Service.qml:97`).
