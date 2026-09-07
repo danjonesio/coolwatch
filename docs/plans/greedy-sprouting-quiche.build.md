@@ -113,12 +113,13 @@ Not written as named: "eight uuids vanishing in one poll are queued once each" i
 | token in log | `quickshell log -p /usr/share/omarchy/shell -t 100000 \| grep -cFf <(needle) \|\| true` | 0 |
 | roadmap: icon correct within 10 s of enabling | steps 7 and 2: baseline done in < 12 s after restart, counts equal a direct curl | pass |
 | roadmap: idle < 20/min, panel closed | 3 min settle then 12 × 10 s across a full topology cycle: max 19 (step 7, after `537003d`) | pass |
-| roadmap: with one deployment < 60/min; row within 5 s of queuing; finished within 5 s of finishing | closed by the Phase 2 build (2026-09-07): max `requestsLastMin` 31 with a deployment running and the panel open; the deployment row appeared and finished into recent between 10 s samples | pass (Phase 2 record) |
+| roadmap: with one deployment < 60/min | closed by the Phase 2 build (2026-09-07): max `requestsLastMin` 31 with a short deployment running and the panel open; sustained deploying ≈ 35/min derived | pass (Phase 2 record) |
+| roadmap: row within 5 s of queuing; finished within 5 s of finishing | Phase 2 build (2026-09-07): observed ≤ 11 s / ≤ 21 s at 10 s sampling; the 5 s bound needs a 1 s loop | needs human |
 | roadmap: config deleted / restored live | step 6 | pass |
 | roadmap: revoked token → TOKEN REJECTED, no token in log or ps | simulated with a bogus token (step 7); greps 0 | pass (a real revoke needs human) |
 | roadmap: theme check | step 10 | pass |
 | the plan's "enabled on all three monitors" | one monitor was attached throughout; the per-monitor widget duplication was not exercised | needs human |
-| bar states 10/11/12 (failed, unreachable, deploying) | needs human: a broken commit, a stopped server, a deploy | needs human |
+| bar states 10/11/12 (failed, unreachable, deploying) | 12 (deploying) observed 2026-09-07 by the Phase 2 build (`U+F0996`); 10 and 11 still need a broken commit and a stopped server | needs human (10, 11) |
 | mouse hover moves the cursor; scroll survives polls with the cursor off-screen; a long server name elides; monitor unplug with a panel open | needs human | needs human |
 | README install from a git URL | needs human after push: `omarchy plugin add https://github.com/danjonesio/omarify.git --enable` | needs human |
 | restore `io.github.dougfour.grok-usage` | reinstalled 2026-09-07 from https://github.com/dougfour/omarchy-grok-usage; `omarchy plugin list` shows it enabled | done |
