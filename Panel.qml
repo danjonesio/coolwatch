@@ -252,7 +252,7 @@ Panel {
 
   function openConfirm(verb, row) {
     var c = Model.confirmCopy(verb, row.name)
-    root.confirmAction = { verb: verb, uuid: row.uuid, name: row.name }
+    root.confirmAction = { verb: verb, uuid: row.uuid, name: row.name, type: row.type }
     confirm.message = c.message; confirm.cancelText = c.cancelText; confirm.confirmText = c.confirmText
     confirm.selectedIndex = 0
     root.confirmArmed = false
@@ -267,7 +267,7 @@ Panel {
     root.confirmAction = null
     root.confirmOpen = false
     root.confirmArmed = false
-    if (ok && c && svc) svc.act(c.verb, c.uuid)
+    if (ok && c && svc) svc.act(c.verb, c.uuid, false, c.type)
   }
 
   // Esc ladder: close the confirm, else collapse the row, else close the panel. One
