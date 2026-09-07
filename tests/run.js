@@ -327,6 +327,42 @@ test("Model.configUnsafe / configLoose (SR7)", () => {
   eq(M.configLoose("640"), true); eq(M.configLoose("0600"), false)
 })
 
+// ---- Model.js: Phase 3 config ------------------------------------------------------------
+
+test("Model.normaliseConfig: notify{} defaults, false shorthand, warning on a bad value, unknown key ignored (SR22)", () => {
+  const base = { instances: [{ url: "https://x", token: "t" }] }
+  const none = M.normaliseConfig(base)
+  eq(none.ok, true); eq(none.warning, "")
+  for (const k of Object.keys(M.NOTIFY_DEFAULTS)) eq(none.notify[k], true, k)
+  const one = M.normaliseConfig(Object.assign({ notify: { deploymentFailed: false } }, base))
+  eq(one.notify.deploymentFailed, false); eq(one.notify.deploymentQueued, true); eq(one.warning, "")
+  const quoted = M.normaliseConfig(Object.assign({ notify: { deploymentFailed: "false" } }, base))
+  eq(quoted.ok, true, "a quoted boolean is not a config error"); eq(quoted.notify.deploymentFailed, true, "default kept"); eq(quoted.warning, "notify.deploymentFailed must be a boolean")
+  const bogus = M.normaliseConfig(Object.assign({ notify: { bogus: 1 } }, base))
+  eq(bogus.ok, true); eq(bogus.warning, ""); eq(bogus.notify.deploymentQueued, true)
+  const off = M.normaliseConfig(Object.assign({ notify: false }, base))
+  for (const k of Object.keys(M.NOTIFY_DEFAULTS)) eq(off.notify[k], false, k)
+  const str = M.normaliseConfig(Object.assign({ notify: "false" }, base))
+  eq(str.ok, true); eq(str.notify.deploymentFailed, true); eq(str.warning, "notify must be an object or a boolean")
+  for (const v of [true, null]) { const c = M.normaliseConfig(Object.assign({ notify: v }, base)); eq(c.notify.deploymentFailed, true); eq(c.warning, "") }
+})
+
+test("Model.configSansNotify: equal when only notify/warning differ, unequal on poll", () => {
+  const base = { instances: [{ url: "https://x", token: "t" }] }
+  const a = M.normaliseConfig(Object.assign({ notify: { deploymentQueued: false } }, base))
+  const b = M.normaliseConfig(Object.assign({ notify: { deploymentQueued: "no" } }, base))
+  eq(JSON.stringify(M.configSansNotify(a)), JSON.stringify(M.configSansNotify(b)))
+  const c = M.normaliseConfig(Object.assign({ poll: { deploymentsSec: 9 } }, base))
+  assert(JSON.stringify(M.configSansNotify(a)) !== JSON.stringify(M.configSansNotify(c)), "poll differs")
+})
+
+test("Model.origin / openUrl reject userinfo; normaliseConfig still accepts the url (SR19)", () => {
+  eq(M.origin("https://u:p@host"), ""); eq(M.origin("https://u@host/x"), "")
+  eq(M.openUrl("deployment", { url: "/x" }, "https://u:p@host"), "")
+  eq(M.origin("https://app.coolify.io/"), "https://app.coolify.io")
+  eq(M.normaliseConfig({ instances: [{ url: "https://u:p@host", token: "t" }] }).ok, true)
+})
+
 // ---- Model.js: normalise ----------------------------------------------------------------
 
 test("Model.parseStatus: all nine strings; bare exited equals exited:unhealthy; unknown", () => {

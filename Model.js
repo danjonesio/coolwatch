@@ -52,9 +52,13 @@ var STOPPED_STATES = { exited: true, paused: true }
 // ---- config --------------------------------------------------------------------------
 
 var POLL_DEFAULTS = { deploymentsSec: 4, resourcesSec: 60, serversSec: 120, topologySec: 600 }
+// Phase 3 toggles. Every key defaults to true; a malformed value warns (never a config
+// error: a quoted "false" must not stop polling and every alert) and keeps its default (SR22).
+var NOTIFY_DEFAULTS = { deploymentQueued: true, deploymentStarted: true, deploymentFinished: true,
+                        deploymentFailed: true, resourceStateChanged: true, serverReachability: true }
 
 function normaliseConfig(text) {
-  var out = { ok: false, error: "", instances: [], poll: pollDefaults() }
+  var out = { ok: false, error: "", warning: "", instances: [], poll: pollDefaults(), notify: notifyDefaults() }
   var c
   try { c = typeof text === "string" ? JSON.parse(text) : text } catch (e) { out.error = "invalid JSON: " + String(e && e.message ? e.message : e); return out }
   if (!c || typeof c !== "object") { out.error = "config is not an object"; return out }
@@ -91,11 +95,31 @@ function normaliseConfig(text) {
       }
     }
   }
+  if (Object.prototype.hasOwnProperty.call(c, "notify") && c.notify !== null && c.notify !== true) {
+    if (c.notify === false) { for (var nk in NOTIFY_DEFAULTS) out.notify[nk] = false }
+    else if (typeof c.notify !== "object" || Array.isArray(c.notify)) { out.warning = "notify must be an object or a boolean" }
+    else {
+      for (var nk2 in NOTIFY_DEFAULTS) {
+        if (!Object.prototype.hasOwnProperty.call(c.notify, nk2)) continue
+        if (typeof c.notify[nk2] === "boolean") out.notify[nk2] = c.notify[nk2]
+        else if (!out.warning) out.warning = "notify." + nk2 + " must be a boolean"
+      }
+    }
+  }
   out.ok = true
   return out
 }
 
 function pollDefaults() { var p = {}; for (var k in POLL_DEFAULTS) p[k] = POLL_DEFAULTS[k]; return p }
+function notifyDefaults() { var p = {}; for (var k in NOTIFY_DEFAULTS) p[k] = NOTIFY_DEFAULTS[k]; return p }
+
+// The reset decision in Service._configText compares configs without the live-applied
+// parts: a notify-only edit must not reset the store.
+function configSansNotify(cfg) {
+  var o = {}
+  for (var k in cfg) if (k !== "notify" && k !== "warning") o[k] = cfg[k]
+  return o
+}
 
 function hostOf(url) {
   var m = /^https?:\/\/([^\/:]+)/i.exec(String(url || ""))
@@ -664,7 +688,9 @@ function kindHint(res) {
 
 function origin(instanceUrl) {
   var u = String(instanceUrl === undefined || instanceUrl === null ? "" : instanceUrl).trim().replace(/\/+$/, "")
-  return /^https?:\/\/[^\/\s?#]+(\/[^\s?#]*)?$/.test(u) ? u : ""     // scheme + host, optional path prefix; no query, no fragment
+  // scheme + host, optional path prefix; no query, no fragment, no userinfo (a URL with
+  // credentials would otherwise reach browser argv and the shell's history files, SR19)
+  return /^https?:\/\/[^\/\s?#@]+(\/[^\s?#]*)?$/.test(u) ? u : ""
 }
 
 function enc(v) { return encodeURIComponent(String(v === undefined || v === null ? "" : v)) }
