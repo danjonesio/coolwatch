@@ -1,6 +1,8 @@
 # Build record: Omarify Phase 2 — "act"
 
-Plan: `docs/plans/phase-2-act.md` (copy of `/home/danjones/.claude/plans/greedy-sprouting-quiche.md`, the Phase 2 plan; the Phase 1 plan and record keep the `greedy-sprouting-quiche` basename). Branch `phase-2-act` from base `29f3a76`. Dan merges.
+Plan: `docs/plans/phase-2-act.md` (copy of `/home/danjones/.claude/plans/greedy-sprouting-quiche.md`, the Phase 2 plan; the Phase 1 plan and record keep the `greedy-sprouting-quiche` basename). Branch `phase-2-act` from base `29f3a76`; last code commit `9bdaadf`. Dan merges.
+
+Build audit (run before delivery): every Changes step has a commit and a passing Verify (step 0 is evidence only); step commits touch their step's files (deviation 10 explains the one extra test case); Security requirements 1–5, 7–13 are `met` in the security-analyst's table after the review round, SR6 and SR14 are `partial` because the read-only-token path was overridden by the user and is a merge-time human check (runbook 1); every Tests-to-add case exists and passes (68/0); every Verification row ran or is needs-human with an exact action; every deviation has its three columns and none changes Design; every review finding is fixed with a commit or deferred with a reason and no critical is deferred; `git diff 29f3a76...HEAD --stat` holds nothing under Out of scope; every open question is in the questions table with a source.
 
 ## Questions resolved
 
@@ -88,7 +90,7 @@ Tree at `29f3a76`, `git status --porcelain` empty. Every path in **Changes** exi
 | runbook 13: budget | the sampling loops | max 31 with a short deployment and the panel open; sustained deploying ≈ 35/min derived from the cadences (2 s deployments, 15 s resources, 120 s servers, ≤ 3 topology); the 60 line holds either way |
 | runbook 14: recorded bodies | manual restart and validate | restart body recorded (`action-restart-ok.json`, `_recorded`); the validate 403 body matches the ability regex. **Needs human**: deploy, stop and cancel bodies were not captured (their shapes are proven by the 200s and the API's `cancelled-by-user`) |
 | rollback line | `git checkout 29f3a76 -- manifest.json Service.qml BarWidget.qml Panel.qml Model.js Api.js && bin/dev-sync && omarchy restart shell` | documented in AGENTS.md; not exercised |
-| machine state at the end | `jq .poll config.json`; `stat -c %a`; installed dir vs HEAD; `status.openPanels` | `{4,60,120,600}`; `600`; the installed copy was verified byte-identical to `03a12f9` for all seven shipped files (the confirm-path fix `cd63b35` shipped after that check: sync once more); panel closed (`openPanels 0`). After merge: `bin/dev-sync && omarchy restart shell` so the installed copy matches `master` |
+| machine state at the end | `jq .poll config.json`; `stat -c %a`; installed dir vs HEAD; `status.openPanels` | `{4,60,120,600}`; `600`; the installed copy was verified byte-identical to `9bdaadf` (the last code commit) for all eight shipped files after a final `bin/dev-sync && omarchy restart shell`; panel closed (`openPanels 0`); `status` healthy (`configState ok`, `error null`, `pending 0`). After merge: `bin/dev-sync && omarchy restart shell` once more only if `master` differs from this branch |
 
 Phase 1 human checks touched by this run: "< 60/min with a deployment" closed (max 31); "row within 5 s of queuing / finished within 5 s" observed only at 10 s sampling (≤ 11 s / ≤ 21 s), so the Phase 1 row now states the measured bound rather than a pass; "bar state 12 deploying" closed (`U+F0996` observed). Still open from Phase 1: a real token revoke, mouse hover, multi-monitor, monitor unplug, long-name elision, install from the git URL.
 
