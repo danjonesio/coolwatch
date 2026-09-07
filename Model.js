@@ -664,7 +664,7 @@ function kindHint(res) {
 
 function origin(instanceUrl) {
   var u = String(instanceUrl === undefined || instanceUrl === null ? "" : instanceUrl).trim().replace(/\/+$/, "")
-  return /^https?:\/\/[^\/\s]+$/.test(u) ? u : ""
+  return /^https?:\/\/[^\/\s?#]+(\/[^\s?#]*)?$/.test(u) ? u : ""     // scheme + host, optional path prefix; no query, no fragment
 }
 
 function enc(v) { return encodeURIComponent(String(v === undefined || v === null ? "" : v)) }
@@ -992,6 +992,7 @@ function footerHints(focusSection, row, ui) {
   if (focusSection === "hero") return "enter refresh · j down · r refresh · esc close"
   if (row && row.type === "fold") return "j/k move · enter fold · g group · r refresh · esc close"
   if (ui.expanded && ui.actionFocus) return "h/l pick · enter run · esc collapse"
+  if (ui.expanded) return "l pick · enter collapse · esc collapse"
   var list = actionsFor(row)
   if (!list.length) return "j/k move · g group · r refresh · esc close"
   var ids = {}

@@ -138,6 +138,8 @@ test("Api.block GET output is byte-identical for every Phase 1 descriptor (SR1)"
   const gets = [A.reqVersion(), A.reqDeployments(), A.reqDeployment("u1"), A.reqResources(), A.reqServers(), A.reqProjects(), A.reqProject("p1"), A.reqServerResources("s1")]
   for (const r of gets) {
     const b = A.block(inst, TOK, r, 6)
+    const want = 'url = "' + A.quote(A.base(inst) + r.path) + '"\nsilent\nconnect-timeout = "5"\nmax-time = "6"\nmax-filesize = "8388608"\nproto = "=https,http"\nheader = "Authorization: Bearer ' + TOK + '"\nheader = "Accept: application/json"\nwrite-out = "' + A.quote(A.TRAILER) + '"\n'
+    eq(b, want, "byte-identical Phase 1 block for " + r.kind)
     eq(count(b, "request = "), 0, "no method line on a GET")
     eq(count(b, "data-raw"), 0)
     eq(count(b, "Content-Type"), 0)
@@ -683,7 +685,9 @@ test("Model.openUrl: deployment joins the relative deployment_url; hostile value
     eq(M.openUrl("deployment", { url: bad }, ORIGIN), "", "rejects " + bad)
   }
   eq(M.openUrl("deployment", { url: "/x" }, "ftp://x"), "", "origin must be http(s)")
-  eq(M.openUrl("deployment", { url: "/x" }, "https://app.coolify.io/api"), "", "origin must be a bare host")
+  eq(M.openUrl("deployment", { url: "/x" }, "https://ops.example.com/coolify/"), "https://ops.example.com/coolify/x", "a path prefix is kept")
+  eq(M.openUrl("deployment", { url: "/x" }, "https://app.coolify.io/?x=1"), "", "no query in the origin")
+  eq(M.openUrl("deployment", { url: "/x" }, "https://app.coolify.io/#f"), "", "no fragment in the origin")
 })
 
 test("Model.openUrl: resource shape from topology, server shape, missing parts yield empty (SR9)", () => {
@@ -893,6 +897,7 @@ test("Model.footerHints: every cursor position; no o open without a url", () => 
   eq(M.footerHints("list", { type: "resource", kind: "database", state: "exited", url: "u" }), "enter actions · s start · o open")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "" }), "enter actions · d deploy · s stop · t restart")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }, { expanded: true, actionFocus: "stop" }), "h/l pick · enter run · esc collapse")
+  eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }, { expanded: true, actionFocus: "" }), "l pick · enter collapse · esc collapse")
   eq(M.footerHints("list", { type: "server", url: "u" }), "enter actions · v validate · o open")
   eq(M.footerHints("list", { type: "deployment", status: "in_progress", url: "u" }), "enter actions · x cancel · o open")
   eq(M.footerHints("list", { type: "deployment", status: "finished", url: "u" }), "o open · j/k move")
