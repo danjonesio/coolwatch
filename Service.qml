@@ -209,8 +209,8 @@ Item {
     id: mkdirProc
     running: false
     // -m is create-only, so the chmod repairs a state dir that already existed at 0755;
-    // both paths are positional parameters, never interpolated. The exit code stays unread
-    // (a failed mkdir or chmod leaves _stateDirReady false: recent.json is neither read nor written).
+    // both paths are positional parameters, never interpolated. A non-zero exit leaves
+    // _stateDirReady false: recent.json is then neither read nor written..
     command: ["bash", "-c", 'mkdir -m 700 -p "$1" "$2" && chmod 700 "$2"', "bash", root.configDirPath, root.stateDirPath]
     onExited: function(code) {
       configDir.path = ""
