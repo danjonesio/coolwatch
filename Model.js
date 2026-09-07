@@ -580,6 +580,232 @@ function appLabel(name, uuid) {
   return elide(n || uuid8(uuid), 32)
 }
 
+// ---- notifications (Phase 3) -------------------------------------------------------------
+// The copy table and every suppression rule live here so tests/run.js covers them. The
+// only consumer is Service._flushNotify, which hands each argv to Util.execArgv unchanged.
+
+var NOTIFY_MAX_HEADLINE = 72, NOTIFY_MAX_BODY = 96
+var NOTIFY_CANCEL_WINDOW_MS = 300 * 1000   // the service's own Cancel already spoke on the status line
+var NOTIFY_ACTION_WINDOW_MS = 180 * 1000   // a service/database restart's pending entry is gone before the container flaps
+var NOTIFY_GRACE_MS = 120 * 1000           // containers settle after the deployment left the active list
+var NOTIFY_COOLDOWN_MS = 300 * 1000        // per (kind, uuid, event): the flap bound
+var NOTIFY_RECOVER_WINDOW_MS = 3600 * 1000 // "running again" only after a stopped/degraded toast this recent
+var NOTIFY_RESOURCE_CAP = 3                // resource toasts per flush; the rest fold into one summary
+var NOTIFY_PER_MIN = 12                    // non-critical toasts per rolling minute; critical is never capped
+
+var NOTIFY_ROWS = {
+  queued:      { toggle: "deploymentQueued",     glyph: "queued",    urgency: "low",      target: "deployment" },
+  started:     { toggle: "deploymentStarted",    glyph: "progress",  urgency: "low",      target: "deployment" },
+  restarting:  { toggle: "deploymentStarted",    glyph: "progress",  urgency: "low",      target: "deployment" },
+  finished:    { toggle: "deploymentFinished",   glyph: "finished",  urgency: "normal",   target: "deployment" },
+  restarted:   { toggle: "deploymentFinished",   glyph: "finished",  urgency: "normal",   target: "deployment" },
+  failed:      { toggle: "deploymentFailed",     glyph: "failed",    urgency: "critical", target: "deployment" },
+  cancelled:   { toggle: "deploymentFinished",   glyph: "cancelled", urgency: "low",      target: "deployment" },
+  stopped:     { toggle: "resourceStateChanged", glyph: "failed",    urgency: "normal",   target: "resource" },
+  degraded:    { toggle: "resourceStateChanged", glyph: "half",      urgency: "normal",   target: "resource" },
+  recovered:   { toggle: "resourceStateChanged", glyph: "finished",  urgency: "low",      target: "resource" },
+  summary:     { toggle: "resourceStateChanged", glyph: "failed",    urgency: "normal",   target: "" },
+  unreachable: { toggle: "serverReachability",   glyph: "failed",    urgency: "critical", target: "server" },
+  reachable:   { toggle: "serverReachability",   glyph: "finished",  urgency: "low",      target: "server" }
+}
+var NOTIFY_URGENCY_RANK = { critical: 0, normal: 1, low: 2 }
+
+// Every positional handed to the notifier passes here (SR15): the helper keeps parsing
+// options after the headline, so a Coolify string beginning with "-" would be read as one.
+// Control characters go (a NUL would corrupt the click-argv encoding); all other Unicode
+// survives; the cut happens before the dash guard so the guard sees the final string.
+function notifySafe(text, max) {
+  var t = elide(redact(text).replace(/[\x00-\x1f\x7f-\x9f]/g, ""), max)
+  return t.replace(/^-+/, function (m) { return m.replace(/-/g, "‑") })
+}
+// The toast body is StyledText in the shell; escape after the cut so it never lands mid-entity.
+function notifyBody(text, max) {
+  return notifySafe(text, max).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+}
+
+function durationOf(d) {
+  var a = Date.parse(d.createdAt), b = Date.parse(d.finishedAt)
+  return isNaN(a) || isNaN(b) ? "" : elapsed(d.createdAt, b)
+}
+function serverLabelFor(s, serverUuid) {
+  if (!serverUuid) return ""
+  var srv = (s && s.servers ? s.servers : []).filter(function (x) { return x.uuid === serverUuid })[0]
+  return srv ? appLabel(srv.name, srv.uuid) : ""
+}
+
+// One event + its flush-time object -> the toast. `obj` is the joined record from the
+// snapshot (falls back to the diff-time one), so a resource has serverUuid/projectUuid and a
+// deployment has branch. Every fallback is stated: no commit, no branch, no duration, no
+// server, empty name (-> uuid8).
+function notifyCopy(ev, obj, s, ctx) {
+  var row = NOTIFY_ROWS[ev.event]
+  if (!row || !obj) return null
+  var url = row.target ? openUrl(row.target, obj, ctx.origin) : ""
+  var head = "", body = ""
+  if (ev.kind === "deployment") {
+    var d = obj, A = appLabel(d.appName, d.uuid)
+    var sub = [d.branch, d.commitMessage].filter(function (x) { return !!x }).join(" · "), dur = durationOf(d)
+    switch (ev.event) {
+      case "queued": head = "Queued " + A; body = sub; break
+      case "started": head = "Building " + A; body = sub; break
+      case "restarting": head = "Restarting " + A; body = d.serverName ? appLabel(d.serverName, "") : ""; break
+      case "finished": head = "Deployed " + A; body = [dur, d.branch].filter(function (x) { return !!x }).join(" · "); break
+      case "restarted": head = "Restarted " + A; body = dur; break
+      case "failed": head = (d.restartOnly ? "Restart failed: " : "Deployment failed: ") + A
+                     body = [dur, url ? "click to open in Coolify" : d.branch].filter(function (x) { return !!x }).join(" · "); break
+      case "cancelled": head = "Cancelled " + A; body = ""; break
+      default: return null
+    }
+  } else if (ev.kind === "resource") {
+    if (ev.event === "summary") { head = ev.count + " more resources stopped"; body = ev.serverLabel || ""; url = "" }
+    else {
+      var r = obj, srv = serverLabelFor(s, r.serverUuid)
+      var word = { stopped: "stopped", degraded: "degraded", recovered: "running" }[ev.event]
+      var state = { stopped: "exited", degraded: "degraded", recovered: "running" }[ev.event]
+      head = appLabel(r.name, r.uuid) + " " + word
+      body = [srv, state].filter(function (x) { return !!x }).join(" · ")
+    }
+  } else if (ev.kind === "server") {
+    head = appLabel(obj.name, obj.uuid) + (ev.event === "unreachable" ? " unreachable" : " reachable")
+    body = ev.event === "unreachable" && ev.down ? ev.down + " resources down" : ""
+  } else return null
+  return { toggle: row.toggle, glyph: G[row.glyph], urgency: row.urgency, targetType: row.target,
+           headline: notifySafe(head, NOTIFY_MAX_HEADLINE), body: notifyBody(body, NOTIFY_MAX_BODY), url: url }
+}
+
+// events -> { argvs, log, suppressed: {rule: n}, notified: [{key, at}], lastKind }.
+// ctx = { notify, origin, dnd, pending, actionAt, lastNotified, sentLastMin, now, pluginId }.
+// Per-event drops first (first match wins), then critical-first ordering, then the caps.
+function notifyPlan(events, s, ctx) {
+  var out = { argvs: [], log: [], suppressed: {}, notified: [], lastKind: "" }
+  function drop(rule) { out.suppressed[rule] = (out.suppressed[rule] || 0) + 1 }
+  function has(m, k) { return !!m && Object.prototype.hasOwnProperty.call(m, k) }
+  var notify = ctx.notify || notifyDefaults(), now = ctx.now || Date.now()
+  var pending = ctx.pending || {}, actionAt = ctx.actionAt || {}, last = ctx.lastNotified || {}
+  function within(map, k, ms) { return has(map, k) && now - Number(map[k]) < ms }
+  var resources = byUuid(s.resources), deployments = byUuid(s.deployments), servers = byUuid(s.servers), recent = byUuid(s.recent)
+  var activeApp = {}, activeName = {}, lastFinish = {}, downServers = {}, downCount = {}
+  ;(s.deployments || []).forEach(function (d) { if (ACTIVE[d.status]) { if (d.appUuid) activeApp[d.appUuid] = true; if (d.appName) activeName[d.appName] = true } })
+  ;(s.recent || []).forEach(function (d) {
+    var t = Date.parse(d.finishedAt || d.updatedAt || ""); if (isNaN(t)) return
+    ;[d.appUuid, d.appName].forEach(function (k) { if (k && !(lastFinish[k] >= t)) lastFinish[k] = t })
+  })
+  unreachableServers(s).forEach(function (x) { downServers[x.uuid] = true })
+  ;(events || []).forEach(function (e) { if (e && e.kind === "server" && e.event === "unreachable") downServers[e.uuid] = true })
+  ;(s.resources || []).forEach(function (r) { if (r.serverUuid && downServers[r.serverUuid]) downCount[r.serverUuid] = (downCount[r.serverUuid] || 0) + 1 })
+
+  var survivors = []
+  ;(events || []).forEach(function (e, i) {
+    if (!e || !NOTIFY_ROWS[e.event] || e.event === "summary") return
+    var row = NOTIFY_ROWS[e.event]
+    var obj = (e.kind === "resource" ? resources[e.uuid] : e.kind === "deployment" ? (deployments[e.uuid] || recent[e.uuid]) : servers[e.uuid]) || e.obj
+    if (!obj) return
+    if (!notify[row.toggle]) return drop("toggle")
+    if (e.event === "cancelled" && within(actionAt, e.uuid, NOTIFY_CANCEL_WINDOW_MS)) return drop("selfCancel")
+    if (e.event === "stopped" || e.event === "degraded") {
+      if (has(pending, e.uuid)) return drop("pending")
+      if (within(actionAt, e.uuid, NOTIFY_ACTION_WINDOW_MS)) return drop("actionWindow")
+      if (activeApp[e.uuid] || (obj.name && activeName[obj.name])) return drop("activeDeployment")
+      var lf = Math.max(lastFinish[e.uuid] || 0, (obj.name && lastFinish[obj.name]) || 0)
+      if (lf && now - lf < NOTIFY_GRACE_MS) return drop("postDeployGrace")
+      if (obj.serverUuid && downServers[obj.serverUuid]) return drop("serverDown")
+    }
+    var key = e.kind + ":" + e.uuid + ":" + e.event
+    if (within(last, key, NOTIFY_COOLDOWN_MS)) return drop("cooldown")
+    if (e.event === "recovered" && !within(last, e.kind + ":" + e.uuid + ":stopped", NOTIFY_RECOVER_WINDOW_MS)
+        && !within(last, e.kind + ":" + e.uuid + ":degraded", NOTIFY_RECOVER_WINDOW_MS)) return drop("cooldown")
+    var ev = { kind: e.kind, event: e.event, uuid: e.uuid, obj: e.obj }
+    if (e.kind === "server" && e.event === "unreachable") ev.down = downCount[e.uuid] || 0
+    survivors.push({ e: ev, obj: obj, row: row, key: key, i: i })
+  })
+  survivors.sort(function (a, b) { return (NOTIFY_URGENCY_RANK[a.row.urgency] - NOTIFY_URGENCY_RANK[b.row.urgency]) || (a.i - b.i) })
+
+  var emitted = [], over = [], kept = 0, budget = NOTIFY_PER_MIN - (ctx.sentLastMin || 0)
+  survivors.forEach(function (v) {
+    if (v.e.kind === "resource") { if (kept >= NOTIFY_RESOURCE_CAP) { over.push(v); drop("resourceCap"); return } kept++ }
+    if (v.row.urgency !== "critical") { if (budget <= 0) return drop("minuteCap"); budget-- }
+    emitted.push(v)
+  })
+  if (over.length) {
+    var srvs = {}; over.forEach(function (v) { srvs[v.obj.serverUuid || ""] = true })
+    var keys = Object.keys(srvs)
+    var sum = { kind: "resource", event: "summary", uuid: "", obj: {}, count: over.length, serverLabel: keys.length === 1 && keys[0] ? serverLabelFor(s, keys[0]) : "" }
+    if (budget > 0) { budget--; emitted.push({ e: sum, obj: {}, row: NOTIFY_ROWS.summary, key: "" }) } else drop("minuteCap")
+  }
+
+  emitted.forEach(function (v) {
+    var c = notifyCopy(v.e, v.obj, s, ctx)
+    if (!c || !c.headline) return
+    var appName = c.urgency === "critical" && ctx.dnd === true ? "omarchy-action" : String(ctx.pluginId || "")
+    var a = ["omarchy-notification-send", "--app-name", appName, "-g", c.glyph, "-u", c.urgency, c.headline]
+    if (c.body) a.push(c.body)
+    if (c.url) a = a.concat(["--exec", "omarchy-launch-browser", c.url])
+    out.argvs.push(a)
+    out.log.push((v.e.event + " " + uuid8(v.e.uuid)).trim())
+    if (v.key) out.notified.push({ key: v.key, at: now })
+    out.lastKind = v.e.event
+  })
+  return out
+}
+
+// ---- recent state file (Phase 3) -------------------------------------------------------------
+// ~/.local/state/omarify/recent.json is untrusted input (SR18): whitelist, bound, validate,
+// never throw. branch/appUuid are join products and are recomputed after load.
+
+var RECENT_FILE_VERSION = 1
+var RECENT_FILE_MAX_CHARS = 262144
+var RECENT_FILE_MAX_AGE_MS = 24 * 3600 * 1000
+var RECENT_CAP = 20
+var RECENT_STRING_FIELDS = { appId: 32, appName: 120, serverName: 80, commit: 64, commitMessage: 200, createdAt: 40, updatedAt: 40, finishedAt: 40, url: 400 }
+var RECENT_BOOL_FIELDS = ["restartOnly", "force", "isApi", "isWebhook"]
+
+function recentEntry(d) {
+  var o = { uuid: d.uuid, status: d.status, appUuid: null, branch: null }
+  for (var k in RECENT_STRING_FIELDS) o[k] = d[k] === undefined || d[k] === null ? null : elide(redact(String(d[k])), RECENT_STRING_FIELDS[k])
+  RECENT_BOOL_FIELDS.forEach(function (b) { o[b] = !!d[b] })
+  return o
+}
+
+function parseRecent(text, instanceKey, nowMs) {
+  var out = { recent: [], loaded: false, rejected: false }
+  if (text === undefined || text === null || text === "") return out
+  if (!instanceKey || typeof text !== "string" || text.length > RECENT_FILE_MAX_CHARS) { out.rejected = true; return out }
+  var p = parseJson(text), v = p.ok ? p.value : null
+  if (!v || typeof v !== "object" || Array.isArray(v) || v.version !== RECENT_FILE_VERSION || v.instance !== instanceKey || !Array.isArray(v.recent)) {
+    out.rejected = true; return out
+  }
+  var now = nowMs || Date.now(), seen = {}
+  for (var i = 0; i < v.recent.length && out.recent.length < RECENT_CAP; i++) {
+    var d = v.recent[i]
+    if (!d || typeof d !== "object" || typeof d.uuid !== "string" || !UUID_RE.test(d.uuid) || seen[d.uuid]) continue
+    if (!Object.prototype.hasOwnProperty.call(TERMINAL, String(d.status))) continue
+    var t = Date.parse(d.finishedAt || d.updatedAt || "")
+    if (isNaN(t) || now - t > RECENT_FILE_MAX_AGE_MS) continue
+    seen[d.uuid] = true
+    out.recent.push(recentEntry(d))
+  }
+  out.loaded = true
+  return out
+}
+
+// -> { text, key }: `key` omits savedAt so an unchanged list is a no-op write.
+function serialiseRecent(recent, instanceKey, nowMs) {
+  var list = (recent || []).filter(function (d) { return !!d && typeof d.uuid === "string" && UUID_RE.test(d.uuid) && !!TERMINAL[d.status] })
+    .slice(0, RECENT_CAP).map(recentEntry)
+  list.forEach(function (e) { delete e.appUuid; delete e.branch })
+  var key = JSON.stringify({ version: RECENT_FILE_VERSION, instance: instanceKey, recent: list })
+  var text = JSON.stringify({ version: RECENT_FILE_VERSION, instance: instanceKey, savedAt: nowMs || Date.now(), recent: list }, null, 2) + "\n"
+  return { text: text, key: key }
+}
+
+function mergeRecent(memory, loaded) {
+  var seen = {}, out = []
+  ;(memory || []).concat(loaded || []).forEach(function (d) { if (!d || !d.uuid || seen[d.uuid]) return; seen[d.uuid] = true; out.push(d) })
+  function at(d) { var t = Date.parse(d.finishedAt || d.updatedAt || ""); return isNaN(t) ? 0 : t }
+  out.sort(function (a, b) { return at(b) - at(a) })
+  return out.slice(0, RECENT_CAP)
+}
+
 // ---- bar + hero + callout ---------------------------------------------------------------
 
 function activeDeployments(s) { return (s && s.deployments ? s.deployments : []).filter(function (d) { return ACTIVE[d.status] }) }
