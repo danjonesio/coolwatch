@@ -74,8 +74,8 @@ Item {
 
   // Actions (Phase 2). Pending is a service-owned map applied at render time (a value
   // written into the store would be erased by the next poll). Set at launch, cleared on
-  // any non-2xx except a rate limit or a reap (the POST may have landed), resolved by
-  // _expirePending on the reaper tick. Never routed through _fail: an action's outcome
+  // any non-2xx (a 429 answers before the action runs); only a reap keeps it (the POST may
+  // have landed). Resolved per verb by _expirePending on the reaper tick. Never routed through _fail: an action's outcome
   // is the status line and nothing else.
   property var _pending: ({})          // uuid -> { verb, targetType, kind, name, since, baseStatus, deploymentUuid, stale }
   property var _inflightAction: null   // the resolved action between launch and finish
@@ -618,12 +618,14 @@ Item {
   // IPC verbs call it. Model.actionRequest is the single applicability gate (SR3);
   // Api builds the descriptor here because Model never imports Api.
 
-  function act(verb, uuid, fromIpc) {
+  // targetHint: the panel passes the row type so a vanished target is named correctly.
+  function act(verb, uuid, fromIpc, targetHint) {
     if (!root._ready) return root._refuse(root._error && root._error.kind === "unsafe" ? "unsafe" : "notconfigured", verb, uuid)
     if (root._probeMode) return root._refuse("probe", verb, uuid)
-    if (root._paused || root._requestsLastMin() >= 120) return root._refuse("ratelimited", verb, uuid)
+    if (root._paused) return root._refuse("ratelimited", verb, uuid)
+    if (root._requestsLastMin() >= 120) return root._refuse("toomany", verb, uuid)
     var a = Model.actionRequest(root.snapshot, verb, uuid)
-    if (!a.ok) return root._refuse(a.why, verb, uuid)
+    if (!a.ok) return root._refuse(a.why, verb, uuid, targetHint)
     if (fromIpc && root._ipcAbilityStreak >= 3) return root._refuse("ipcability", a.verb, uuid)
     var why = Model.canAct(root._pending, root._inflightAction, a.uuid, Date.now(), root._lastActionLaunchAt)
     if (why) return root._refuse(why, a.verb, a.uuid)
@@ -654,16 +656,18 @@ Item {
 
   // Local refusals: one status line each, no request, lastAction.result "refused".
   // Returns the IPC token; the panel reads the status line.
-  function _refuse(why, verb, uuid) {
-    var u = String(uuid || ""), u8 = u.slice(0, 8), token = why
+  function _refuse(why, verb, uuid, targetHint) {
+    // The uuid is caller input: bounded and single-line before it reaches stdout; the log gets 8 chars.
+    var u = String(uuid || "").replace(/[\r\n\t]/g, " ").slice(0, 64), u8 = u.slice(0, 8), token = why
     switch (why) {
       case "notconfigured": root._say("Not configured", "urgent"); token = "not configured"; break
       case "unsafe": root._say("Config is unsafe", "urgent"); token = "config unsafe"; break
       case "probe": root._say("Token rejected", "urgent"); token = "token rejected"; break
-      case "ratelimited": root._say("Rate limited · backing off " + (root._paused ? root._backoffSec : 60) + "s", "urgent"); token = "rate limited"; break
+      case "ratelimited": root._say("Rate limited · backing off " + root._backoffSec + "s", "urgent"); token = "rate limited"; break
+      case "toomany": root._say("Too many requests · try again shortly", "urgent"); token = "rate limited"; break
       case "invalid": case "unknown": {
-        var e = root._pending[u]
-        root._say("Coolify no longer has that " + (e && e.targetType ? e.targetType : "resource"), "urgent"); token = "unknown uuid " + u; break
+        var word = targetHint === "deployment" || targetHint === "server" ? targetHint : "resource"
+        root._say("Coolify no longer has that " + word, "urgent"); token = "unknown uuid " + u; break
       }
       case "notapplicable": root._say("Nothing to " + verb, "dim"); token = "not applicable " + verb + " " + u; break
       case "already pending": {
@@ -675,7 +679,7 @@ Item {
       default: root._say("Nothing to " + verb, "dim")
     }
     root._lastAction = { verb: String(verb || ""), uuid8: u8, code: 0, curlExit: 0, ms: 0, at: Date.now(), result: "refused" }
-    console.log("omarify action refuse " + why + " " + String(verb || "") + " " + u8)
+    console.log("omarify action refuse " + why + " " + String(verb || "").slice(0, 16) + " " + u8)
     return token
   }
 
@@ -690,8 +694,9 @@ Item {
     root._record("action", rec)
     var limited = !!(o.error && o.error.kind === "ratelimited")
     if (limited) root._pauseFor(rec.headers)
+    // Any non-2xx clears pending (a 429 answers before the action runs); only a reap keeps it.
     if (o.ok) root._setPending(a, o.deploymentUuid)
-    else if (!limited) root._clearPending(a.uuid)
+    else root._clearPending(a.uuid)
     if (o.error && o.error.kind === "ability") {
       root._lastAbility = Model.abilityOf(o.error.detail) || ""
       if (a.fromIpc) root._ipcAbilityStreak += 1
@@ -716,6 +721,7 @@ Item {
     p[a.uuid] = { verb: a.verb, targetType: a.targetType, kind: a.kind || null, name: a.name || "",
                   since: ex ? ex.since : Date.now(),
                   baseStatus: a.targetType === "resource" ? (a.status || null) : null,
+                  baseState: a.targetType === "resource" ? Model.parseStatus(a.status || "").state : null,
                   deploymentUuid: depUuid || (ex ? ex.deploymentUuid : null), stale: !!(ex && ex.stale) }
     root._pending = p
   }
@@ -741,14 +747,21 @@ Item {
       if (gone || now - e.since >= Model.PENDING_DROP_MS) drop = true
       else if (e.verb === "deploy" || e.verb === "redeploy" || e.verb === "restart") {
         if (e.deploymentUuid) {
+          // Seen in the active list or in recent; or two deployments polls have run since the
+          // action without listing it (a deployment shorter than the poll interval): the
+          // deployment row, not this entry, carries the state from here.
           drop = root._activeUuids.indexOf(e.deploymentUuid) >= 0 || root._recent.some(function(d) { return d.uuid === e.deploymentUuid })
+              || (root._lastPollAt.deployments || 0) > e.since + 10000
         } else if (e.kind === "application") {
-          drop = root._deployments.some(function(d) { return d.appUuid === u })
+          // Before the response names the deployment: only a deployment created for this
+          // action (not one already running) clears it.
+          drop = root._deployments.some(function(d) { return d.appUuid === u && Date.parse(d.createdAt || "") >= e.since - 5000 })
         } else {
           drop = (root._lastPollAt.resources || 0) > e.since + 2000
         }
       } else if (e.verb === "stop" || e.verb === "start") {
-        if (res.status !== e.baseStatus) drop = true
+        // Prefix match on the state (AGENTS.md): a health blip must not clear a stop.
+        if (Model.parseStatus(res.status || "").state !== e.baseState) drop = true
         else if (!e.stale && now - e.since >= Model.PENDING_STALE_MS) { e.stale = true; p[u] = e; changed = true }
       } else if (e.verb === "validate") {
         drop = (root._lastPollAt.servers || 0) > e.since + 2000
@@ -920,8 +933,8 @@ Item {
     var u = String(uuid === undefined || uuid === null ? "" : uuid).trim()
     if (!u) return "usage: " + verb + " <uuid>"
     var r = root.act(verb, u, true)
-    var token = r === "queued" ? "queued " + verb + " " + u : r
-    console.log("omarify ipc " + verb + " " + u.slice(0, 8) + " -> " + token)
+    var token = r === "queued" ? "queued " + verb + " " + u.slice(0, 64) : r
+    console.log("omarify ipc " + verb + " " + u.slice(0, 8) + " -> " + token.split(" ")[0])
     return token
   }
 
