@@ -82,9 +82,9 @@ Acceptance
   "stopped" once within 0–120 s, and a deploy-caused restart or a Stop/Start from the
   plugin produces nothing extra.
 - Do Not Disturb silences everything to history except a critical event, which is sent
-  as `omarchy-action` and shown. The critical-under-DND path (a failed deployment or an
-  unreachable server) is verified by fixture and node tests only; live it needs a
-  deliberately broken build or a server outage (neither produced for this run).
+  as `omarchy-action` and shown. Verified live by Dan on 2026-09-08 with a deliberately
+  failed build (a non-existent Docker image tag on api), DND on and off; a server
+  outage under DND is still unobserved.
 - `recent.json` lives in a 0700 directory (the file is umask-mode) and the panel's
   Recent section is back within 2 s of a restart for deployments under an hour old.
 
