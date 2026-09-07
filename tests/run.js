@@ -810,7 +810,7 @@ test("Model.actionOutcome: every fixture maps to its exact line and tone (SR4, S
   assert(!r.ok); eq(r.text, "Coolify's build queue is full"); eq(r.tone, "urgent"); eq(r.deploymentUuid, null); assert(r.error && r.error.kind !== "ratelimited", "never pauses the instance")
   r = o("stop", "resource", 200, "action-stop-ok.json"); assert(r.ok); eq(r.text, "Stop requested"); eq(r.deploymentUuid, null)
   r = o("start", "resource", 200, "action-stop-ok.json"); eq(r.text, "Start requested")
-  r = o("restart", "resource", 200, "action-restart-ok.json"); eq(r.text, "Restart queued"); eq(r.deploymentUuid, "r3st4rtd3pl0ym3ntuu1dab7")
+  r = o("restart", "resource", 200, "action-restart-ok.json"); eq(r.text, "Restart queued"); eq(r.deploymentUuid, fx("action-restart-ok.json").deployment_uuid); assert(r.deploymentUuid, "recorded body carries a deployment uuid")
   r = o("restart", "resource", 200, "action-service-restart-ok.json"); eq(r.text, "Restart requested"); eq(r.deploymentUuid, null)
   r = o("cancel", "deployment", 200, "action-cancel-ok.json"); assert(r.ok); eq(r.text, "Deployment cancelled")
   r = o("cancel", "deployment", 400, "action-cancel-400.json"); assert(!r.ok); eq(r.text, "Coolify said: Deployment cannot be cancelled. Current status: finished"); eq(r.tone, "urgent")
@@ -873,6 +873,15 @@ test("Model.nextAction: clamps; h from the first returns to the row; a vanished 
   eq(M.nextAction(acts, "start", -1), "deploy"); eq(M.nextAction(acts, "deploy", -1), "")
   eq(M.nextAction(acts, "stop", 1), "start"); eq(M.nextAction(acts, "stop", -1), "")
   eq(M.nextAction([], "x", 1), "")
+})
+
+test("Model.GLYPHS: the pending dot and every glyph a pending row can emit are in the allowlist", () => {
+  const s = actSnap()
+  const pending = {}; pending[APP] = { verb: "stop" }; pending[SRV] = { verb: "validate", stale: true }
+  for (const r of M.panelRows(s, { pending })) {
+    for (const g of [r.dot, r.glyph]) if (g) assert(M.GLYPHS.indexOf(g) >= 0, "glyph " + g + " in allowlist")
+  }
+  assert(M.GLYPHS.indexOf(M.G.half) >= 0)
 })
 
 test("Model.footerHints: every cursor position; no o open without a url", () => {
