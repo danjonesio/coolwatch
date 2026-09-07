@@ -216,7 +216,7 @@ or a dim refusal ("api is already stopping", "Busy, try again", "Nothing to star
 verb does not apply to the target, which the CLI can trigger), urgent for 6 s after a
 failure ("Coolify no longer has that resource|deployment|server" when the target vanished
 before dispatch, "Too many requests · try again shortly", "Rate limited · backing off Ns",
-"Not configured", "Config is unsafe", "Token rejected") or a Coolify ("Token lacks the deploy permission", "Coolify said: Deployment cannot be
+"Not configured", "Config is unsafe", "Token rejected") or after a Coolify answer ("Token lacks the deploy permission", "Coolify said: Deployment cannot be
 cancelled. Current status: finished", "Coolify's build queue is full", "Coolify is
 unreachable", "Sent, but Coolify did not answer"). Mirrors the tailscale
 `actionStatus`. A 403 ability from a poll still uses the callout; from an action it is
