@@ -677,7 +677,7 @@ function notifyCopy(ev, obj, s, ctx) {
 // ctx = { notify, origin, dnd, pending, actionAt, lastNotified, sentLastMin, now, pluginId }.
 // Per-event drops first (first match wins), then critical-first ordering, then the caps.
 function notifyPlan(events, s, ctx) {
-  var out = { argvs: [], log: [], suppressed: {}, notified: [], lastKind: "" }
+  var out = { argvs: [], log: [], suppressed: {}, notified: [], lastKind: "", nonCritical: 0 }   // nonCritical: what the minute ring counts
   function drop(rule) { out.suppressed[rule] = (out.suppressed[rule] || 0) + 1 }
   function has(m, k) { return !!m && Object.prototype.hasOwnProperty.call(m, k) }
   var notify = ctx.notify || notifyDefaults(), now = ctx.now || Date.now()
@@ -741,6 +741,7 @@ function notifyPlan(events, s, ctx) {
     if (c.body) a.push(c.body)
     if (c.url) a = a.concat(["--exec", "omarchy-launch-browser", c.url])
     out.argvs.push(a)
+    if (c.urgency !== "critical") out.nonCritical += 1
     out.log.push((v.e.event + " " + uuid8(v.e.uuid)).trim())
     if (v.key) out.notified.push({ key: v.key, at: now })
     out.lastKind = v.e.event

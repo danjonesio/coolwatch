@@ -530,7 +530,8 @@ Item {
     var out = Model.notifyPlan(q, root.snapshot, ctx)
     out.notified.forEach(function(n) { root._lastNotified[n.key] = n.at }); root._lastNotified = root._lastNotified
     out.log.forEach(function(l) { console.log("omarify notify " + l) })          // event + uuid8 only, at intent
-    for (var i = 0; i < out.argvs.length; i++) { Util.execArgv(out.argvs[i]); log.push(now) }
+    for (var i = 0; i < out.argvs.length; i++) Util.execArgv(out.argvs[i])
+    for (var j = 0; j < out.nonCritical; j++) log.push(now)         // critical toasts are exempt from the minute cap and never charge it
     root._notifyLog = log
     for (var k in out.suppressed) root._suppressed[k] = (root._suppressed[k] || 0) + out.suppressed[k]
     root._suppressed = root._suppressed
@@ -543,9 +544,12 @@ Item {
   // dedupe ledger 3600 s (the "recovered" window). Mutate-then-self-assign, only on change.
   function _pruneNotify(now) {
     var a = root._actionAt, ka = Object.keys(a), changed = false
-    for (var i = 0; i < ka.length; i++) if (now - a[ka[i]] > 300000) { delete a[ka[i]]; changed = true }
-    if (changed) root._actionAt = a
+    if (ka.length) {
+      for (var i = 0; i < ka.length; i++) if (now - a[ka[i]] > 300000) { delete a[ka[i]]; changed = true }
+      if (changed) root._actionAt = a
+    }
     var l = root._lastNotified, kl = Object.keys(l); changed = false
+    if (!kl.length) return
     for (var j = 0; j < kl.length; j++) if (now - l[kl[j]] > 3600000) { delete l[kl[j]]; changed = true }
     if (changed) root._lastNotified = l
   }

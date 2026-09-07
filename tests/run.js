@@ -718,6 +718,13 @@ test("Model.notifyPlan: critical-first ordering, resource cap + summary, minute 
   }
   eq(toasts, 3, "a flap at 60 s toasts once per 300 s window: 0, 300, 600")
   eq(p.notified.length, 3, "summary row stamps no key"); assert(p.notified.every(n => /^resource:res\d+:stopped$/.test(n.key)))
+  const crit = []; for (let i = 0; i < 20; i++) crit.push({ kind: "server", event: "unreachable", uuid: "srv" + i, obj: { uuid: "srv" + i, name: "s" + i, reachable: false, disabled: false } })
+  const burst = M.notifyPlan(crit, s, nctx())
+  eq(burst.argvs.length, 20, "critical never capped"); eq(burst.nonCritical, 0, "critical toasts do not charge the minute ring")
+  const after = M.notifyPlan([stopEv(NAPP)], s, nctx({ sentLastMin: burst.nonCritical }))
+  eq(after.argvs.length, 1, "a non-critical toast right after a critical burst is not dropped"); eq(after.nonCritical, 1)
+  const big = []; for (let i = 0; i < 2000; i++) big.push(stopEv("big" + i))
+  const t0 = Date.now(); M.notifyPlan(big, s, nctx()); assert(Date.now() - t0 < 50, "notifyPlan builds its indexes once: 2 000 events under 50 ms")
 })
 
 test("Model.notifyPlan: log lines are event + uuid8 only; a hostile uuid cannot forge a line (SR15)", () => {
