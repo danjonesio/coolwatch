@@ -311,7 +311,7 @@ prevents a replay.
 **The terminal fetch is now load-bearing.** `_drainTerminal` records the uuid in flight on
 `deploymentReq.inflight` (never in `Req.arg`, which is the descriptor list `_finish`
 indexes); `_drainDone`, called from `_finish` and the reaper before the next drain,
-re-queues the uuid at the back on any failure but a 404 (empty stream, 5xx, 429, reap),
+re-queues the uuid at the back on any outcome but a dispatched record or a 404 (empty stream, 5xx, 429, reap, a 200 whose body is not JSON or carries no `deployment_uuid`),
 at most twice per uuid (`_drainTries`), honouring the existing `deployment` backoff and
 pause; a 404 drops it (`omarify drain 404`). A failed drain therefore stalls the queue for
 the existing 30/60 s backoff and a Deployed toast can arrive up to ~90 s late; the retry

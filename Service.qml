@@ -114,6 +114,7 @@ Item {
   // most; a 404 is final. The existing `deployment` backoff and pause gate the next launch.
   property var _drainTries: ({})       // uuid -> attempts so far; deleted on success, 404 or give-up
   property int _drainRetries: 0        // cumulative, for status
+  property bool _drainDispatched: false // the deployment arm ran with a uuid this _finish (HTTP 200 alone is not success)
   // recent.json: written from the deployment arm only (never from a property change, never
   // from _resetStore), armed only after the state dir exists and the file was read once.
   property bool _stateDirReady: false
@@ -479,6 +480,7 @@ Item {
       return
     }
     var anyOk = false, gone = false
+    root._drainDispatched = false
     for (var i = 0; i < results.length; i++) {
       if (i >= p.arg.length) break               // more trailers than blocks: malformed stream
       var r = results[i]
@@ -495,7 +497,7 @@ Item {
     if (anyOk) root._succeeded(p.kind)
     if (p.kind === "resources" || p.kind === "servers" || p.kind === "topology") root._rejoin()
     else if (p.kind === "deployments") root._joinDeployments()
-    if (p.kind === "deployment") { root._drainDone(anyOk, gone); root._drainTerminal() }
+    if (p.kind === "deployment") { root._drainDone(root._drainDispatched, gone); root._drainTerminal() }   // dispatch success, not HTTP success
     // Only a successful block can mark the cycle complete: a failed /projects leaves the
     // flag false so the 65 s kick, a panel open and the next cycle all retry it.
     // (A failed stage-2 block after a successful /projects still counts: the tree is usable.)
@@ -580,6 +582,7 @@ Item {
         // non-terminal status (a transient vanish) yields no event.
         var d = Model.joinBranch([Model.normaliseDeployment(json.value)], root._resources)[0]
         if (d.uuid) {
+          root._drainDispatched = true
           if (!Model.hasTerminal(root._recent, d.uuid)) root._queueNotify([Model.terminalEvent(d)])
           var rec = root._recent.filter(function(x) { return x.uuid !== d.uuid })
           rec.unshift(d)
