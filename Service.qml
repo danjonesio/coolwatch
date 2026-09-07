@@ -106,7 +106,7 @@ Item {
     tree: root._tree, byServer: root._byServer,
     failedUnacked: root._failedUnacked, lastPollAt: root._lastPollAt,
     busy: root._busy, openPanels: root._openPanels, baselineDone: root._baselineDone,
-    backoffSec: root._backoffSec
+    backoffSec: root._backoffSec, topologyFetched: root._topologyFetched
   })
   readonly property var bar: Model.barState(root.snapshot)
 
@@ -820,8 +820,14 @@ Item {
   // Startup spreads its requests: 4 kinds at token-ready, /projects at +65 s (outside the
   // first minute's burst), then one stage-2 block every 40 s, so no 60 s window holds
   // more than 2 topology requests.
-  Timer { id: topologyKick; interval: 65000; repeat: false; running: false; onTriggered: if (root._ready) root._pollTopology() }
-  Timer { id: topologyStep; interval: 40000; repeat: true; triggeredOnStart: false; running: root._timersOn && root._topologyQueue.length > 0
+  // The kick is skipped when a panel opening already drained the topology (with 10 s
+  // spacing the first drain finishes before 65 s; the kick would run the fan-out twice).
+  Timer { id: topologyKick; interval: 65000; repeat: false; running: false; onTriggered: if (root._ready && !root._topologyFetched) root._pollTopology() }
+  // One block per 10 s while a panel is open and the topology is incomplete (six blocks
+  // in the first minute on top of the ≈20/min panel-open idle rate stays under the 60
+  // line); 40 s otherwise, so the closed-panel "under 20" bar is untouched. A running
+  // Timer restarts on an interval change, so opening a panel mid-drain re-arms at 10 s.
+  Timer { id: topologyStep; interval: root._panelOpen && !root._topologyFetched ? 10000 : 40000; repeat: true; triggeredOnStart: false; running: root._timersOn && root._topologyQueue.length > 0
           onTriggered: root._topologyStep() }
 
   // First 30 s after the token is ready: retry kinds that have not answered yet every 2 s.
