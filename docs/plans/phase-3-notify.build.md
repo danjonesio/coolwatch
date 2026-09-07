@@ -1,6 +1,6 @@
 # Build record: Omarify Phase 3 — "notify"
 
-Plan: `docs/plans/phase-3-notify.md` (copy of `~/.claude/plans/greedy-sprouting-quiche.md` as approved). Branch `phase-3-notify` from base `b38379c`; head `1afb9fb` when the panel ran, `7210e7c` after the review fixes (the record commit follows). Dan merges.
+Plan: `docs/plans/phase-3-notify.md` (copy of `~/.claude/plans/greedy-sprouting-quiche.md` as approved). Branch `phase-3-notify` from base `b38379c`; head `1afb9fb` when the panel ran; the review fixes are `fc3d9db`, `91a50af`, `99b408a`, `7210e7c`, `e6724c2` and the final commit. Dan merges.
 
 ## Questions resolved
 
@@ -77,7 +77,7 @@ Preconditions held: one installed build (`519e61c`'s ship files, manifest `0.3.0
 | token needle | `ps -eww -o args=` at 200 ms across a final-build deploy (115 594 lines, kept as `$SCRATCH/step-11.log`; the notifier process itself, ≈115 ms, was not caught by a 200 ms sampler: the 700 lines matching its name are the sampler's own script text, so the argv content is read from the history files instead), `quickshell log -t 100000`, `recent.json` | 0, 0, 0 (an earlier 114 917-line capture during runbook 9 also read 0 but was not kept; deviation 7) |
 | state dir | `stat -c '%a %U' ~/.local/state/omarify` | `700 danjones` (after a deliberate 0755 pre-creation) |
 | runbook 1: silent baseline | restart + 12 × 10 s loop (`step-1-12.log`) | all four baseline flags true at the first sample; 0 notify lines; 0 new history files; `dnd "off"` |
-| runbook 12: idle budget | `jq -s 'map(.requestsLastMin) | max'` over the same loop, panel closed | **18** (Phase 2 measured 18); during the step 5 deploy max 27, step 6 max 26 |
+| runbook 12: idle budget | `jq -s 'map(.requestsLastMin) | max'` over the same loop, panel closed | **18** (Phase 2 measured 18); deploying: max 27 and 26 on the step 5/6 builds (12 × 10 s loops covering the whole build), 19 on the final build (a single sample ~70 s after the deploy, so 27 stays the recorded worst case; no request-issuing change landed after step 6) |
 | runbook 2: one deploy | IPC deploy on the final build (`ozqinwum`, after the review fixes; the same shape was seen on the step 5 build `xokso8d7` and the runbook-9 build `4ttbgrbc`) | `started` + `finished` (`queued` skipped: the first poll already saw `in_progress`, which the roadmap's "optional" covers); 2 history files, plugin id, urgency 0/1, `execArgv[1]` the deployment page; summaries "Building xyhpwdxq" / "Deployed xyhpwdxq · 20s · main" (the generated-name label after ux F1); `toast-deployed.png` (runbook-9 build) shows the pre-fix 32-char label with the check glyph; the click itself is **needs human** (no pointer) |
 | runbook 3: restart mid-deployment | IPC `restart` then `omarchy restart shell` at +2 s | first branch held: `counts.deployments 1` after the restart; log after the restart `recent loaded 1`, then exactly one `restarted sqlnbhef` at +20 s and no `restarting`; a second restart after it finished → `recent loaded 2` and nothing else |
 | runbook 4: deploy-caused restart is silent | IPC `restart`, 180 s watch | only `restarting zd5ssgx1` and `restarted zd5ssgx1`; 0 `stopped` lines; no resources poll observed a flip, so rules 5/6 have **no live evidence** (the step was silent for want of an input; node-tested only) |
@@ -122,7 +122,9 @@ Acceptance mapping: roadmap line 1 ← runbook 2 and 3 (no-replay proven on the 
 | ops-analyst | opus | 0 | 4 | 2 | F1 rollback line + deviation 6 `7210e7c`; F2 runbook row 2 re-pointed to the final build; F3 `_stateDirReady = code === 0` + warn line `99b408a`; F4 `step-11.log` kept (deviation 7); F5 scratch config copies deleted; F6 `recentPersisted` clause `7210e7c` | — |
 | perf-analyst | opus | 0 | 2 | 2 | F1 timing test `91a50af`; F2 minute ring counts non-critical only (`notifyPlan.nonCritical`) + test `91a50af`; F3 prune early returns `91a50af`; F4 budget provenance stated (this record: deploying max measured on the step 5/6 builds, 27/26, and 19 on the final build; no request-issuing change after step 6) | — |
 
-Panel: the three minimum reviewers plus the four situational analysts the plan ran. Panel model Opus (named in the ask). The plan and the record were read from the repo rather than pasted (70 KB). Re-check round: see the final record commit.
+Panel: the three minimum reviewers plus the four situational analysts the plan ran. Panel model Opus (named in the ask). The plan and the record were read from the repo rather than pasted (70 KB).
+
+Re-check round (one per member): security-analyst 3/3 resolved (re-ran its same-line probe: fails; a Phase 2 rollback passes; the four prototype-named resources now toast); code-reviewer 6/6 resolved (re-ran its mixed-overflow probe: no false summary); skeptic 4/5 resolved at first, the fifth (runbook 13's row still calling the queued cancel answered) fixed in `1a761e3`; data-analyst 1 resolved, 1 deferred accepted; ux-api-designer 6/6 resolved (live history shows `Building xyhpwdxq`); ops-analyst 6/6 resolved (reproduced the rollback: `69 passed, 0 failed`), two residuals fixed in `e6724c2`; perf-analyst 3/4 resolved, the fourth (the timing test's snapshot was fixture-scale, so an index-per-event regression would still pass) fixed after the round with a 2 000-entry snapshot plus its two nits (`sentLastMin` clause, the budget row's provenance) in the final commit.
 
 ## Noticed, not done
 
@@ -131,6 +133,7 @@ Panel: the three minimum reviewers plus the four situational analysts the plan r
 - Runbook step 13's key sequence needs two `Down`s (the first only activates the cursor); the Phase 2 runbook used the same first-`Down` behaviour.
 - `refresh` (IPC or panel) after a `configerror`/`noconfig` re-arms the state file under the previous `_instance` and repopulates Recent beside the error callout (data-analyst F2); presentation-only, no write can follow.
 - `status.recentPersisted` is the count accepted at load (documented); a `recentOnDisk` counter would need a read-back after every save.
+- `STOP_FROM`/`DEGRADE_FROM`/`RECOVER_FROM`/`ACTIVE` are read by truthiness on a `state`/`status` string (security re-check); unreachable for resources because `parseStatus` maps every state outside its fixed set to `unknown`, and a deployment `status` of `toString` would only fail open (one spurious toast). Phase 1/2 code; left alone.
 - `status.notify.suppressed` is cumulative since the last config change; a reviewer diffing two samples reads a delta.
 
 ## PR body

@@ -340,8 +340,9 @@ rule, in this order, and counts every drop per rule into `status.notify.suppress
 
 Survivors are ordered critical → normal → low. Then `resourceCap`: more than 3 resource
 toasts → the first 3 plus one "N more resources stopped"; `minuteCap`: at most 12
-non-critical toasts per rolling minute (`_notifyLog`); critical is never capped or
-summarised. Each argv is exactly
+non-critical toasts per rolling minute (`_notifyLog`, which is therefore what
+`status.notify.sentLastMin` reports: the non-critical ring, not every toast sent); critical
+is never capped or summarised. Each argv is exactly
 
 ```
 ["omarchy-notification-send", "--app-name", <name>, "-g", <glyph>, "-u", <urgency>,

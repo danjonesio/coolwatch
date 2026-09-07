@@ -731,8 +731,16 @@ test("Model.notifyPlan: critical-first ordering, resource cap + summary, minute 
   eq(M.mergeRecent([{ uuid: "valueOf", status: "finished", finishedAt: "2026-09-06T21:00:00Z" }], []).length, 1)
   const after = M.notifyPlan([stopEv(NAPP)], s, nctx({ sentLastMin: burst.nonCritical }))
   eq(after.argvs.length, 1, "a non-critical toast right after a critical burst is not dropped"); eq(after.nonCritical, 1)
-  const big = []; for (let i = 0; i < 2000; i++) big.push(stopEv("big" + i))
-  const t0 = Date.now(); M.notifyPlan(big, s, nctx()); assert(Date.now() - t0 < 50, "notifyPlan builds its indexes once: 2 000 events under 50 ms")
+  const big = [], bigRes = [], bigDeps = [], bigRecent = []
+  for (let i = 0; i < 2000; i++) {
+    big.push(stopEv("big" + i)); bigRes.push(Object.assign(rawRes("big" + i), { serverUuid: NSRV, projectUuid: "p", environmentUuid: "e" }))
+    bigDeps.push(dep({ uuid: "bd" + i, status: "in_progress", appUuid: "other" + i, appName: "o" + i }))
+    bigRecent.push(dep({ uuid: "br" + i, status: "finished", appUuid: "old" + i, appName: "r" + i, finishedAt: new Date(NOW - 3600000 - i).toISOString() }))
+  }
+  const bigSnap = nsnap({ resources: bigRes, deployments: bigDeps, recent: bigRecent })
+  const t0 = Date.now(); const bigPlan = M.notifyPlan(big, bigSnap, nctx()); const dt = Date.now() - t0
+  assert(dt < 50, "notifyPlan builds its indexes once: 2 000 events over a 2 000-entry snapshot under 50 ms (took " + dt + " ms; rebuilding per event costs ~1.4 s)")
+  eq(bigPlan.argvs.length, 4, "2 000 stops -> 3 + summary")
 })
 
 test("Model.notifyPlan: log lines are event + uuid8 only; a hostile uuid cannot forge a line (SR15)", () => {
