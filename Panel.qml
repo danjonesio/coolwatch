@@ -238,13 +238,15 @@ Panel {
     if (!a) return
     if (a.id === "open") { root.openRow(row); return }
     if (!svc) return
-    if (a.confirm && !root.confirmOpen) { root.openConfirm(a.id, row); return }
-    svc.act(a.id, row.uuid)
+    // Fail closed: a confirming verb never reaches act() from here; only resolveConfirm does.
+    if (a.confirm) { if (!root.confirmOpen) root.openConfirm(a.id, row); return }
+    svc.act(a.id, row.uuid, false, row.type)
   }
 
   // SR9: the only browser launch in the panel, and it only ever receives row.url, which
   // Model.openUrl built from the instance origin. One argv element, no shell parsing.
   function openRow(row) {
+    if (root.confirmOpen) return          // the scrim only absorbs left clicks; right clicks reach the rows
     if (row && row.url) Util.execArgv(["omarchy-launch-browser", row.url])
   }
 
@@ -707,7 +709,7 @@ Panel {
                     visible: text.length > 0
                     textFormat: Text.PlainText
                     text: rowDelegate.modelData.sub || ""
-                    color: root.dim
+                    color: rowDelegate.modelData.pendingVerb ? root.toneColor(rowDelegate.modelData.tone) : root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                     elide: Text.ElideRight
@@ -777,7 +779,7 @@ Panel {
                   width: parent.width - Style.space(22) - parent.spacing * 2 - srvName.width
                   textFormat: Text.PlainText
                   text: rowDelegate.modelData.sub || ""
-                  color: rowDelegate.modelData.tone === "urgent" ? root.urgent : root.dim
+                  color: rowDelegate.modelData.pendingVerb ? root.toneColor(rowDelegate.modelData.tone) : (rowDelegate.modelData.tone === "urgent" ? root.urgent : root.dim)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   elide: Text.ElideRight
@@ -835,7 +837,7 @@ Panel {
                   id: resStatus
                   textFormat: Text.PlainText
                   text: rowDelegate.modelData.statusWords || ""
-                  color: rowDelegate.modelData.tone === "urgent" ? root.urgent : root.dim
+                  color: rowDelegate.modelData.pendingVerb ? root.toneColor(rowDelegate.modelData.tone) : (rowDelegate.modelData.tone === "urgent" ? root.urgent : root.dim)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   anchors.verticalCenter: parent.verticalCenter
