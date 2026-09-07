@@ -226,6 +226,14 @@ Item {
       // Same config text (an attribute change, a touch): keep the store, just re-stat.
       var again = Model.normaliseConfig(String(t))
       if (again.ok && JSON.stringify(again) === JSON.stringify(root._cfg)) { root._stat(); return }
+      // A notify-only edit applies live: no reset, no new baseline, no killed request, no
+      // token re-resolution (_stat -> _applyStat keeps the stamp bookkeeping and recomputes
+      // the warning; _needToken and _ready are untouched so _tokenReady does not re-fire).
+      if (again.ok && JSON.stringify(Model.configSansNotify(again)) === JSON.stringify(Model.configSansNotify(root._cfg))) {
+        root._cfg = again
+        root._stat()
+        return
+      }
     }
     root._resetStore()
     root._ready = false
@@ -293,6 +301,7 @@ Item {
     var i = root._cfg.instances[0]
     if (Model.configLoose(root._configMode) && !i.tokenCommand) root._warning = { kind: "permissions", title: "Config is readable by others", detail: "" }
     else if (i.plaintext) root._warning = { kind: "plaintext", title: "Plaintext instance", detail: "" }
+    else if (root._cfg.warning) root._warning = { kind: "notify", title: "Notify setting ignored", detail: root._cfg.warning + "; using the default" }
     else root._warning = null
     if (root._error && root._error.kind === "unsafe") root._error = null
     if (root._needToken || !root._ready) { root._needToken = false; root._resolveToken() }

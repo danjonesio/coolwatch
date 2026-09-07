@@ -945,7 +945,7 @@ function callout(s, nowMs) {
     if (e.staleSince) body += (body ? "\n" : "") + "Showing data from " + age(e.staleSince, nowMs || Date.now()) + "."
     if (w) body += (body ? "\n" : "") + warningBody(w)
   } else {
-    title = w.kind === "permissions" ? "Config is readable by others" : (w.kind === "plaintext" ? "Plaintext instance" : "Warning")
+    title = w.kind === "permissions" ? "Config is readable by others" : (w.kind === "plaintext" ? "Plaintext instance" : (w.title || "Warning"))
     body = warningBody(w)
   }
   return { title: title, body: body }
