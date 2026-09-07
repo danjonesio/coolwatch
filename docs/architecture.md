@@ -188,11 +188,19 @@ and under 60/min with one deployment. Idle is ≈17/min at 3 projects and 3 serv
 - Startup: deployments, version, resources and servers launch together; `/projects`
   65 s later, outside the first minute's burst. The icon lights on the first deployments response. A `startupRamp` retries
   every 2 s for 30 s if the first attempts are offline.
-- Topology is `/projects` (65 s after the token is ready, then every `topologySec`),
+- Topology is `/projects` (65 s after the token is ready unless a panel opening has already
+  completed it, then every `topologySec`),
   followed by one stage-2 block (`/servers/{uuid}/resources` × S first, then
   `/projects/{uuid}` × P) every 40 s until the queue drains, so no 60 s window holds more
-  than 2 topology requests; a tick that lands mid-drain is skipped and a server that
-  answers late gets its resource list queued the same way.
+  than 2 topology requests with the panel closed. While a panel is open and the topology
+  is still incomplete the spacing is 10 s (six blocks in the first minute on top of the
+  ≈20/min panel-open idle rate, under the 60 line), so the folds fill in within about a
+  minute of a restart; the resources sit in an "Ungrouped · loading" fold until then. Both
+  the fast spacing and the title key off a latch that sets once the first drain completes
+  (a failed `/projects` does not set it), so later cycles run at 40 s and never say
+  "loading" again until the next config change. A
+  tick that lands mid-drain is skipped and a server that answers late gets its resource
+  list queued the same way.
   `topologySec` is raised so `(1 + P + S)` per cycle costs at most 3 req/min. Coolify refreshes stored statuses about once a minute, so faster
   resource polling would return the same bytes.
 - Vanished deployment uuids go on a deduped queue (cap 20) drained one at a time by the

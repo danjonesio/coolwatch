@@ -936,6 +936,9 @@ function panelRows(s, ui) {
       p.environments.forEach(function (e) {
         if (!e.resourceUuids.length) return
         var title = e.name ? p.projectName + " / " + e.name : p.projectName
+        // The leftover fold reads "loading" while stage-2 blocks are still queued; the
+        // key is unchanged so its open/closed state survives the rename.
+        if (!p.projectUuid && p.projectName === "Ungrouped" && !s.topologyFetched) title = "Ungrouped · loading"
         fold("fold:p:" + p.projectUuid + "/" + e.name, title, e.resourceUuids, 0)
       })
     })

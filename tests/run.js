@@ -559,8 +559,26 @@ test("Model.panelRows: deployments render active plus newest 5 recent only", () 
   eq(fresh.filter(r => r.type === "deployment").length, 5)
 })
 
+test("Model.panelRows: the leftover fold reads 'Ungrouped · loading' until the topology is complete; same key", () => {
+  const base = loadedSnap({ topologyFetched: false })
+  const rows0 = M.panelRows(base, {})
+  const f0 = rows0.find(r => r.type === "fold" && /^Ungrouped/.test(r.title))
+  assert(f0, "an Ungrouped fold exists in the fixture snapshot"); eq(f0.title, "Ungrouped · loading")
+  const rows1 = M.panelRows(loadedSnap({ topologyFetched: true }), {})
+  const f1 = rows1.find(r => r.type === "fold" && /^Ungrouped/.test(r.title))
+  eq(f1.title, "Ungrouped"); eq(f1.key, f0.key, "the fold key survives the rename")
+  assert(!M.sameRows(rows0, rows1), "rowRev notices the title")
+  const named = rows1.filter(r => r.type === "fold" && !/^Ungrouped/.test(r.title))
+  assert(named.length > 0 && rows1.indexOf(f1) > rows1.indexOf(named[named.length - 1]), "Ungrouped stays last")
+  // The s.tree-empty fallback (the first seconds after a restart) takes the same title.
+  const early = M.panelRows(snap({ resources: M.normaliseResources(fx("resources.json")), tree: [], topologyFetched: false }), {})
+  eq(early.filter(r => r.type === "fold")[0].title, "Ungrouped · loading")
+  const later = M.panelRows(snap({ resources: M.normaliseResources(fx("resources.json")), tree: [], topologyFetched: true }), {})
+  eq(later.filter(r => r.type === "fold")[0].title, "Ungrouped")
+})
+
 test("Model.panelRows: group by project with folds, fold open/closed, Ungrouped last", () => {
-  const s = loadedSnap()
+  const s = loadedSnap({ topologyFetched: true })
   const open = M.panelRows(s, { groupBy: "project", folded: {} })
   const folds = open.filter(r => r.type === "fold")
   eq(folds[0].title, s.tree[0].projectName + " / production"); eq(folds[0].count, 2); eq(folds[0].open, true)
