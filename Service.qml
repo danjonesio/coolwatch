@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.Commons                    // Util.execArgv for the notification helper (Phase 3)
 import "Model.js" as Model
 import "Api.js" as Api
 
@@ -18,6 +19,10 @@ Item {
   readonly property string configDirPath: Quickshell.env("HOME") + "/.config/omarify"
   readonly property string configPath: configDirPath + "/config.json"
   readonly property string me: Quickshell.env("USER")
+  // State (Phase 3): recent terminal deployments. The directory is the permission control
+  // (FileView has no mode API and its atomic rename discards a chmod on the file).
+  readonly property string stateDirPath: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/omarify"
+  readonly property string recentPath: stateDirPath + "/recent.json"
 
   // Private. `_` is a naming convention, not access control: any plugin in this
   // shell can read these through shell.serviceFor(). The token is never placed in
@@ -91,6 +96,33 @@ Item {
   readonly property var pending: root._pending
   readonly property string actionStatus: root._actionStatus
   readonly property string actionTone: root._actionTone
+
+  // Notifications (Phase 3). Events are produced inside _dispatch from the previous store
+  // value and drained once per _finish; Model.notifyPlan decides everything (toggles,
+  // suppression, ordering, caps, argv) so tests/run.js covers it. Nothing here enters
+  // `snapshot` (the `pending` precedent). Every diff is gated on its kind's own _baseline
+  // flag, never _baselineDone.
+  readonly property string pluginId: "io.github.danjonesio.omarify"
+  property var _notifyQueue: []
+  property var _actionAt: ({})         // uuid -> last user action ms (resource uuid; deployment uuid for cancel); pruned > 300 s
+  property var _lastNotified: ({})     // "<kind>:<uuid>:<event>" -> ms; the dedupe/flap ledger; pruned > 3600 s
+  property var _notifyLog: []          // bare timestamps, the _actionLog idiom (filter-push-reassign)
+  property var _suppressed: Model.suppressedZero()   // every rule present at 0; cumulative since the last config change
+  property var _lastEvent: null
+  // The terminal fetch is now the only source of the Deployed/Failed toast, so a vanished
+  // uuid whose fetch fails (transport, 5xx, 429, reap) is re-queued at the back, twice at
+  // most; a 404 is final. The existing `deployment` backoff and pause gate the next launch.
+  property var _drainTries: ({})       // uuid -> attempts so far; deleted on success, 404 or give-up
+  property int _drainRetries: 0        // cumulative, for status
+  property bool _drainDispatched: false // the deployment arm ran with a uuid this _finish (HTTP 200 alone is not success)
+  // recent.json: written from the deployment arm only (never from a property change, never
+  // from _resetStore), armed only after the state dir exists and the file was read once.
+  property bool _stateDirReady: false
+  property bool _recentLoaded: false
+  property string _recentKey: ""       // Model.origin(instance.url) the loaded file was checked against; "" never arms
+  property string _lastRecentKey: ""   // stamp-free guard key of the last write
+  property int _recentPersisted: 0
+  property bool _recentRejected: false
 
   readonly property int _activeCount: root._deployments.filter(function(d) { return d.status === "queued" || d.status === "in_progress" }).length
   readonly property bool _deploying: root._activeCount > 0
@@ -176,12 +208,52 @@ Item {
   Process {
     id: mkdirProc
     running: false
-    command: ["mkdir", "-m", "700", "-p", root.configDirPath]
+    // -m is create-only, so the chmod repairs a state dir that already existed at 0755;
+    // both paths are positional parameters, never interpolated. A non-zero exit leaves
+    // _stateDirReady false: recent.json is then neither read nor written..
+    command: ["bash", "-c", 'mkdir -m 700 -p "$1" "$2" && chmod 700 "$2"', "bash", root.configDirPath, root.stateDirPath]
     onExited: function(code) {
       configDir.path = ""
       configDir.path = root.configDirPath
+      root._stateDirReady = code === 0             // a failed mkdir/chmod means no read and no write: the 0700 dir is the control
+      if (code !== 0) console.warn("omarify state dir unavailable (mkdir exit " + code + ")")
+      root._armRecent()
       Qt.callLater(function() { if (!root._cfg) configFile.reload(); root._stat() })
     }
+  }
+  // Write-only shape (plugins/agents/Main.qml): no watch on a file this service writes.
+  FileView {
+    id: recentFile
+    path: ""
+    watchChanges: false
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root._loadRecent(text())
+    onLoadFailed: function(err) { root._loadRecent(null) }
+    onSaveFailed: function(err) { console.log("omarify recent save failed") }
+  }
+
+  // Called from _configText (after _instance is set) and from mkdirProc.onExited; needs both.
+  // Do not hoist the path assignment to Component.onCompleted: the directory must exist first.
+  function _armRecent() {
+    if (!root._stateDirReady || !root._instance) return
+    var key = Model.origin(root._instance.url)
+    if (key === root._recentKey && recentFile.path === root.recentPath) return
+    root._recentKey = key; root._recentLoaded = false
+    if (recentFile.path === root.recentPath) recentFile.reload(); else recentFile.path = root.recentPath
+  }
+  function _loadRecent(text) {         // idempotent: onLoaded may fire more than once
+    var r = Model.parseRecent(text, root._recentKey, Date.now())
+    root._recent = Model.joinBranch(Model.mergeRecent(root._recent, r.recent), root._resources)
+    root._recentPersisted = r.recent.length; root._recentRejected = r.rejected; root._recentLoaded = true
+    console.log(r.rejected ? "omarify recent rejected" : "omarify recent loaded " + r.recent.length)
+  }
+  function _saveRecent() {             // the deployment arm is the only caller
+    if (!root._recentLoaded || !root._stateDirReady || root._recentKey === "") return
+    var out = Model.serialiseRecent(root._recent, root._recentKey, Date.now())
+    if (out.key === root._lastRecentKey) return
+    root._lastRecentKey = out.key
+    recentFile.setText(out.text)
   }
   Process {
     id: statProc
@@ -226,6 +298,14 @@ Item {
       // Same config text (an attribute change, a touch): keep the store, just re-stat.
       var again = Model.normaliseConfig(String(t))
       if (again.ok && JSON.stringify(again) === JSON.stringify(root._cfg)) { root._stat(); return }
+      // A notify-only edit applies live: no reset, no new baseline, no killed request, no
+      // token re-resolution (_stat -> _applyStat keeps the stamp bookkeeping and recomputes
+      // the warning; _needToken and _ready are untouched so _tokenReady does not re-fire).
+      if (again.ok && JSON.stringify(Model.configSansNotify(again)) === JSON.stringify(Model.configSansNotify(root._cfg))) {
+        root._cfg = again
+        root._stat()
+        return
+      }
     }
     root._resetStore()
     root._ready = false
@@ -245,6 +325,7 @@ Item {
     root._cfg = c
     var i = c.instances[0]
     root._instance = { id: i.id, name: i.name, url: i.url, plaintext: i.plaintext }
+    root._armRecent()                  // the file is keyed on the instance, not the token: no wait on a vault
     root._topologySec = c.poll.topologySec
     root._needToken = true
     root._error = null
@@ -265,6 +346,9 @@ Item {
     var interrupted = root._inflightAction !== null
     root._pending = {}; root._inflightAction = null; root._ipcAbilityStreak = 0; root._lastAbility = ""
     root._actionStatus = ""; actionStatusTimer.stop()
+    root._notifyQueue = []; root._actionAt = {}; root._lastNotified = {}; root._notifyLog = []; root._suppressed = Model.suppressedZero(); root._lastEvent = null
+    root._drainTries = {}; deploymentReq.inflight = null
+    root._recentLoaded = false; root._recentKey = ""; root._lastRecentKey = ""   // never writes; _configText re-arms the read
     for (var i = 0; i < root._reqs.length; i++) root._reqs[i].kill()
     root._syncBusy()
     if (interrupted) root._say("Action interrupted by a config change", "urgent")
@@ -293,6 +377,7 @@ Item {
     var i = root._cfg.instances[0]
     if (Model.configLoose(root._configMode) && !i.tokenCommand) root._warning = { kind: "permissions", title: "Config is readable by others", detail: "" }
     else if (i.plaintext) root._warning = { kind: "plaintext", title: "Plaintext instance", detail: "" }
+    else if (root._cfg.warning) root._warning = { kind: "notify", title: "Notify setting ignored", detail: root._cfg.warning + "; using the default" }
     else root._warning = null
     if (root._error && root._error.kind === "unsafe") root._error = null
     if (root._needToken || !root._ready) { root._needToken = false; root._resolveToken() }
@@ -360,7 +445,7 @@ Item {
 
   Req { id: versionReq }
   Req { id: deploymentsReq }
-  Req { id: deploymentReq }
+  Req { id: deploymentReq; property var inflight: null }   // { uuid } of the terminal fetch in flight; p.arg stays the descriptor list
   Req { id: resourcesReq }
   Req { id: serversReq }
   Req { id: topologyReq }
@@ -392,17 +477,19 @@ Item {
     var results = Model.splitResponses(stdoutText)
     if (results.length === 0) {
       root._fail(p.kind, Model.errorFor({ curlExit: code || 1, errmsg: stderrText, request: p.kind }), null)
-      if (p.kind === "deployment") root._drainTerminal()
+      if (p.kind === "deployment") { root._drainDone(false, false); root._drainTerminal() }
       return
     }
-    var anyOk = false
+    var anyOk = false, gone = false
+    root._drainDispatched = false
     for (var i = 0; i < results.length; i++) {
       if (i >= p.arg.length) break               // more trailers than blocks: malformed stream
       var r = results[i]
       root._record(p.kind, r)
       var e = Model.errorFor({ curlExit: r.exit, httpCode: r.code, body: r.body, errmsg: r.errmsg, headers: r.headers, request: p.kind })
       if (e) {
-        if (!(p.kind === "deployment" && r.code === 404)) root._fail(p.kind, e, r.headers)   // 404: vanished for good
+        if (p.kind === "deployment" && r.code === 404) gone = true                     // vanished for good: no _fail, no retry
+        else root._fail(p.kind, e, r.headers)
       } else {
         anyOk = true
         root._dispatch(p.arg[i], r, p.kind)
@@ -411,11 +498,61 @@ Item {
     if (anyOk) root._succeeded(p.kind)
     if (p.kind === "resources" || p.kind === "servers" || p.kind === "topology") root._rejoin()
     else if (p.kind === "deployments") root._joinDeployments()
-    if (p.kind === "deployment") root._drainTerminal()
+    if (p.kind === "deployment") { root._drainDone(root._drainDispatched, gone); root._drainTerminal() }   // dispatch success, not HTTP success
     // Only a successful block can mark the cycle complete: a failed /projects leaves the
     // flag false so the 65 s kick, a panel open and the next cycle all retry it.
     // (A failed stage-2 block after a successful /projects still counts: the tree is usable.)
     if (p.kind === "topology" && (anyOk || root._projects.length)) { root._topologyFetched = root._topologyQueue.length === 0; if (root._topologyFetched) root._topologyLoaded = true }   // the next block waits for topologyStep
+    root._flushNotify()                // last: after the joins, so every toast reads the joined snapshot
+  }
+
+  // ---- notifications (Phase 3) ---------------------------------------------------------
+
+  function _queueNotify(evs) { root._notifyQueue = root._notifyQueue.concat((evs || []).filter(function(e) { return !!e })) }
+
+  // true | false | null (the notifications service is unreachable: the toast keeps the
+  // plugin id and is silenced under DND; status.notify.dnd reports null).
+  function _dnd() {
+    var n = root.shell && typeof root.shell.serviceFor === "function" ? root.shell.serviceFor("omarchy.notifications") : null
+    if (!n || typeof n.doNotDisturb !== "boolean") return null
+    return n.doNotDisturb
+  }
+
+  function _flushNotify() {
+    var q = root._notifyQueue
+    if (!q.length) return
+    root._notifyQueue = []
+    var now = Date.now()
+    var log = root._notifyLog.filter(function(t) { return now - t < 60000 })
+    var ctx = { notify: root._cfg ? root._cfg.notify : Model.notifyDefaults(),
+                origin: root._instance ? Model.origin(root._instance.url) : "",
+                dnd: root._dnd(), pending: root._pending, actionAt: root._actionAt,
+                lastNotified: root._lastNotified, sentLastMin: log.length, now: now, pluginId: root.pluginId }
+    var out = Model.notifyPlan(q, root.snapshot, ctx)
+    out.notified.forEach(function(n) { root._lastNotified[n.key] = n.at }); root._lastNotified = root._lastNotified
+    out.log.forEach(function(l) { console.log("omarify notify " + l) })          // event + uuid8 only, at intent
+    for (var i = 0; i < out.argvs.length; i++) Util.execArgv(out.argvs[i])
+    for (var j = 0; j < out.nonCritical; j++) log.push(now)         // critical toasts are exempt from the minute cap and never charge it
+    root._notifyLog = log
+    for (var k in out.suppressed) root._suppressed[k] = (root._suppressed[k] || 0) + out.suppressed[k]
+    root._suppressed = root._suppressed
+    if (out.argvs.length) root._lastEvent = { kind: out.lastKind, at: now }
+  }
+
+  function _notifiedLastMin() { var now = Date.now(); return root._notifyLog.filter(function(t) { return now - t < 60000 }).length }
+
+  // Reaper tick: the action ledger keeps 300 s (the longest window a rule reads), the
+  // dedupe ledger 3600 s (the "recovered" window). Mutate-then-self-assign, only on change.
+  function _pruneNotify(now) {
+    var a = root._actionAt, ka = Object.keys(a), changed = false
+    if (ka.length) {
+      for (var i = 0; i < ka.length; i++) if (now - a[ka[i]] > 300000) { delete a[ka[i]]; changed = true }
+      if (changed) root._actionAt = a
+    }
+    var l = root._lastNotified, kl = Object.keys(l); changed = false
+    if (!kl.length) return
+    for (var j = 0; j < kl.length; j++) if (now - l[kl[j]] > 3600000) { delete l[kl[j]]; changed = true }
+    if (changed) root._lastNotified = l
   }
 
   function _dispatch(req, r, kind) {
@@ -429,7 +566,8 @@ Item {
         break
       case "deployments": {
         var norm = Model.normaliseDeployments(json.value)
-        var diff = Model.diffActive(root._activeUuids, norm)
+        // root._deployments still holds the previous poll; the baseline flag is read before _markPoll flips it.
+        var diff = Model.diffDeployments(root._deployments, norm, !root._baseline.deployments)
         if (diff.vanished.length) {
           var q = root._terminalQueue.slice()
           diff.vanished.forEach(function(u) { if (q.indexOf(u) < 0 && q.length < 20) q.push(u) })
@@ -438,29 +576,43 @@ Item {
         root._activeUuids = norm.map(function(d) { return d.uuid })
         root._deployments = norm
         root._markPoll("deployments", now)
+        root._queueNotify(diff.events)
         root._drainTerminal()
         break
       }
       case "deployment": {
-        var d = Model.normaliseDeployment(json.value)
+        // Joined here (the deployments-kind join at the end of _finish does not run for this
+        // kind) so the toast body has a branch and recent carries appUuid at once. The
+        // terminal toast fires once per uuid: `recent` is the intra-session ledger, and a
+        // non-terminal status (a transient vanish) yields no event.
+        var d = Model.joinBranch([Model.normaliseDeployment(json.value)], root._resources)[0]
         if (d.uuid) {
+          root._drainDispatched = true
+          if (!Model.hasTerminal(root._recent, d.uuid)) root._queueNotify([Model.terminalEvent(d)])
           var rec = root._recent.filter(function(x) { return x.uuid !== d.uuid })
           rec.unshift(d)
           root._recent = rec.slice(0, 20)
+          root._saveRecent()
           if (d.status === "failed" && root._baselineDone && root._openPanels === 0 && root._failedUnacked.indexOf(d.uuid) < 0)
             root._failedUnacked = root._failedUnacked.concat([d.uuid])
         }
         break
       }
-      case "resources":
-        root._resourcesRaw = Model.normaliseResources(json.value)
+      case "resources": {
+        var nextRes = Model.normaliseResources(json.value)
+        root._queueNotify(Model.resourceEvents(root._resourcesRaw, nextRes, !root._baseline.resources))
+        root._resourcesRaw = nextRes
         root._markPoll("resources", now)
         break
-      case "servers":
-        root._servers = Model.normaliseServers(json.value)
+      }
+      case "servers": {
+        var nextSrv = Model.normaliseServers(json.value)
+        root._queueNotify(Model.serverEvents(root._servers, nextSrv, !root._baseline.servers))
+        root._servers = nextSrv
         root._markPoll("servers", now)
         root._enqueueMissingServerResources()
         break
+      }
       case "projects":
         root._projects = Model.normaliseProjects(json.value)
         root._markPoll("topology", now)
@@ -545,7 +697,28 @@ Item {
     var q = root._terminalQueue.slice()
     var uuid = q.shift()
     root._terminalQueue = q
+    deploymentReq.inflight = { uuid: uuid }
     root._launch(deploymentReq, Api.reqDeployment(uuid), 6)
+  }
+
+  // The one place a terminal fetch's outcome is settled (called from _finish and the reaper
+  // before the next _drainTerminal). ok: dispatched; gone: 404. Anything else re-queues.
+  function _drainDone(ok, gone) {
+    var f = deploymentReq.inflight; deploymentReq.inflight = null
+    if (!f || !f.uuid) return
+    var t = root._drainTries
+    if (ok || gone) {
+      if (gone) console.log("omarify drain 404 " + Model.uuid8(f.uuid))
+      if (Object.prototype.hasOwnProperty.call(t, f.uuid)) { delete t[f.uuid]; root._drainTries = t }
+      return
+    }
+    var n = (t[f.uuid] || 0) + 1
+    if (n > 2) { delete t[f.uuid]; root._drainTries = t; console.log("omarify drain gave up " + Model.uuid8(f.uuid)); return }
+    var q = root._terminalQueue.slice()
+    if (q.indexOf(f.uuid) >= 0 || q.length >= 20) { delete t[f.uuid]; root._drainTries = t; return }   // already queued, or the cap: no retry is scheduled, so none is counted
+    t[f.uuid] = n; root._drainTries = t; root._drainRetries += 1
+    q.push(f.uuid)                                                   // the back: one failing uuid must not stall the healthy ones twice
+    root._terminalQueue = q
   }
 
   // ---- errors, backoff, pause, probe ---------------------------------------------------
@@ -730,6 +903,7 @@ Item {
                   baseState: a.targetType === "resource" ? Model.parseStatus(a.status || "").state : null,
                   deploymentUuid: depUuid || (ex ? ex.deploymentUuid : null), stale: !!(ex && ex.stale) }
     root._pending = p
+    root._actionAt[a.uuid] = Date.now(); root._actionAt = root._actionAt   // a user action explains a later flap (Phase 3)
   }
 
   function _clearPending(uuid) {
@@ -885,13 +1059,14 @@ Item {
           var bo = root._backoff; var a = ((bo[p.kind] && bo[p.kind].attempt) || 0) + 1
           bo[p.kind] = { until: now + (a <= 1 ? 30 : 60) * 1000, attempt: a }; root._backoff = bo
           console.warn("omarify reaped " + p.kind)
-          if (p.kind === "deployment") root._drainTerminal()
+          if (p.kind === "deployment") { root._drainDone(false, false); root._drainTerminal() }
         }
       }
       var changed = false
       for (var id in root._panels) if (now - root._panels[id] > 5000) { delete root._panels[id]; changed = true }
       if (changed) { root._panels = root._panels; root._syncOpenPanels() }
       root._expirePending(now)
+      root._pruneNotify(now)
       root._syncBusy()
     }
   }
@@ -933,6 +1108,9 @@ Item {
       topologyFetched: root._topologyFetched,
       topologyLoaded: root._topologyLoaded,
       terminalQueue: root._terminalQueue.length,
+      drainRetries: root._drainRetries,
+      recentPersisted: root._recentPersisted,
+      recentRejected: root._recentRejected,
       error: root._error ? { kind: root._error.kind, request: root._error.request, httpCode: root._error.httpCode, curlExit: root._error.curlExit } : null,
       warning: root._warning ? root._warning.kind : null,
       bar: { glyph: "U+" + root.bar.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: root.bar.dimmed, active: root.bar.active },
@@ -941,7 +1119,17 @@ Item {
       pending: Object.keys(root._pending).length,
       pendingStale: Object.keys(root._pending).filter(function(k) { return !!root._pending[k].stale }).length,
       actionsLastMin: root._actionsLastMin(),
-      inflightAction: root._inflightAction !== null
+      inflightAction: root._inflightAction !== null,
+      baseline: { deployments: root._baseline.deployments, resources: root._baseline.resources, servers: root._baseline.servers, version: root._baseline.version },
+      notify: {
+        enabled: root._cfg ? root._cfg.notify : Model.notifyDefaults(),
+        warning: root._cfg && root._cfg.warning ? root._cfg.warning : null,   // visible even when another warning holds the callout
+        sentLastMin: root._notifiedLastMin(),
+        suppressed: root._suppressed,     // cumulative per rule since the last config change
+        queued: root._notifyQueue.length,
+        lastEvent: root._lastEvent,       // { kind: <event name>, at }; never a name
+        dnd: (function() { var d = root._dnd(); return d === null ? null : (d ? "on" : "off") })()
+      }
     }
   }
 

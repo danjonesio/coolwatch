@@ -5,7 +5,7 @@ deployments, and the buttons to deploy, redeploy, restart, stop and cancel, in a
 [Omarchy](https://omarchy.org/) panel. Works with Coolify Cloud and self-hosted Coolify
 through the REST API.
 
-**Status: Phase 2 (actions: deploy, redeploy, restart, stop, start, cancel, validate, open) built; Phase 1 (read-only bar icon and panel) merged.** See [docs/roadmap.md](docs/roadmap.md).
+**Status: Phase 3 (notifications and a persisted Recent list) built; Phases 1 (read-only bar icon and panel) and 2 (actions) merged.** See [docs/roadmap.md](docs/roadmap.md).
 
 ## What it will do
 
@@ -38,11 +38,28 @@ directory as 0700):
   "instances": [
     { "id": "cloud", "name": "Coolify Cloud", "url": "https://app.coolify.io", "token": "67|…" }
   ],
-  "poll": { "deploymentsSec": 4, "resourcesSec": 60, "serversSec": 120, "topologySec": 600 }
+  "poll": { "deploymentsSec": 4, "resourcesSec": 60, "serversSec": 120, "topologySec": 600 },
+  "notify": { "deploymentQueued": true, "deploymentStarted": true, "deploymentFinished": true,
+              "deploymentFailed": true, "resourceStateChanged": true, "serverReachability": true }
 }
 ```
 
-`poll` is optional; those are the defaults. Create the token in Coolify under
+`poll` is optional; those are the defaults. `notify` is optional too: every key
+defaults to `true`, `"notify": false` switches every toast off, a cancelled deployment
+rides `deploymentFinished`, and the values are booleans, unquoted (a bad value keeps its
+default and polling continues; the panel shows a warning unless a plaintext or
+permissions warning already occupies the callout, and `status | jq .notify` always shows
+the effective values and the warning text). Editing `notify` takes
+effect on the next poll without resetting anything else.
+
+Notifications land in Omarchy's notification history and respect Do Not Disturb, with
+one exception: a failed deployment or an unreachable server while DND is on is sent
+under the app name `omarchy-action`, the only sender the shell shows through DND, so it
+is listed as that sender in history. Click a toast to open the deployment, resource or
+server in Coolify. Recent terminal deployments are kept in
+`~/.local/state/omarify/recent.json` (a directory the plugin creates as 0700; the file
+holds names, branches, commit messages and the instance URL, never the token) so the
+panel's Recent section survives a shell restart; the panel shows the last hour. Create the token in Coolify under
 Security → API Tokens with the `read` and `deploy` permissions (`write` only if you want
 "Validate server" to succeed; without it the panel says "Token lacks the write
 permission"). Coolify cannot change a token's abilities afterwards: create a new one and

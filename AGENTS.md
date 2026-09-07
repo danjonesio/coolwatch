@@ -8,8 +8,8 @@ deployments, and the actions to deploy, redeploy, restart, stop, start and cance
 Notifications when deployments queue, build, finish or fail. It is a Quickshell plugin
 that runs inside `omarchy-shell`; there is no daemon and no second process.
 
-Status: **Phase 2 ("act") built on branch `phase-2-act`; Phase 1 ("see") merged.** Read
-`docs/roadmap.md` before writing code.
+Status: **Phase 3 ("notify") built on branch `phase-3-notify`; Phases 1 ("see") and 2
+("act") merged.** Read `docs/roadmap.md` before writing code.
 
 ## Product locks
 
@@ -22,8 +22,13 @@ Status: **Phase 2 ("act") built on branch `phase-2-act`; Phase 1 ("see") merged.
   `read:sensitive` is added in Phase 4 for the log viewer; it also makes
   `GET /deployments` carry every deployment's full build log on every poll, so do not
   hold it before then. `write` is optional and only gates "Validate server".
-- Failed deployment and unreachable server notify at `critical` (bypasses Do Not
-  Disturb). Everything else `low`/`normal`.
+- Failed deployment and unreachable server notify at `critical`; everything else
+  `low`/`normal`. The shell shows a toast through Do Not Disturb only when its app name
+  is `omarchy-action` (`plugins/notifications/NotificationLogic.js:118-122`); a plugin-id
+  sender at `critical` is silenced to history. So every toast carries the plugin id
+  **except** a critical event while DND is on, which is sent as `omarchy-action` (Dan,
+  2026-09-07; it shows as that sender in history). `Model.notifyPlan` decides it from a
+  boolean the service read from the notifications service, never from Coolify data.
 - Config accepts `token` and `tokenCommand`; `tokenCommand` wins when both are set.
 - Kinds: `service` + `bar-widget`, `keepLoaded: true`. The service owns polling, state,
   actions and notifications. The bar widget owns the icon and loads `Panel.qml`. No
@@ -36,6 +41,18 @@ Status: **Phase 2 ("act") built on branch `phase-2-act`; Phase 1 ("see") merged.
   `GET /deployments` lists only `queued` + `in_progress`; a finished deployment vanishes
   from it, so track uuids and fetch `GET /deployments/{uuid}` when one disappears.
 - The first poll after start or config change is a baseline. It raises no notification.
+  The gate is each kind's own `_baseline[kind]` flag, never `_baselineDone` (one broken
+  kind must not silence everything). No replay after a restart comes from the active-only
+  list plus that baseline; `recent` (persisted to `recent.json`) is the intra-session
+  terminal dedupe and the panel's memory, not the replay guard.
+- Every toast is built by `Model.notifyPlan` from the joined snapshot at the end of
+  `_finish`: toggles, the eight per-event drops (self-cancel 300 s, pending, action
+  window 180 s, active deployment, post-deploy grace 120 s, server down, cooldown 300 s
+  per kind:uuid:event), critical-first ordering, ≤ 3 resource toasts per flush plus one
+  summary, ≤ 12 non-critical per minute; critical is never capped. A `notify`-only
+  config edit applies live with no store reset; a malformed toggle warns and keeps its
+  default. `recent.json` is written from the deployment arm only, never from a property
+  change or `_resetStore`; the state dir is created and chmod'ed 0700 before the first write.
 - HTTP is `curl -q -S -K -` in a `Quickshell.Io.Process` with the config on **stdin**;
   nothing else is in argv (`-q` first ignores `~/.curlrc`). Every per-transfer option
   (`max-time`, `max-filesize`, `proto`, headers, `write-out`) lives in every config
@@ -127,10 +144,12 @@ omarchy plugin remove io.github.danjonesio.omarify         # safe rollback: move
 omarchy-shell shell toggle io.github.danjonesio.omarify
 omarchy-shell io.github.danjonesio.omarify refresh
 omarchy-shell io.github.danjonesio.omarify status
+omarchy-shell io.github.danjonesio.omarify status | jq '{baseline, notify, recentPersisted, recentRejected, terminalQueue, drainRetries}'   # Phase 3 fields
+quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'omarify (notify|recent|drain) '   # unanchored: the log prefixes "DEBUG qml:"
 omarchy-shell io.github.danjonesio.omarify deploy|restart|stop|start <uuid>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`
 
-# rollback of a Phase 2 build (placement in shell.json survives; the config format is unchanged)
-git checkout 29f3a76 -- manifest.json Service.qml BarWidget.qml Panel.qml Model.js Api.js && bin/dev-sync && omarchy restart shell
+# rollback of a Phase 3 build (placement in shell.json survives; a notify{} block and recent.json are ignored by Phase 2; tests/run.js goes back too so bin/check stays green)
+git checkout b38379c -- manifest.json Service.qml BarWidget.qml Panel.qml Model.js Api.js tests/run.js && bin/dev-sync && omarchy restart shell
 
 # logs
 quickshell log -p /usr/share/omarchy/shell --tail 100
@@ -196,8 +215,23 @@ bin/record-fixture deployments-active /deployments
 - Rows never colour from `containsMouse`; hover writes the panel cursor and
   `hasCursor` paints. That is the `CursorSurface` contract.
 - ListView models get plain objects from `Model.js`, never live QObjects.
-- Notifications go through `omarchy-notification-send --app-name <plugin id>`, so they
-  respect Do Not Disturb and land in history. Never `notify-send`.
+- Notifications go through `omarchy-notification-send --app-name <plugin id>` (see the
+  DND lock for the one exception), so they respect Do Not Disturb and land in history.
+  Never `notify-send`. The helper keeps parsing options after the headline, so every
+  positional passes `Model.notifySafe` (a commit message of `--app-name=omarchy-action`
+  would otherwise set the sender). `--exec` must be last and swallows the rest of argv.
+  The toast body is `StyledText` (escape `&` and `<`); the summary is PlainText.
+  Critical toasts never expire and the notifications plugin replays an open one after a
+  shell restart; history keeps the newest 10 across all apps, at 0644, with the argv.
+  `Util.execArgv` is a login shell: ≈ 115 ms per toast.
+- `FileView` has no mode API and its atomic write is a rename, so the directory is the
+  permission control; `mkdir -m` is create-only, so an existing directory needs `chmod`.
+  `onLoaded` can fire twice at start; without an `onLoadFailed` branch a missing file
+  is never created. `Req.arg` is the Api descriptor list `_finish`/`_dispatch` index;
+  per-request bookkeeping goes on its own property (`deploymentReq.inflight`).
+- The quickshell log prefixes every line with `DEBUG qml:`; grep `omarify notify `
+  unanchored. `_notifyLog`, `_actionLog` and `_requestLog` are filter-push-reassign
+  rings of bare timestamps.
 - `Util.execArgv` for anything containing data; `bar.run` only for literal strings.
 - `PanelKeyCatcher` owns keys: `x` reaches the panel as `deleteRequested`, Esc as
   `closeRequested`, `h`/`l` as `moveRequested(±1, 0)`; Return fires both
@@ -219,7 +253,12 @@ bin/record-fixture deployments-active /deployments
 - Don't add a daemon, a Python collector, or a second Quickshell.
 - Don't put the token in argv, `console.*`, state files, or `shell.json`.
 - Don't fake metrics, progress percentages or "started" events the API does not give.
-- Don't notify on the baseline poll.
+- Don't notify on the baseline poll, and don't gate a notification on `_baselineDone`.
+- Don't write `recent.json` from a property change or from `_resetStore`.
+- Don't put a Coolify string into `omarchy-notification-send`'s argv without
+  `Model.notifySafe`, and don't build that argv anywhere but `Model.notifyPlan`
+  (`bin/check` SR16).
+- Don't put anything but the Api descriptor list in `Req.arg`.
 - Don't hardcode a colour, radius, size or font family.
 - Don't create your own `PanelWindow` for the bar popup; `KeyboardPanel` exists.
 - Don't edit `/usr/share/omarchy`.

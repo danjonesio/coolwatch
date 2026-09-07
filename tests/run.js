@@ -327,6 +327,42 @@ test("Model.configUnsafe / configLoose (SR7)", () => {
   eq(M.configLoose("640"), true); eq(M.configLoose("0600"), false)
 })
 
+// ---- Model.js: Phase 3 config ------------------------------------------------------------
+
+test("Model.normaliseConfig: notify{} defaults, false shorthand, warning on a bad value, unknown key ignored (SR22)", () => {
+  const base = { instances: [{ url: "https://x", token: "t" }] }
+  const none = M.normaliseConfig(base)
+  eq(none.ok, true); eq(none.warning, "")
+  for (const k of Object.keys(M.NOTIFY_DEFAULTS)) eq(none.notify[k], true, k)
+  const one = M.normaliseConfig(Object.assign({ notify: { deploymentFailed: false } }, base))
+  eq(one.notify.deploymentFailed, false); eq(one.notify.deploymentQueued, true); eq(one.warning, "")
+  const quoted = M.normaliseConfig(Object.assign({ notify: { deploymentFailed: "false" } }, base))
+  eq(quoted.ok, true, "a quoted boolean is not a config error"); eq(quoted.notify.deploymentFailed, true, "default kept"); eq(quoted.warning, "notify.deploymentFailed must be a boolean")
+  const bogus = M.normaliseConfig(Object.assign({ notify: { bogus: 1 } }, base))
+  eq(bogus.ok, true); eq(bogus.warning, ""); eq(bogus.notify.deploymentQueued, true)
+  const off = M.normaliseConfig(Object.assign({ notify: false }, base))
+  for (const k of Object.keys(M.NOTIFY_DEFAULTS)) eq(off.notify[k], false, k)
+  const str = M.normaliseConfig(Object.assign({ notify: "false" }, base))
+  eq(str.ok, true); eq(str.notify.deploymentFailed, true); eq(str.warning, "notify must be an object or a boolean")
+  for (const v of [true, null]) { const c = M.normaliseConfig(Object.assign({ notify: v }, base)); eq(c.notify.deploymentFailed, true); eq(c.warning, "") }
+})
+
+test("Model.configSansNotify: equal when only notify/warning differ, unequal on poll", () => {
+  const base = { instances: [{ url: "https://x", token: "t" }] }
+  const a = M.normaliseConfig(Object.assign({ notify: { deploymentQueued: false } }, base))
+  const b = M.normaliseConfig(Object.assign({ notify: { deploymentQueued: "no" } }, base))
+  eq(JSON.stringify(M.configSansNotify(a)), JSON.stringify(M.configSansNotify(b)))
+  const c = M.normaliseConfig(Object.assign({ poll: { deploymentsSec: 9 } }, base))
+  assert(JSON.stringify(M.configSansNotify(a)) !== JSON.stringify(M.configSansNotify(c)), "poll differs")
+})
+
+test("Model.origin / openUrl reject userinfo; normaliseConfig still accepts the url (SR19)", () => {
+  eq(M.origin("https://u:p@host"), ""); eq(M.origin("https://u@host/x"), "")
+  eq(M.openUrl("deployment", { url: "/x" }, "https://u:p@host"), "")
+  eq(M.origin("https://app.coolify.io/"), "https://app.coolify.io")
+  eq(M.normaliseConfig({ instances: [{ url: "https://u:p@host", token: "t" }] }).ok, true)
+})
+
 // ---- Model.js: normalise ----------------------------------------------------------------
 
 test("Model.parseStatus: all nine strings; bare exited equals exited:unhealthy; unknown", () => {
@@ -453,6 +489,309 @@ test("Model.diffActive: added, vanished, eight vanishing at once, a uuid vanishi
   eq(eight.vanished.length, 8); eq(new Set(eight.vanished).size, 8)
   const twice = M.diffActive(["a", "a"], [])
   eq(twice.vanished.length, 1)
+})
+
+// ---- Model.js: Phase 3 change detection ---------------------------------------------------
+
+function dep(o) { return Object.assign({ uuid: "d1", status: "queued", restartOnly: false, appName: "api" }, o || {}) }
+function res(o) { return Object.assign({ uuid: "r1", name: "api", state: "running", health: "healthy", kind: "application" }, o || {}) }
+
+test("Model.diffDeployments: vanished carried over, first poll yields no events, queued/started/restarting transitions", () => {
+  const active = M.normaliseDeployments(fx("deployments-active.json"))
+  const fresh = M.diffDeployments([], active, false)
+  eq(fresh.events.length, active.length); eq(fresh.events[0].kind, "deployment"); eq(fresh.events[0].obj.uuid, active[0].uuid)
+  assert(fresh.events.every(e => e.event === "started" || e.event === "queued"), "new active entries")
+  eq(M.diffDeployments([], active, true).events.length, 0, "baseline")
+  const v = M.diffDeployments([dep({ uuid: "a" }), dep({ uuid: "b" })], [dep({ uuid: "b" }), dep({ uuid: "c" })], false)
+  eq(JSON.stringify(v.vanished), JSON.stringify(["a"])); eq(v.events.length, 1); eq(v.events[0].event, "queued"); eq(v.events[0].uuid, "c")
+  const started = M.diffDeployments([dep({ status: "queued" })], [dep({ status: "in_progress" })], false)
+  eq(started.events.length, 1); eq(started.events[0].event, "started")
+  eq(M.diffDeployments([dep({ status: "in_progress" })], [dep({ status: "in_progress" })], false).events.length, 0)
+  const r1 = M.diffDeployments([], [dep({ status: "queued", restartOnly: true })], false)
+  eq(r1.events[0].event, "restarting")
+  eq(M.diffDeployments([dep({ status: "queued", restartOnly: true })], [dep({ status: "in_progress", restartOnly: true })], false).events.length, 0, "restart never yields started")
+  eq(M.diffDeployments([], [dep({ status: "in_progress", restartOnly: true })], false).events[0].event, "restarting")
+  const big = []; for (let i = 0; i < 2000; i++) big.push(dep({ uuid: "u" + i, status: "in_progress" }))
+  const t0 = Date.now(); M.diffDeployments(big.map(d => dep({ uuid: d.uuid })), big, false); assert(Date.now() - t0 < 50, "O(N) diff")
+})
+
+test("Model.terminalEvent / hasTerminal: finished, restarted, failed, cancelled, in_progress -> null", () => {
+  eq(M.terminalEvent(M.normaliseDeployment(fx("deployment-finished.json"))).event, "finished")
+  eq(M.terminalEvent(M.normaliseDeployment(fx("deployment-failed.json"))).event, "failed")
+  eq(M.terminalEvent(dep({ status: "finished", restartOnly: true })).event, "restarted")
+  eq(M.terminalEvent(dep({ status: "cancelled-by-user" })).event, "cancelled")
+  eq(M.terminalEvent(dep({ status: "in_progress" })), null)
+  eq(M.terminalEvent(null), null)
+  eq(M.hasTerminal([dep({ uuid: "x", status: "finished" })], "x"), true)
+  eq(M.hasTerminal([dep({ uuid: "x", status: "finished" })], "y"), false)
+  eq(M.hasTerminal([dep({ uuid: "x", status: "in_progress" })], "x"), false, "an active entry is not terminal")
+})
+
+test("Model.resourceEvents: ten transitions, first poll yields nothing", () => {
+  const raw = M.normaliseResources(fx("resources.json"))
+  const flipped = raw.map(r => r.uuid === "h0wxyg40kc0lz727dom9l03i" ? Object.assign({}, r, { state: "exited", health: "unhealthy", status: "exited" }) : r)
+  const ev = M.resourceEvents(raw, flipped, false)
+  eq(ev.length, 1); eq(ev[0].event, "stopped"); eq(ev[0].uuid, "h0wxyg40kc0lz727dom9l03i"); eq(ev[0].kind, "resource")
+  eq(M.resourceEvents(raw, flipped, true).length, 0, "baseline")
+  const one = (from, to) => M.resourceEvents([res({ state: from })], [res({ state: to })], false)
+  eq(one("running", "exited")[0].event, "stopped"); eq(one("starting", "exited")[0].event, "stopped"); eq(one("degraded", "exited")[0].event, "stopped")
+  eq(one("running", "degraded")[0].event, "degraded"); eq(one("exited", "running")[0].event, "recovered"); eq(one("degraded", "starting")[0].event, "recovered")
+  eq(one("exited", "exited").length, 0); eq(one("unknown", "exited").length, 0); eq(one("running", "unknown").length, 0); eq(one("running", "paused").length, 0)
+  eq(M.resourceEvents([res({ health: "healthy" })], [res({ health: "unhealthy" })], false).length, 0, "health-only is silent")
+  eq(M.resourceEvents([], [res({ state: "exited" })], false).length, 0, "absent from prev")
+})
+
+test("Model.serverEvents: both flips, disabled never, absent never, first poll nothing", () => {
+  const srv = M.normaliseServers(fx("servers.json"))
+  const down = srv.map(s => Object.assign({}, s, { reachable: false }))
+  eq(M.serverEvents(srv, down, false)[0].event, "unreachable"); eq(M.serverEvents(down, srv, false)[0].event, "reachable")
+  eq(M.serverEvents(srv, down, true).length, 0)
+  eq(M.serverEvents(srv, down.map(s => Object.assign({}, s, { disabled: true })), false).length, 0)
+  eq(M.serverEvents([], down, false).length, 0)
+})
+
+test("Model.appLabel / uuid8: Coolify suffix stripped, plain names kept, empty -> uuid8, newline filtered", () => {
+  eq(M.appLabel("storefront:main-h0wxyg40kc0lz727dom9l03i", "h0wx"), "storefront")
+  eq(M.appLabel("worker", "u"), "worker"); eq(M.appLabel("umami-prod", "u"), "umami-prod"); eq(M.appLabel("Storefront Prod WP", "u"), "Storefront Prod WP")
+  eq(M.appLabel("xyhpwdxqu33omjgwuo6c7cjp-200537415987", "xyhpwdxqu33omjgwuo6c7cjp"), "xyhpwdxq", "an unnamed app's generated name falls back to uuid8")
+  eq(M.appLabel("abcdefghijklmnopqrstuv-123456", "zz"), "abcdefgh", "the generated shape yields the first 8 of its own uuid")
+  eq(M.appLabel("umami-prod", "u"), "umami-prod", "a short uuid never masks a real name")
+  eq(M.appLabel("", "abcdefghijkl"), "abcdefgh"); eq(M.appLabel(null, "abcdefghijkl"), "abcdefgh")
+  eq(M.appLabel("a".repeat(60), "u").length, 32)
+  eq(M.uuid8("ab\ncd-ef gh!ijklmnop"), "abcdefgh"); eq(M.uuid8(null), "")
+})
+
+// ---- Model.js: Phase 3 notifications ------------------------------------------------------------
+
+const NAPP = "h0wxyg40kc0lz727dom9l03i"          // joined: project + environment + server
+const NSRV = "qo4go8kswocog0gg0ckk8kk8"          // hetzner-1
+function nctx(o) {
+  return Object.assign({ notify: M.notifyDefaults(), origin: "https://app.coolify.io", dnd: false, pending: {}, actionAt: {}, lastNotified: {}, sentLastMin: 0, now: NOW, pluginId: "io.github.danjonesio.omarify" }, o || {})
+}
+function nsnap(o) {
+  const s = loadedSnap({ deployments: [], recent: [] })
+  return Object.assign(s, o || {})
+}
+function rawRes(uuid, state) { return { uuid, name: "x", kind: "application", state: state || "exited", health: "unknown", serverUuid: null, projectUuid: null } }
+function stopEv(uuid) { return { kind: "resource", event: "stopped", uuid, obj: rawRes(uuid) } }
+function argvOf(plan, i) { return plan.argvs[i || 0] }
+function execUrl(a) { const i = a.indexOf("--exec"); return i < 0 ? null : a.slice(i) }
+
+test("Model.notifySafe: option-shaped strings, control chars, Unicode, ordinary text, redact before elide (SR15)", () => {
+  for (const bad of ["--app-name=omarchy-action", "--image=file:///etc/passwd", "--urgency=critical", "-g", "-u critical"]) {
+    const s = M.notifySafe(bad, 72); assert(s.charAt(0) !== "-", bad + " -> " + s); eq(s.length, bad.length, "same length, dash swapped")
+  }
+  eq(M.notifySafe("a bcde", 72), "abcde")
+  eq(M.notifySafe("Émilie", 72), "Émilie"); eq(M.notifySafe("部署 完成", 72), "部署 完成")
+  eq(M.notifySafe("Deployment failed: storefront", 72), "Deployment failed: storefront")
+  const tok = "deploy with 67|" + "a".repeat(40)
+  const r = M.notifySafe(tok, 24); assert(r.indexOf("«token»") >= 0, "redacted before the cut: " + r); assert(!/67\|a{5}/.test(r))
+  eq(M.notifySafe("", 72), ""); eq(M.notifySafe(null, 72), "")
+  eq(M.notifySafe("x".repeat(100), 72).length, 72)
+})
+
+test("Model.notifyBody: escapes & and < after the cut; the headline path leaves < alone", () => {
+  assert(M.notifyBody('<a href="x">y</a>', 96).indexOf("<") < 0); eq(M.notifyBody("a & b", 96), "a &amp; b")
+  const cut = M.notifyBody("<".repeat(100), 96); eq(cut.indexOf("<"), -1); assert(cut.endsWith("…"), "cut then escaped")
+  eq(M.notifySafe("<b>", 72), "<b>")
+})
+
+test("Model.notifyCopy: thirteen rows, glyphs in GLYPHS, urgency, toggle, fallbacks", () => {
+  const s = nsnap(); const ctx = nctx()
+  const fin = M.joinBranch([M.normaliseDeployment(fx("deployment-finished.json"))], s.resources)[0]
+  const c = M.notifyCopy({ kind: "deployment", event: "finished", uuid: fin.uuid }, fin, s, ctx)
+  eq(c.headline, "Deployed storefront"); eq(c.body, "2m 21s · main"); eq(c.urgency, "normal"); eq(c.toggle, "deploymentFinished"); assert(c.url.startsWith("https://app.coolify.io/project/"))
+  const fail = M.joinBranch([M.normaliseDeployment(fx("deployment-failed.json"))], s.resources)[0]
+  const f = M.notifyCopy({ kind: "deployment", event: "failed", uuid: fail.uuid }, fail, s, ctx)
+  eq(f.headline, "Deployment failed: storefront"); eq(f.body, "1m 4s · click to open in Coolify"); eq(f.urgency, "critical")
+  eq(M.notifyCopy({ kind: "deployment", event: "failed", uuid: "u" }, Object.assign({}, fail, { restartOnly: true, url: null }), s, ctx).headline, "Restart failed: storefront")
+  eq(M.notifyCopy({ kind: "deployment", event: "failed", uuid: "u" }, Object.assign({}, fail, { url: null }), s, ctx).body, "1m 4s · main", "no url -> branch")
+  const can = M.normaliseDeployment(fx("deployment-cancelled.json"))
+  const cc = M.notifyCopy({ kind: "deployment", event: "cancelled", uuid: can.uuid }, can, s, ctx)
+  eq(cc.headline, "Cancelled xyhpwdxq"); eq(cc.body, ""); eq(cc.urgency, "low"); eq(cc.toggle, "deploymentFinished")
+  const act = M.joinBranch(M.normaliseDeployments(fx("deployments-active.json")), s.resources)
+  eq(M.notifyCopy({ kind: "deployment", event: "started", uuid: act[0].uuid }, act[0], s, ctx).headline, "Building storefront")
+  eq(M.notifyCopy({ kind: "deployment", event: "started", uuid: act[0].uuid }, act[0], s, ctx).body, "main · Merge pull request #117 from example/feature/checkout")
+  eq(M.notifyCopy({ kind: "deployment", event: "queued", uuid: act[1].uuid }, act[1], s, ctx).headline, "Queued worker")
+  eq(M.notifyCopy({ kind: "deployment", event: "queued", uuid: "u" }, dep({ appName: "", uuid: "abcdefghijk", commitMessage: "", branch: null }), s, ctx).headline, "Queued abcdefgh", "empty name -> uuid8")
+  eq(M.notifyCopy({ kind: "deployment", event: "queued", uuid: "u" }, dep({ appName: "api", commitMessage: "", branch: null }), s, ctx).body, "", "no commit, no branch")
+  eq(M.notifyCopy({ kind: "deployment", event: "restarting", uuid: "u" }, dep({ restartOnly: true, serverName: "hetzner-1" }), s, ctx).headline, "Restarting api")
+  eq(M.notifyCopy({ kind: "deployment", event: "restarting", uuid: "u" }, dep({ restartOnly: true, serverName: "hetzner-1" }), s, ctx).body, "hetzner-1")
+  eq(M.notifyCopy({ kind: "deployment", event: "restarted", uuid: "u" }, dep({ status: "finished", restartOnly: true, createdAt: "2026-09-06T21:00:00Z", finishedAt: "2026-09-06T21:00:09Z" }), s, ctx).headline, "Restarted api")
+  eq(M.notifyCopy({ kind: "deployment", event: "restarted", uuid: "u" }, dep({ status: "finished", restartOnly: true, createdAt: "2026-09-06T21:00:00Z", finishedAt: "2026-09-06T21:00:09Z" }), s, ctx).body, "9s")
+  eq(M.notifyCopy({ kind: "deployment", event: "finished", uuid: "u" }, dep({ status: "finished", createdAt: "2026-09-06T21:00:00Z", finishedAt: "garbage", branch: "main" }), s, ctx).body, "main", "unparseable finishedAt -> no duration")
+  const app = s.resources.find(r => r.uuid === NAPP)
+  const st = M.notifyCopy({ kind: "resource", event: "stopped", uuid: NAPP }, app, s, ctx)
+  eq(st.headline, "storefront stopped"); eq(st.body, "hetzner-1 · exited"); eq(st.urgency, "normal"); eq(st.toggle, "resourceStateChanged"); assert(st.url.indexOf("/application/" + NAPP) > 0)
+  eq(M.notifyCopy({ kind: "resource", event: "degraded", uuid: NAPP }, app, s, ctx).headline, "storefront degraded")
+  eq(M.notifyCopy({ kind: "resource", event: "recovered", uuid: NAPP }, app, s, ctx).body, "hetzner-1 · running")
+  eq(M.notifyCopy({ kind: "resource", event: "stopped", uuid: "r" }, rawRes("r"), s, ctx).body, "exited", "no server join -> state only")
+  eq(M.notifyCopy({ kind: "resource", event: "summary", uuid: "", count: 4, serverLabel: "hetzner-1" }, {}, s, ctx).headline, "4 more resources stopped")
+  const srv = s.servers[0]
+  const un = M.notifyCopy({ kind: "server", event: "unreachable", uuid: NSRV, down: 7 }, srv, s, ctx)
+  eq(un.headline, "hetzner-1 unreachable"); eq(un.body, "7 resources down"); eq(un.urgency, "critical"); eq(un.url, "https://app.coolify.io/server/" + NSRV)
+  eq(M.notifyCopy({ kind: "server", event: "unreachable", uuid: NSRV, down: 0 }, srv, s, ctx).body, "")
+  eq(M.notifyCopy({ kind: "server", event: "reachable", uuid: NSRV }, srv, s, ctx).headline, "hetzner-1 reachable")
+  for (const ev of Object.keys(M.NOTIFY_ROWS)) assert(M.GLYPHS.indexOf(M.G[M.NOTIFY_ROWS[ev].glyph]) >= 0, ev + " glyph in GLYPHS")
+})
+
+test("Model.notifyPlan: resolves the joined object at flush time; raw event still gets URL and server (wave-2 critical)", () => {
+  const s = nsnap()
+  const p = M.notifyPlan([stopEv(NAPP)], s, nctx())
+  eq(p.argvs.length, 1); const a = argvOf(p)
+  eq(a[7], "storefront stopped"); eq(a[8], "hetzner-1 · exited")
+  eq(JSON.stringify(execUrl(a)), JSON.stringify(["--exec", "omarchy-launch-browser", "https://app.coolify.io/project/iwo4oo0cw0kc8s4g8s0og88c/environment/vokooc88s8cssgow0ww44ssw/application/" + NAPP]))
+  const q = M.notifyPlan([stopEv("notinsnapshot")], s, nctx())
+  eq(q.argvs.length, 1); eq(execUrl(argvOf(q)), null, "fallback to the raw obj: no page"); eq(argvOf(q)[8], "exited")
+})
+
+test("Model.notifyPlan: argv shape, argv[0], --exec last, body omitted, app-name rule (SR16, SR17, SR23)", () => {
+  const s = nsnap()
+  const fin = M.joinBranch([M.normaliseDeployment(fx("deployment-finished.json"))], s.resources)[0]
+  const fail = M.joinBranch([M.normaliseDeployment(fx("deployment-failed.json"))], s.resources)[0]
+  const evs = [{ kind: "deployment", event: "finished", uuid: fin.uuid, obj: fin }, { kind: "deployment", event: "failed", uuid: fail.uuid, obj: fail },
+               { kind: "server", event: "unreachable", uuid: NSRV, obj: s.servers[0] }, { kind: "server", event: "reachable", uuid: NSRV, obj: s.servers[0] }]
+  const p = M.notifyPlan(evs, s, nctx({ dnd: true }))
+  eq(p.argvs.length, 4)
+  assert(p.argvs.every(a => a[0] === "omarchy-notification-send"), "argv[0]")
+  for (const a of p.argvs) {
+    eq(a[1], "--app-name"); eq(a[3], "-g"); eq(a[5], "-u")
+    const i = a.indexOf("--exec"); assert(i > 0 && i === a.length - 3, "--exec is the third from last"); eq(a[i + 1], "omarchy-launch-browser"); assert(/^https:\/\/app\.coolify\.io\//.test(a[i + 2]))
+  }
+  const byHead = {}; p.argvs.forEach(a => { byHead[a[7]] = a })
+  eq(byHead["Deployment failed: storefront"][2], "omarchy-action", "critical under DND"); eq(byHead["hetzner-1 unreachable"][2], "omarchy-action")
+  eq(byHead["Deployed storefront"][2], "io.github.danjonesio.omarify", "non-critical keeps the plugin id under DND"); eq(byHead["hetzner-1 reachable"][2], "io.github.danjonesio.omarify")
+  eq(byHead["hetzner-1 reachable"].length, 11, "empty body omitted: 8 + exec triple")
+  for (const d of [false, null]) {
+    const q = M.notifyPlan(evs, s, nctx({ dnd: d }))
+    assert(q.argvs.every(a => a[2] === "io.github.danjonesio.omarify"), "plugin id when dnd=" + d)
+  }
+  const noUrl = M.notifyPlan([{ kind: "deployment", event: "finished", uuid: "u1", obj: dep({ uuid: "u1", status: "finished", url: null }) }], s, nctx())
+  eq(noUrl.argvs[0].indexOf("--exec"), -1); eq(noUrl.argvs[0][7], "Deployed api")
+  eq(p.lastKind, "reachable"); eq(p.notified.length, 4); eq(p.notified[0].key, "deployment:" + fail.uuid + ":failed", "critical first")
+})
+
+test("Model.notifyPlan: the eight per-event drops with just-inside and just-outside cases; suppressed per rule", () => {
+  const s = nsnap()
+  const run = (ctx, events, snap) => M.notifyPlan(events || [stopEv(NAPP)], snap || s, nctx(ctx))
+  eq(run({ notify: Object.assign(M.notifyDefaults(), { resourceStateChanged: false }) }).suppressed.toggle, 1)
+  const canEv = [{ kind: "deployment", event: "cancelled", uuid: "c1", obj: dep({ uuid: "c1", status: "cancelled-by-user" }) }]
+  eq(run({ actionAt: { c1: NOW - 299000 } }, canEv).suppressed.selfCancel, 1); eq(run({ actionAt: { c1: NOW - 301000 } }, canEv).argvs.length, 1)
+  eq(run({ pending: { [NAPP]: { verb: "stop" } } }).suppressed.pending, 1)
+  eq(run({ actionAt: { [NAPP]: NOW - 179000 } }).suppressed.actionWindow, 1); eq(run({ actionAt: { [NAPP]: NOW - 181000 } }).argvs.length, 1)
+  const act = M.joinBranch(M.normaliseDeployments(fx("deployments-active.json")), s.resources)
+  eq(run({}, null, nsnap({ deployments: act })).suppressed.activeDeployment, 1, "active deployment for the app (appUuid)")
+  eq(run({}, [stopEv("qkyqt4xzvclreyhdutkrib9p")], nsnap({ deployments: [dep({ status: "in_progress", appName: "landing:main-qkyqt4xzvclreyhdutkrib9p" })] })).suppressed.activeDeployment, 1, "by appName")
+  const rec = (ms) => nsnap({ recent: [Object.assign(M.normaliseDeployment(fx("deployment-finished.json")), { appUuid: NAPP, finishedAt: new Date(NOW - ms).toISOString() })] })
+  eq(run({}, null, rec(119000)).suppressed.postDeployGrace, 1); eq(run({}, null, rec(121000)).argvs.length, 1)
+  const down = nsnap({ servers: s.servers.map(x => Object.assign({}, x, { reachable: false })) })
+  eq(run({}, null, down).suppressed.serverDown, 1, "server already unreachable")
+  const batch = run({}, [stopEv(NAPP), { kind: "server", event: "unreachable", uuid: NSRV, obj: s.servers[0] }])
+  eq(batch.suppressed.serverDown, 1, "server flips in the same batch"); eq(batch.argvs.length, 1); eq(batch.argvs[0][8], "7 resources down")
+  eq(run({ lastNotified: { ["resource:" + NAPP + ":stopped"]: NOW - 299000 } }).suppressed.cooldown, 1); eq(run({ lastNotified: { ["resource:" + NAPP + ":stopped"]: NOW - 301000 } }).argvs.length, 1)
+  const st2 = [{ kind: "deployment", event: "started", uuid: "d9", obj: dep({ uuid: "d9", status: "in_progress" }) }]
+  eq(run({ lastNotified: { "deployment:d9:started": NOW - 10000 } }, st2).suppressed.cooldown, 1, "a re-entering uuid does not toast Building twice")
+  const rc = [{ kind: "resource", event: "recovered", uuid: NAPP, obj: rawRes(NAPP, "running") }]
+  eq(run({}, rc).suppressed.cooldown, 1, "recovered needs a prior stopped"); eq(run({ lastNotified: { ["resource:" + NAPP + ":stopped"]: NOW - 3599000 } }, rc).argvs.length, 1)
+  eq(run({ lastNotified: { ["resource:" + NAPP + ":degraded"]: NOW - 3601000 } }, rc).suppressed.cooldown, 1)
+})
+
+test("Model.notifyPlan: critical-first ordering, resource cap + summary, minute cap, flap bound, notified keys (SR21)", () => {
+  const s = nsnap()
+  const many = []; for (let i = 0; i < 20; i++) many.push(stopEv("res" + i))
+  const p = M.notifyPlan(many, s, nctx())
+  eq(p.argvs.length, 4); eq(p.suppressed.resourceCap, 17); eq(p.argvs[3][7], "17 more resources stopped")
+  const fail = M.joinBranch([M.normaliseDeployment(fx("deployment-failed.json"))], s.resources)[0]
+  const low = []; for (let i = 0; i < 4; i++) low.push({ kind: "deployment", event: "queued", uuid: "q" + i, obj: dep({ uuid: "q" + i }) })
+  const mixed = M.notifyPlan(low.concat([{ kind: "deployment", event: "failed", uuid: fail.uuid, obj: fail }]), s, nctx({ sentLastMin: 12 }))
+  eq(mixed.argvs.length, 1); eq(mixed.argvs[0][6], "critical", "critical emitted when the minute budget is spent"); eq(mixed.suppressed.minuteCap, 4)
+  const ordered = M.notifyPlan(low.concat([{ kind: "deployment", event: "failed", uuid: fail.uuid, obj: fail }]), s, nctx())
+  eq(ordered.argvs[0][6], "critical", "critical first"); eq(ordered.argvs.length, 5)
+  let sent = 0, total = 0
+  for (let f = 0; f < 20; f++) {
+    const evs = []; for (let i = 0; i < 10; i++) evs.push(stopEv("flush" + f + "res" + i))
+    const r = M.notifyPlan(evs, s, nctx({ sentLastMin: sent })); sent += r.argvs.length; total += r.argvs.length
+  }
+  assert(total <= 12, "≤ 12 non-critical per minute, got " + total)
+  const ln = {}; let toasts = 0
+  for (let t = 0; t <= 600000; t += 60000) {
+    const r = M.notifyPlan([stopEv(NAPP)], s, nctx({ now: NOW + t, lastNotified: ln })); toasts += r.argvs.length
+    r.notified.forEach(n => { ln[n.key] = n.at })
+  }
+  eq(toasts, 3, "a flap at 60 s toasts once per 300 s window: 0, 300, 600")
+  eq(p.notified.length, 3, "summary row stamps no key"); assert(p.notified.every(n => /^resource:res\d+:stopped$/.test(n.key)))
+  const crit = []; for (let i = 0; i < 20; i++) crit.push({ kind: "server", event: "unreachable", uuid: "srv" + i, obj: { uuid: "srv" + i, name: "s" + i, reachable: false, disabled: false } })
+  const burst = M.notifyPlan(crit, s, nctx())
+  eq(burst.argvs.length, 20, "critical never capped"); eq(burst.nonCritical, 0, "critical toasts do not charge the minute ring")
+  const mix = M.notifyPlan([stopEv("n0"), stopEv("n1"), { kind: "resource", event: "recovered", uuid: "m0", obj: rawRes("m0", "running") }, { kind: "resource", event: "recovered", uuid: "m1", obj: rawRes("m1", "running") }, { kind: "resource", event: "recovered", uuid: "m2", obj: rawRes("m2", "running") }, stopEv("n2"), stopEv("n3")], s,
+    nctx({ lastNotified: { "resource:m0:stopped": NOW - 1000, "resource:m1:stopped": NOW - 1000, "resource:m2:stopped": NOW - 1000 } }))
+  eq(mix.argvs.length, 4, "3 resource toasts + one summary"); eq(mix.argvs[3][7], "1 more resources stopped", "the summary counts stops only, never recoveries"); eq(mix.suppressed.resourceCap, 4)
+  const proto = M.notifyPlan([{ kind: "resource", event: "stopped", uuid: "toString", obj: rawRes("toString") }], nsnap({ deployments: [dep({ status: "in_progress", appName: "constructor" })] }), nctx())
+  eq(proto.argvs.length, 1, "a resource named toString is not swallowed by a prototype key"); eq(M.hasTerminal([dep({ uuid: "x", status: "constructor" })], "x"), false)
+  eq(M.mergeRecent([{ uuid: "valueOf", status: "finished", finishedAt: "2026-09-06T21:00:00Z" }], []).length, 1)
+  const after = M.notifyPlan([stopEv(NAPP)], s, nctx({ sentLastMin: burst.nonCritical }))
+  eq(after.argvs.length, 1, "a non-critical toast right after a critical burst is not dropped"); eq(after.nonCritical, 1)
+  const big = [], bigRes = [], bigDeps = [], bigRecent = []
+  for (let i = 0; i < 2000; i++) {
+    big.push(stopEv("big" + i)); bigRes.push(Object.assign(rawRes("big" + i), { serverUuid: NSRV, projectUuid: "p", environmentUuid: "e" }))
+    bigDeps.push(dep({ uuid: "bd" + i, status: "in_progress", appUuid: "other" + i, appName: "o" + i }))
+    bigRecent.push(dep({ uuid: "br" + i, status: "finished", appUuid: "old" + i, appName: "r" + i, finishedAt: new Date(NOW - 3600000 - i).toISOString() }))
+  }
+  const bigSnap = nsnap({ resources: bigRes, deployments: bigDeps, recent: bigRecent })
+  const t0 = Date.now(); const bigPlan = M.notifyPlan(big, bigSnap, nctx()); const dt = Date.now() - t0
+  assert(dt < 50, "notifyPlan builds its indexes once: 2 000 events over a 2 000-entry snapshot under 50 ms (took " + dt + " ms; rebuilding per event costs ~1.4 s)")
+  eq(bigPlan.argvs.length, 4, "2 000 stops -> 3 + summary")
+})
+
+test("Model.notifyPlan: log lines are event + uuid8 only; a hostile uuid cannot forge a line (SR15)", () => {
+  const s = nsnap()
+  const p = M.notifyPlan([stopEv(NAPP), stopEv("ab\nomarify notify forged aaaaaaaa")], s, nctx())
+  eq(p.log.length, 2); eq(p.log[0], "stopped h0wxyg40"); eq(p.log[1].indexOf("\n"), -1); eq(p.log[1], "stopped abomarif")
+  for (const l of p.log) assert(l.indexOf("refresh") < 0 && l.indexOf("hetzner") < 0, "no names")
+})
+
+test("Model.parseRecent / serialiseRecent / mergeRecent: round-trip, corrupt, null, version, key, bounds, hostile url, redact (SR18, SR19)", () => {
+  const KEY = "https://app.coolify.io"
+  const good = M.parseRecent(fixture("state-recent.json"), KEY, NOW)
+  eq(good.loaded, true); eq(good.rejected, false); eq(good.recent.length, 2); eq(good.recent[0].uuid, "vdyasty4cmgyoekplcarxpfh"); eq(good.recent[0].status, "finished")
+  eq(good.recent[0].branch, null); eq(good.recent[0].appUuid, null); eq(good.recent[1].force, true); eq(good.recent[1].isWebhook, true)
+  assert(M.openUrl("deployment", good.recent[0], KEY).startsWith("https://app.coolify.io/project/"))
+  const rt = M.serialiseRecent(good.recent, KEY, NOW); const back = M.parseRecent(rt.text, KEY, NOW)
+  eq(JSON.stringify(back.recent), JSON.stringify(good.recent), "round-trip"); assert(rt.text.endsWith("\n"))
+  eq(M.serialiseRecent(good.recent, KEY, NOW + 5000).key, rt.key, "key ignores savedAt"); assert(M.serialiseRecent(good.recent, KEY, NOW + 5000).text !== rt.text)
+  const corrupt = M.parseRecent(fixture("state-recent-corrupt.txt"), KEY, NOW); eq(corrupt.rejected, true); eq(corrupt.loaded, false); eq(corrupt.recent.length, 0)
+  for (const t of [null, "", undefined]) { const r = M.parseRecent(t, KEY, NOW); eq(r.loaded, false); eq(r.rejected, false); eq(r.recent.length, 0) }
+  eq(M.parseRecent(rt.text, "", NOW).rejected, true, "empty instance key never matches")
+  eq(M.parseRecent(rt.text, "https://other", NOW).rejected, true)
+  eq(M.parseRecent(rt.text.replace('"version": 1', '"version": 2'), KEY, NOW).rejected, true)
+  eq(M.parseRecent('{"version":1,"instance":"' + KEY + '","recent":{}}', KEY, NOW).rejected, true, "non-array")
+  eq(M.parseRecent("[]", KEY, NOW).rejected, true); eq(M.parseRecent("null", KEY, NOW).rejected, true)
+  eq(M.parseRecent("x".repeat(5 * 1024 * 1024), KEY, NOW).rejected, true, "5 MB rejected before parse")
+  const entry = (i, extra) => Object.assign({ uuid: "u" + i, status: "finished", finishedAt: new Date(NOW - i * 1000).toISOString() }, extra || {})
+  const big = []; for (let i = 0; i < 10000; i++) big.push(entry(i))
+  eq(M.parseRecent(JSON.stringify({ version: 1, instance: KEY, recent: big }), KEY, NOW).rejected, true, "10 000 entries exceed the size bound before the array cap")
+  const two = []; for (let i = 0; i < 2000; i++) two.push(entry(i))
+  const twoText = JSON.stringify({ version: 1, instance: KEY, recent: two }); assert(twoText.length < 262144, "under the bound")
+  eq(M.parseRecent(twoText, KEY, NOW).recent.length, 20, "array capped at 20")
+  eq(M.parseRecent(JSON.stringify({ version: 1, instance: KEY, recent: [entry(1, { uuid: "constructor" })] }), KEY, NOW).recent.length, 1, "a uuid that names a prototype member survives")
+  const mixed = { version: 1, instance: KEY, recent: [entry(1, { finishedAt: null, updatedAt: null }), entry(2, { finishedAt: new Date(NOW - 25 * 3600 * 1000).toISOString() }), entry(3, { status: "in_progress" }), entry(4, { uuid: "../x" }), entry(5), entry(5)] }
+  const m = M.parseRecent(JSON.stringify(mixed), KEY, NOW); eq(m.recent.length, 1); eq(m.recent[0].uuid, "u5")
+  for (const u of ["https://evil/x", "//evil/x", "javascript:x", "-private", "project/x"]) {
+    const r = M.parseRecent(JSON.stringify({ version: 1, instance: KEY, recent: [entry(9, { url: u })] }), KEY, NOW)
+    eq(r.recent.length, 1); eq(M.openUrl("deployment", r.recent[0], KEY), "", u)
+  }
+  const tok = M.serialiseRecent([entry(7, { commitMessage: "oops 67|" + "b".repeat(30) })], KEY, NOW)
+  assert(tok.text.indexOf("«token»") > 0 && !/67\|b{5}/.test(tok.text), "redacted on the way out")
+  eq(M.serialiseRecent([entry(8, { status: "in_progress" })], KEY, NOW).key, JSON.stringify({ version: 1, instance: KEY, recent: [] }), "only terminal entries persist")
+  const mem = [entry(1), entry(2)], loaded = [Object.assign(entry(2), { appName: "loaded" }), entry(3)]
+  const mg = M.mergeRecent(mem, loaded); eq(mg.length, 3); eq(mg[0].uuid, "u1"); eq(mg[1].uuid, "u2"); eq(mg[1].appName, undefined, "memory wins"); eq(mg[2].uuid, "u3")
+  const capped = []; for (let i = 0; i < 30; i++) capped.push(entry(i)); eq(M.mergeRecent(capped, []).length, 20)
+})
+
+test("Model.normaliseDeployment / terminalEvent on the recorded cancelled fixture", () => {
+  const d = M.normaliseDeployment(fx("deployment-cancelled.json"))
+  eq(d.status, "cancelled-by-user"); eq(M.terminalEvent(d).event, "cancelled"); eq(M.NOTIFY_ROWS.cancelled.toggle, "deploymentFinished")
+  assert(d.finishedAt, "a cancelled queued deployment carries finished_at")
 })
 
 // ---- Model.js: bar, hero, callout --------------------------------------------------------------

@@ -1,0 +1,36 @@
+{
+  "_note": "hand-written: a valid ~/.local/state/omarify/recent.json (Phase 3), two terminal deployments, no secrets",
+  "version": 1,
+  "instance": "https://app.coolify.io",
+  "savedAt": 1788735600000,
+  "recent": [
+    {
+      "uuid": "vdyasty4cmgyoekplcarxpfh",
+      "status": "finished",
+      "appId": "3",
+      "appName": "storefront:main-h0wxyg40kc0lz727dom9l03i",
+      "serverName": "hetzner-1",
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "commitMessage": "Merge pull request #117 from example/feature/checkout",
+      "createdAt": "2026-09-06T20:58:00.000000Z",
+      "updatedAt": "2026-09-06T21:00:00.000000Z",
+      "finishedAt": "2026-09-06T21:00:00.000000Z",
+      "url": "/project/iwo4oo0cw0kc8s4g8s0og88c/environment/vokooc88s8cssgow0ww44ssw/application/h0wxyg40kc0lz727dom9l03i/deployment/vdyasty4cmgyoekplcarxpfh",
+      "restartOnly": false, "force": false, "isApi": false, "isWebhook": false
+    },
+    {
+      "uuid": "juvv190hizilhaaabclngzr3",
+      "status": "failed",
+      "appId": "3",
+      "appName": "storefront:main-h0wxyg40kc0lz727dom9l03i",
+      "serverName": "hetzner-1",
+      "commit": "89abcdef0123456789abcdef0123456789abcdef",
+      "commitMessage": "fix login redirect",
+      "createdAt": "2026-09-06T19:30:00.000000Z",
+      "updatedAt": "2026-09-06T19:31:12.000000Z",
+      "finishedAt": "2026-09-06T19:31:12.000000Z",
+      "url": "/project/iwo4oo0cw0kc8s4g8s0og88c/environment/vokooc88s8cssgow0ww44ssw/application/h0wxyg40kc0lz727dom9l03i/deployment/juvv190hizilhaaabclngzr3",
+      "restartOnly": false, "force": true, "isApi": false, "isWebhook": true
+    }
+  ]
+}

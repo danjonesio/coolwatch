@@ -99,6 +99,14 @@ Secrets and behaviour live in one file the plugin owns, not in `shell.json`, bec
 - `url` must start with `http://` or `https://`; `http://` shows a plaintext warning.
 - Every `poll` key has the default shown; values below 2 clamp to 2. `topologySec` is
   raised at runtime so the topology fan-out costs at most 3 req/min.
+- Every `notify` key defaults to `true`; `"notify": false` sets all six false; `true`,
+  `null` or absent means defaults. A non-boolean key value (or a `notify` that is neither
+  an object nor a boolean) is **not** a config error: the key keeps its default and
+  `normaliseConfig` returns a `warning` the panel shows as a callout while polling
+  continues (a quoted `"false"` must never switch off a critical alert or stop the
+  plugin). Unknown keys are ignored. A config edit that changes only `notify` applies
+  live: `_configText` compares `Model.configSansNotify` of the old and new config and
+  skips `_resetStore` (no killed request, no new baseline, no token re-resolution).
 - `url` is the origin; the service appends `/api/v1`. Cloud is
   `https://app.coolify.io`; self-hosted is usually `https://coolify.example.com` or
   `http://ip:8000`.
@@ -225,7 +233,7 @@ instance:  { id, name, url, version, plaintext }
 error:     null | { kind, title, detail, httpCode, curlExit, request, at, staleSince }
            kind ∈ noconfig | configerror | unsafe | tokencmd | waitingtoken | auth |
                   apidisabled | ipblocked | ability | ratelimited | offline | toolarge | http
-warning:   null | { kind (permissions | plaintext), title, detail }
+warning:   null | { kind (permissions | plaintext | notify), title, detail }
 server:    { uuid, name, ip, reachable, usable, disabled, buildServer, resourceCount }
 resource:  { uuid, name, kind (application|service|database), type, status,
              state (running|starting|restarting|degraded|paused|exited|unknown),
@@ -248,45 +256,116 @@ byServer:  { serverUuid: [resourceUuid…] }
   maps uuids to servers. A deployment's branch comes from the joined application's
   `git_branch`, else the first seven characters of the commit.
 - `recent` keeps the last 20 terminal deployments in memory (the panel renders the
-  newest 5). Phase 3 persists them to `~/.local/state/omarify/recent.json`.
+  newest 5 under an hour old). Phase 3 persists them to
+  `~/.local/state/omarify/recent.json` (`$XDG_STATE_HOME` honoured):
+  `{ version: 1, instance: <Model.origin(url)>, savedAt, recent: [ { uuid, status, appId,
+  appName, serverName, commit, commitMessage, createdAt, updatedAt, finishedAt, url,
+  restartOnly, force, isApi, isWebhook } ] }`. Written only from the `deployment` arm of
+  `_dispatch` (the one place a terminal record enters `recent`; `_recent` itself is
+  reassigned on every poll by the joins, so a writer bound to it would write every 4 s and
+  `_resetStore` would truncate it), armed only after the state directory exists and the
+  file was read once, skipped when the stamp-free content is unchanged. Read on every
+  config load (keyed on the instance origin, not the token, so a `tokenCommand` vault is
+  never waited on) and again after every `_resetStore`; `_resetStore` never writes. The
+  file is untrusted input: `Model.parseRecent` bounds the text at 262 144 chars, requires
+  `version 1` and a non-empty matching instance (the bound applies after FileView has read the
+  whole file: there is no size-capped read, and no remote path writes a large file), whitelists fields, validates `uuid` and a
+  terminal `status`, drops unparseable or > 24 h timestamps, caps at 20, never throws;
+  `branch`/`appUuid` are recomputed by `joinBranch`; `url` passes `openUrl` on every use;
+  `status.recentPersisted` is the count accepted at the last load, not the file's current length;
+  every string is redacted and elided on the way out. Loading never notifies and never
+  touches `_failedUnacked` or `_activeUuids`; neither the tracked active set nor
+  `_failedUnacked` is persisted. `FileView` has no mode API and its atomic write is a
+  rename, so the file is umask-mode and the 0700 directory (created **and chmod'ed** by
+  `mkdirProc` before the first write) is the control. Coolify uuids are not
+  charset-validated at normalise; `Model.uuid8` filters them before any log line.
 - Panels never build state: the service builds the snapshot once per poll; a panel
   flattens it into rows only while open and reassigns its ListView model only when
   `Model.sameRows` says the rows changed. The cursor is a row key, not an index.
 
 ## Change detection and notifications
 
-Every deployments poll diffs the new active set against the tracked set:
+Every diff runs inside its `_dispatch` arm from the previous store value, which is still
+in hand there, and is gated on that kind's own `_baseline[kind]` flag captured before
+`_markPoll` flips it (never `_baselineDone`: a self-hosted `/version` that never answers
+must not silence everything). No new tracked-state property exists.
 
 ```
-new uuid, status queued          → "Queued"      (if notify.deploymentQueued)
-tracked uuid queued → in_progress → "Building"
-tracked uuid gone from active list → GET /deployments/{uuid} once
-    finished          → "Deployed"
-    failed            → "Deployment failed"
-    cancelled-by-user → "Cancelled"
+deployments  Model.diffDeployments(prev, next, first) → { vanished, events }
+             new uuid at queued → "queued" (restart_only → "restarting"); new at in_progress → "started";
+             tracked queued → in_progress → "started"; vanished → _terminalQueue → GET /deployments/{uuid}
+deployment   Model.terminalEvent(d): finished → "finished" (restart_only → "restarted"), failed, cancelled-by-user
+             → "cancelled"; a non-terminal status (a transient vanish) → nothing.
+             Emitted only when Model.hasTerminal(recent, uuid) is false (the intra-session dedupe).
+resources    Model.resourceEvents(prevRaw, nextRaw, first): running|starting|restarting|degraded → exited = "stopped";
+             running|starting|restarting → degraded = "degraded"; exited|degraded → running|starting = "recovered".
+             State prefix only; unknown or paused on either side is nothing.
+servers      Model.serverEvents(prev, next, first): reachable true→false "unreachable", false→true "reachable"; disabled skipped.
 ```
 
-Resource polls diff `state` per uuid. A change to `exited` or `degraded` that is not
-explained by a pending user action or an active deployment for that app raises
-"Stopped unexpectedly". Server polls diff `reachable`.
+**No replay after a restart or a config change** comes from two existing facts: `GET
+/deployments` lists only active deployments, and the post-baseline `vanished` set is
+empty, so a deployment that finished while the shell was down never reaches the drain; an
+in-flight one is part of the baseline set and yields one terminal toast when it vanishes.
+`recent.json` extends `hasTerminal` across a restart and feeds the panel; it is not what
+prevents a replay.
 
-The first successful poll after service start or config change is a **baseline**:
-it seeds the tracked sets and raises nothing. Otherwise a shell restart during a
-deployment would replay a notification.
+**The terminal fetch is now load-bearing.** `_drainTerminal` records the uuid in flight on
+`deploymentReq.inflight` (never in `Req.arg`, which is the descriptor list `_finish`
+indexes); `_drainDone`, called from `_finish` and the reaper before the next drain,
+re-queues the uuid at the back on any outcome but a dispatched record or a 404 (empty stream, 5xx, 429, reap, a 200 whose body is not JSON or carries no `deployment_uuid`),
+at most twice per uuid (`_drainTries`), honouring the existing `deployment` backoff and
+pause; a 404 drops it (`omarify drain 404`). A failed drain therefore stalls the queue for
+the existing 30/60 s backoff and a Deployed toast can arrive up to ~90 s late; the retry
+adds ≤ 2 requests per uuid and cannot burst. `status.drainRetries` counts them.
 
-Notifications go through Omarchy's own helper, never `notify-send`:
+Events queue on the service and drain once at the end of every `_finish`, after the joins,
+so `Model.notifyPlan(events, snapshot, ctx)` resolves each event's render object by uuid
+from the **joined** snapshot (the raw store lists carry no `serverUuid`, `projectUuid` or
+`branch`); the event's own object is used for state fields only. `notifyPlan` owns every
+rule, in this order, and counts every drop per rule into `status.notify.suppressed`:
+
+1. `toggle`: the row's `notify` key is off.
+2. `selfCancel`: `cancelled` within 300 s of the service's own Cancel (`_actionAt`).
+3. `pending`: `stopped`/`degraded` with a `_pending` entry for the uuid.
+4. `actionWindow`: `stopped`/`degraded` within 180 s of any action on the uuid
+   (`_actionAt`, written by `_setPending`; a service/database restart's pending entry is
+   gone before the container flaps).
+5. `activeDeployment`: an active deployment matches the app (`appUuid` or `appName`).
+6. `postDeployGrace`: the newest `recent` deployment for the app finished within 120 s.
+7. `serverDown`: the resource's server is unreachable or flips unreachable in the same
+   batch (the server toast carries "N resources down").
+8. `cooldown`: the same `kind:uuid:event` within 300 s (`_lastNotified`, pruned at 1 h);
+   `recovered` also needs a `stopped`/`degraded` for the uuid within the last hour.
+
+Survivors are ordered critical → normal → low. Then `resourceCap`: more than 3 resource
+toasts → the first 3 plus one "N more resources stopped"; `minuteCap`: at most 12
+non-critical toasts per rolling minute (`_notifyLog`, which is therefore what
+`status.notify.sentLastMin` reports: the non-critical ring, not every toast sent); critical
+is never capped or summarised. Each argv is exactly
 
 ```
-Util.execArgv(["omarchy-notification-send",
-  "--app-name", "io.github.danjonesio.omarify",
-  "-g", "<glyph>", "-u", "normal",
-  "Deployed api", "main · fix login redirect",
-  "--exec", "omarchy-launch-browser", deployment.url])
+["omarchy-notification-send", "--app-name", <name>, "-g", <glyph>, "-u", <urgency>,
+ <headline>[, <body>][, "--exec", "omarchy-launch-browser", <url>]]
 ```
 
-`--app-name` set to the plugin id means the toast lands in history and respects Do
-Not Disturb. Failed deployments and unreachable servers use `-u critical`, which
-bypasses Do Not Disturb by Dan's decision; everything else is `low` or `normal`.
+built in `Model.js` (so `tests/run.js` covers it; `bin/check` SR16 pins both program
+strings there and bans the notifier from QML) and handed to `Util.execArgv` unchanged.
+The body is omitted when empty; the `--exec` triple is omitted when `Model.openUrl`
+returns `""`; `--exec` is always last and the URL is one element. Every positional passes
+`Model.notifySafe` (redact → strip C0/C1 controls → elide → a leading `-` run becomes
+U+2011) because the helper keeps parsing options after the headline; the body also
+escapes `&` and `<` (the shell renders it as StyledText). `<name>` is the plugin id,
+except a critical event while Do Not Disturb is on, which is sent as `omarchy-action`,
+the only sender the shell shows through DND (`NotificationLogic.js:118-122`; the shell
+archives it to history as that sender). DND is read from
+`shell.serviceFor("omarchy.notifications").doNotDisturb`; `null` (service unreachable)
+counts as off and `status.notify.dnd` reports it. The copy table is in `docs/design.md`.
+Log lines are `omarify notify <event> <uuid8>` at intent (a detached process cannot
+report success), never a name, message or URL. Names, branches, commit messages and the
+instance URL appear in the notifier's argv and in the shell's 0644 history files by
+design; the token never does. Resource-stop latency is 0–120 s with the panel closed
+(Coolify's sweep plus the resources interval) and no kick shortens it.
 
 ## Actions
 
@@ -392,6 +471,31 @@ refused after three consecutive ability failures until a 2xx or a config change.
     method comes from a whitelist checked with `hasOwnProperty`, and IPC verbs are
     exactly `deploy restart stop start`: a no-confirm destructive surface open to any
     local process, documented in the README.
+17. (plan SR15) No Coolify string becomes a notifier option or a control sequence: every
+    positional passes `Model.notifySafe`, the body `Model.notifyBody`; log lines use
+    `Model.uuid8`.
+18. (plan SR16) argv[0] and the launcher keep a checked shape: `bin/check` pins
+    `omarchy-notification-send` (argv literal head) and `omarchy-launch-browser` (the
+    `--exec` tail with one identifier) to at most one occurrence each in `Model.js` and
+    bans the notifier from every `.qml`; the SR9 QML gate is unchanged.
+19. (plan SR17) `--exec` is last, holds one URL element, and is absent when there is no
+    page; an empty body is omitted, never passed as `""`.
+20. (plan SR18) `recent.json` is untrusted input (see State model); loading never notifies.
+21. (plan SR19) No secret or credential reaches a toast, the state file, the shell's
+    history or the log: `redact` on every persisted and displayed string, `Model.origin`
+    rejects userinfo, log lines carry event + uuid8, the state dir is 0700 before the
+    first write and `_saveRecent` refuses until it is.
+22. (plan SR20) No new request, no new escalation, no compensating poll: the drain retry
+    only re-enters the existing queue under the existing backoff and pause, twice at most.
+23. (plan SR21) Bounded toast volume: ≤ 3 resource toasts per flush plus one summary,
+    ≤ 12 non-critical per minute, a 300 s cooldown per kind:uuid:event, server-outage
+    correlation; critical is never dropped by a cap.
+24. (plan SR22) Config safety: a malformed `notify` value warns and keeps its default; a
+    `notify`-only edit never resets the store.
+25. (plan SR23) DND honesty: `omarchy-action` only when `urgency === "critical"` and the
+    service read `doNotDisturb === true` from the shell; `null` means the plugin id.
+26. (plan SR24) Verification hygiene: staging only via `OMARIFY_DEST`, no `--delete` tool
+    against a real path, the token needle check fails loudly when the needle is empty.
 
 ## Testing
 
@@ -422,6 +526,6 @@ refused after three consecutive ability failures until a 2xx or a config change.
 | Path | Purpose |
 |---|---|
 | `~/.config/omarify/config.json` | instances, tokens, poll and notify settings (0600 in a 0700 directory) |
-| `~/.local/state/omarify/recent.json` | recent terminal deployments, survives restarts (Phase 3) |
+| `~/.local/state/omarify/recent.json` | recent terminal deployments, survives restarts; the directory is created and chmod'ed 0700 by the service (`mkdir -m` is create-only), the file is umask-mode |
 | `~/.config/omarchy/plugins/io.github.danjonesio.omarify/` | installed plugin files |
 | `~/.config/omarchy/shell.json` | bar placement and display-only widget settings |

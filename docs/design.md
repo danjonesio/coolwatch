@@ -312,18 +312,48 @@ partial > loading > healthy.
 Toasts use Omarchy's notification style automatically. Copy is short and names the
 thing:
 
-| Event | Glyph | Headline | Body | Urgency |
-|---|---|---|---|---|
-| queued | `󰔟` | Queued api | main · fix login redirect | low |
-| started | `󰦖` | Building api | main · fix login redirect | low |
-| finished | `󰄬` | Deployed api | 1m 42s · main | normal |
-| failed | `󰅙` | Deployment failed: api | 1m 12s · click to open logs | critical |
-| cancelled | `󰜺` | Cancelled api | | low |
-| resource exited | `󰅙` | api stopped | web-1 · exited | normal |
-| server unreachable | `󰅙` | web-1 unreachable | | critical |
-| server reachable | `󰄬` | web-1 reachable | | low |
+`A` is `Model.appLabel(name, uuid)`: Coolify's generated `:<branch>-<uuid>` suffix
+stripped (`storefront:main-h0wx…` → `storefront`), elided to 32, the uuid's
+first 8 characters when the name is empty or is Coolify's generated `<uuid>-<digits>`
+shape for an unnamed app (`xyhpwdxqu33omjgwuo6c7cjp-200537415987` → `xyhpwdxq`, which
+matches the log lines). One rule for every toast; the panel still shows the raw name. `dur` is `createdAt → finishedAt` ("1m 42s"), empty when either is
+unparseable; `sub` is the panel's `branch · commit message`. Headlines are elided at 72,
+bodies at 96 (the toast text box is 304 px). An empty body is omitted, which gives the
+compact one-line toast.
 
-Click action is `omarchy-launch-browser <deployment_url or resource url>`.
+| Event | Toggle | Glyph | Headline | Body | Urgency | Click |
+|---|---|---|---|---|---|---|
+| queued | deploymentQueued | `󰔟` | Queued A | sub | low | deployment |
+| started | deploymentStarted | `󰦖` | Building A | sub | low | deployment |
+| restarting (`restart_only`) | deploymentStarted | `󰦖` | Restarting A | server | low | deployment |
+| finished | deploymentFinished | `󰄬` | Deployed A | dur · branch | normal | deployment |
+| restarted (`restart_only`) | deploymentFinished | `󰄬` | Restarted A | dur | normal | deployment |
+| failed | deploymentFailed | `󰅙` | Deployment failed: A (Restart failed: A) | dur · click to open in Coolify (dur · branch without a page) | **critical** | deployment |
+| cancelled | deploymentFinished | `󰜺` | Cancelled A | | low | deployment |
+| resource stopped | resourceStateChanged | `󰅙` | A stopped | server · exited | normal | resource page, once topology has loaded |
+| resource degraded | resourceStateChanged | `󱎖` | A degraded | server · degraded | normal | resource |
+| resource recovered | resourceStateChanged | `󰄬` | A running | server · running | low | resource |
+| resources summary | resourceStateChanged | `󰅙` | N more resources stopped | server when all share one | normal | none |
+| server unreachable | serverReachability | `󰅙` | A unreachable | N resources down | **critical** | server |
+| server reachable | serverReachability | `󰄬` | A reachable | | low | server |
+
+The restart rows, `degraded`, `recovered` and the summary row are Phase 3 additions to
+the original eight (a `restart_only` deployment reading "Deployed" would be wrong;
+`degraded` is owed by the product brief; `recovered` pairs the resource events the way
+the server events pair and fires only after a stopped/degraded toast within the hour;
+the summary is the volume bound). A resource toast has no click target until the
+topology join has given the resource a project and environment (minutes after a start);
+the server toast's "N resources down" and the server-down correlation depend on the same
+join, so before it completes an unreachable toast has no body and per-resource stops are
+not folded into it.
+A "stopped" toast lands 0–120 s after the container stopped with the panel closed
+(Coolify's status sweep plus the resources interval). Under Do Not Disturb every toast
+goes to history unshown, except a critical one, which is sent as `omarchy-action` and
+shown (see `docs/architecture.md`). Critical toasts never expire, and the notifications
+plugin replays one still on screen after a shell restart.
+
+Click action is `omarchy-launch-browser <url>` with the URL from `Model.openUrl`, passed
+as the notifier's `--exec` tail; no URL, no `--exec`.
 
 ## Sizes and tokens used
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests and static gates. `--no-shell` skips the parts that need Omarchy/Qt (CI subset).
 set -uo pipefail
-root=$(cd "$(dirname "$0")/.." && pwd)
+root=${OMARIFY_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}   # override for gate self-tests on a scratch copy
 fail() { echo "check: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null || fail "missing tool: $1"; }
 need node; need jq
@@ -36,6 +36,25 @@ n=$(printf '%s\n' "$launch" | grep -c 'omarchy-launch-browser' || true)
 bad=$(printf '%s\n' "$launch" | grep -vcE 'Util\.execArgv\(\["omarchy-launch-browser", [A-Za-z_.]+\]\)' || true)
 [[ $bad -eq 0 ]] || fail "omarchy-launch-browser must be called as Util.execArgv([\"omarchy-launch-browser\", <one identifier>])"
 if grep -n 'fqdn' "$root"/*.qml; then fail "fqdn must never reach the UI"; fi
+
+# SR16 (Phase 3): the notification argv is built in Model.js, so the launcher and the
+# notifier keep a checked shape there too, and no QML file ever spawns the notifier.
+# "At most once" keeps a rollback of Model.js to Phase 2 green; comments are stripped first,
+# so no comment in Model.js may name either program.
+mjs=$(sed 's#//.*##' "$root/Model.js")
+ln=$(printf '%s\n' "$mjs" | grep -o 'omarchy-launch-browser' | wc -l)     # occurrences, not lines
+[[ $ln -le 1 ]] || fail "SR16: omarchy-launch-browser appears $ln times in Model.js; one --exec tail at most"
+if [[ $ln -eq 1 ]]; then
+  printf '%s\n' "$mjs" | grep 'omarchy-launch-browser' | grep -qE '"--exec", "omarchy-launch-browser", [A-Za-z_.]+\]' \
+    || fail "SR16: the launcher in Model.js must be the tail \"--exec\", \"omarchy-launch-browser\", <one identifier>]"
+fi
+nn=$(printf '%s\n' "$mjs" | grep -o 'omarchy-notification-send' | wc -l)
+[[ $nn -le 1 ]] || fail "SR16: omarchy-notification-send appears $nn times in Model.js; argv[0] once at most"
+if [[ $nn -eq 1 ]]; then
+  printf '%s\n' "$mjs" | grep 'omarchy-notification-send' | grep -qF '["omarchy-notification-send", ' \
+    || fail "SR16: the notifier in Model.js must open the argv literal [\"omarchy-notification-send\", "
+fi
+if grep -n 'omarchy-notification-send' "$root"/*.qml; then fail "SR16: the notifier is spawned only from Model.notifyPlan's argv, never from QML"; fi
 
 [[ ${1:-} == --no-shell ]] && { echo ok; exit 0; }
 
