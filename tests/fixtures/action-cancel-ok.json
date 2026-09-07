@@ -1,0 +1,1 @@
+{"_note": "hand-written from docs/coolify-api.md:179 (POST /deployments/{uuid}/cancel)", "message": "Deployment cancelled successfully.", "deployment_uuid": "vdyasty4cmgyoekplcarxpfh", "status": "cancelled-by-user"}
