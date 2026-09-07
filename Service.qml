@@ -55,7 +55,9 @@ Item {
   property var _lastPollAt: ({ deployments: 0, resources: 0, servers: 0, topology: 0, version: 0 })
   property var _baseline: ({ deployments: false, resources: false, servers: false, version: false })
   property bool _baselineDone: false
-  property bool _topologyFetched: false
+  property bool _topologyFetched: false   // the current cycle's queue has drained
+  property bool _topologyLoaded: false    // latched: the topology completed at least once since the last config change
+  property double _lastTopologyStepAt: 0
   property var _topologyQueue: []      // stage-2 descriptors, launched one per topologyStep tick
 
   // Scheduler state.
@@ -106,7 +108,7 @@ Item {
     tree: root._tree, byServer: root._byServer,
     failedUnacked: root._failedUnacked, lastPollAt: root._lastPollAt,
     busy: root._busy, openPanels: root._openPanels, baselineDone: root._baselineDone,
-    backoffSec: root._backoffSec, topologyFetched: root._topologyFetched
+    backoffSec: root._backoffSec, topologyFetched: root._topologyLoaded   // the latch: "loading" is a startup state, not a per-cycle one
   })
   readonly property var bar: Model.barState(root.snapshot)
 
@@ -257,7 +259,7 @@ Item {
     root._lastPollAt = { deployments: 0, resources: 0, servers: 0, topology: 0, version: 0 }
     root._baseline = { deployments: false, resources: false, servers: false, version: false }
     root._baselineDone = false
-    root._topologyFetched = false; root._topologyQueue = []
+    root._topologyFetched = false; root._topologyLoaded = false; root._lastTopologyStepAt = 0; root._topologyQueue = []
     root._backoff = {}; root._paused = false; root._backoffSec = 0; root._probeMode = false
     startupRamp.ticks = 0
     var interrupted = root._inflightAction !== null
@@ -410,7 +412,9 @@ Item {
     if (p.kind === "resources" || p.kind === "servers" || p.kind === "topology") root._rejoin()
     else if (p.kind === "deployments") root._joinDeployments()
     if (p.kind === "deployment") root._drainTerminal()
-    if (p.kind === "topology") root._topologyFetched = root._topologyQueue.length === 0   // the next block waits for topologyStep
+    // Only a successful block can mark the cycle complete: a failed /projects leaves the
+    // flag false so the 65 s kick, a panel open and the next cycle all retry it.
+    if (p.kind === "topology" && anyOk) { root._topologyFetched = root._topologyQueue.length === 0; if (root._topologyFetched) root._topologyLoaded = true }   // the next block waits for topologyStep
   }
 
   function _dispatch(req, r, kind) {
@@ -506,7 +510,7 @@ Item {
     root._projects.forEach(function(p) { if (!have["project:" + p.uuid]) q.push(Api.reqProject(p.uuid)) })
     root._topologySec = Model.topologyIntervalSec(root._cfg ? root._cfg.poll.topologySec : 600, root._projects.length, root._servers.length)
     root._topologyQueue = q
-    if (!q.length) root._topologyFetched = true
+    if (!q.length) { root._topologyFetched = true; root._topologyLoaded = true }
     // The first block waits for topologyStep like the rest: a burst of P + S blocks
     // right after /projects is what pushed a 60 s window past the budget.
   }
@@ -518,6 +522,7 @@ Item {
     var q = root._topologyQueue.slice()
     var d = q.shift()
     root._topologyQueue = q
+    root._lastTopologyStepAt = Date.now()
     root._launch(topologyReq, [d], 8)
   }
 
@@ -822,13 +827,18 @@ Item {
   // more than 2 topology requests.
   // The kick is skipped when a panel opening already drained the topology (with 10 s
   // spacing the first drain finishes before 65 s; the kick would run the fan-out twice).
-  Timer { id: topologyKick; interval: 65000; repeat: false; running: false; onTriggered: if (root._ready && !root._topologyFetched) root._pollTopology() }
+  Timer { id: topologyKick; interval: 65000; repeat: false; running: false; onTriggered: if (root._ready && !root._topologyLoaded) root._pollTopology() }
   // One block per 10 s while a panel is open and the topology is incomplete (six blocks
   // in the first minute on top of the ≈20/min panel-open idle rate stays under the 60
   // line); 40 s otherwise, so the closed-panel "under 20" bar is untouched. A running
   // Timer restarts on an interval change, so opening a panel mid-drain re-arms at 10 s.
-  Timer { id: topologyStep; interval: root._panelOpen && !root._topologyFetched ? 10000 : 40000; repeat: true; triggeredOnStart: false; running: root._timersOn && root._topologyQueue.length > 0
-          onTriggered: root._topologyStep() }
+  // The fast spacing applies to the first drain only (the latch), so the periodic
+  // refresh keeps the 40 s cadence. A Timer restarts on an interval change, so a panel
+  // opening or closing mid-drain launches at once when the last block is already older
+  // than the new interval (the _catchUp shape) instead of waiting a whole interval again.
+  Timer { id: topologyStep; interval: root._panelOpen && !root._topologyLoaded ? 10000 : 40000; repeat: true; triggeredOnStart: false; running: root._timersOn && root._topologyQueue.length > 0
+          onTriggered: root._topologyStep()
+          onIntervalChanged: if (root._topologyQueue.length && Date.now() - root._lastTopologyStepAt >= interval) root._topologyStep() }
 
   // First 30 s after the token is ready: retry kinds that have not answered yet every 2 s.
   Timer {

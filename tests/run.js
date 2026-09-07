@@ -570,6 +570,11 @@ test("Model.panelRows: the leftover fold reads 'Ungrouped · loading' until the 
   assert(!M.sameRows(rows0, rows1), "rowRev notices the title")
   const named = rows1.filter(r => r.type === "fold" && !/^Ungrouped/.test(r.title))
   assert(named.length > 0 && rows1.indexOf(f1) > rows1.indexOf(named[named.length - 1]), "Ungrouped stays last")
+  // The s.tree-empty fallback (the first seconds after a restart) takes the same title.
+  const early = M.panelRows(snap({ resources: M.normaliseResources(fx("resources.json")), tree: [], topologyFetched: false }), {})
+  eq(early.filter(r => r.type === "fold")[0].title, "Ungrouped · loading")
+  const later = M.panelRows(snap({ resources: M.normaliseResources(fx("resources.json")), tree: [], topologyFetched: true }), {})
+  eq(later.filter(r => r.type === "fold")[0].title, "Ungrouped")
 })
 
 test("Model.panelRows: group by project with folds, fold open/closed, Ungrouped last", () => {

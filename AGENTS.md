@@ -69,9 +69,10 @@ Status: **Phase 2 ("act") built on branch `phase-2-act`; Phase 1 ("see") merged.
   the component reference.
 - Rate limit is 200 req/min per token. Idle polling is ≈17/min (deployments 4 s,
   resources 60 s, servers 120 s, topology one block per 40 s from a ≥600 s cycle, or one
-  per 10 s while a panel is open and the topology is still incomplete), ≈36/min
+  per 10 s while a panel is open and the first drain has not completed; the 65 s
+  `/projects` kick is skipped once it has), ≈36/min
   with a deployment; no 60 s window may reach 20 with the panel closed (≈ 20 with a panel
-  open, measured). See the schedule in `docs/architecture.md`.
+  open, ≈ 24 during the first topology drain with a panel open, measured). See the schedule in `docs/architecture.md`.
 
 ## Layout
 
