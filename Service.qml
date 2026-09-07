@@ -72,6 +72,24 @@ Item {
   property int _openPanels: 0
   property bool _busy: false
 
+  // Actions (Phase 2). Pending is a service-owned map applied at render time (a value
+  // written into the store would be erased by the next poll). Set at launch, cleared on
+  // any non-2xx except a rate limit or a reap (the POST may have landed), resolved by
+  // _expirePending on the reaper tick. Never routed through _fail: an action's outcome
+  // is the status line and nothing else.
+  property var _pending: ({})          // uuid -> { verb, targetType, kind, name, since, baseStatus, deploymentUuid, stale }
+  property var _inflightAction: null   // the resolved action between launch and finish
+  property double _lastActionLaunchAt: 0
+  property var _actionLog: []          // bare timestamps, the _requestLog idiom; _requestLog itself is untouched
+  property int _ipcAbilityStreak: 0    // consecutive ability 403s from IPC-originated actions
+  property string _lastAbility: ""
+  property string _actionStatus: ""
+  property string _actionTone: "dim"
+  property var _lastAction: null
+  readonly property var pending: root._pending
+  readonly property string actionStatus: root._actionStatus
+  readonly property string actionTone: root._actionTone
+
   readonly property int _activeCount: root._deployments.filter(function(d) { return d.status === "queued" || d.status === "in_progress" }).length
   readonly property bool _deploying: root._activeCount > 0
   readonly property bool _panelOpen: root._openPanels > 0
@@ -242,8 +260,12 @@ Item {
     root._topologyFetched = false; root._topologyQueue = []
     root._backoff = {}; root._paused = false; root._backoffSec = 0; root._probeMode = false
     startupRamp.ticks = 0
+    var interrupted = root._inflightAction !== null
+    root._pending = {}; root._inflightAction = null; root._ipcAbilityStreak = 0; root._lastAbility = ""
+    root._actionStatus = ""; actionStatusTimer.stop()
     for (var i = 0; i < root._reqs.length; i++) root._reqs[i].kill()
     root._syncBusy()
+    if (interrupted) root._say("Action interrupted by a config change", "urgent")
   }
 
   function _applyStat(text) {
@@ -340,8 +362,9 @@ Item {
   Req { id: resourcesReq }
   Req { id: serversReq }
   Req { id: topologyReq }
+  Req { id: actionReq }                // single-flight; every action goes through _launch like a poll
 
-  readonly property var _reqs: [versionReq, deploymentsReq, deploymentReq, resourcesReq, serversReq, topologyReq]
+  readonly property var _reqs: [versionReq, deploymentsReq, deploymentReq, resourcesReq, serversReq, topologyReq, actionReq]
 
   function _syncBusy() { root._busy = root._reqs.some(function(p) { return p.running }) }
 
@@ -363,6 +386,7 @@ Item {
   function _finish(p, code, stdoutText, stderrText) {
     root._syncBusy()
     if (p.liveSeq !== p.seq) return
+    if (p === actionReq) { root._finishAction(p, code, stdoutText, stderrText); return }   // after the stale guard, never before
     var results = Model.splitResponses(stdoutText)
     if (results.length === 0) {
       root._fail(p.kind, Model.errorFor({ curlExit: code || 1, errmsg: stderrText, request: p.kind }), null)
@@ -545,12 +569,7 @@ Item {
       root._probeMode = true
       probeTimer.restart()
     } else if (e.kind === "ratelimited") {
-      var b = root._backoff; var attempt = ((b.ratelimited && b.ratelimited.attempt) || 0) + 1
-      root._backoffSec = Model.retryAfterSec(headers, attempt)
-      b.ratelimited = { until: Date.now() + root._backoffSec * 1000, attempt: attempt }; root._backoff = b
-      root._paused = true
-      pauseTimer.interval = root._backoffSec * 1000
-      pauseTimer.restart()
+      root._pauseFor(headers)
     } else if (e.kind !== "ability") {
       var bo = root._backoff; var a = ((bo[kind] && bo[kind].attempt) || 0) + 1
       bo[kind] = { until: Date.now() + (a <= 1 ? 30 : 60) * 1000, attempt: a }; root._backoff = bo
@@ -558,8 +577,19 @@ Item {
     console.warn("omarify " + kind + " failed: " + e.kind + " http=" + e.httpCode + " exit=" + e.curlExit + " " + e.detail)
   }
 
+  // 429 is instance-wide: pause every timer for Retry-After (clamped) or the ladder.
+  // Shared by _fail and _finishAction; touches nothing but the pause state.
+  function _pauseFor(headers) {
+    var b = root._backoff; var attempt = ((b.ratelimited && b.ratelimited.attempt) || 0) + 1
+    root._backoffSec = Model.retryAfterSec(headers, attempt)
+    b.ratelimited = { until: Date.now() + root._backoffSec * 1000, attempt: attempt }; root._backoff = b
+    root._paused = true
+    pauseTimer.interval = root._backoffSec * 1000
+    pauseTimer.restart()
+  }
+
   function _backoffUntil(kind) { var b = root._backoff[kind]; return b ? b.until : 0 }
-  function _maxBackoffUntil() { var m = 0; for (var k in root._backoff) m = Math.max(m, root._backoff[k].until); return m }
+  function _maxBackoffUntil() { var m = 0; for (var k in root._backoff) if (k !== "action") m = Math.max(m, root._backoff[k].until); return m }
 
   function _perKindEntry(kind) {
     if (!root._perKind[kind]) root._perKind[kind] = { lastAt: 0, lastCode: 0, lastMs: 0, lastBytes: 0, interval: 0, consecutiveFailures: 0, reaps: 0, lastReapAt: 0 }
@@ -577,6 +607,159 @@ Item {
     var now = Date.now()
     return root._requestLog.filter(function(t) { return now - t < 60000 }).length
   }
+
+  function _actionsLastMin() {
+    var now = Date.now()
+    return root._actionLog.filter(function(t) { return now - t < 60000 }).length
+  }
+
+  // ---- actions (Phase 2) ---------------------------------------------------------------
+  // act() is the only path to _launch for an action; the panel, both monitors and the
+  // IPC verbs call it. Model.actionRequest is the single applicability gate (SR3);
+  // Api builds the descriptor here because Model never imports Api.
+
+  function act(verb, uuid, fromIpc) {
+    if (!root._ready) return root._refuse(root._error && root._error.kind === "unsafe" ? "unsafe" : "notconfigured", verb, uuid)
+    if (root._probeMode) return root._refuse("probe", verb, uuid)
+    if (root._paused || root._requestsLastMin() >= 120) return root._refuse("ratelimited", verb, uuid)
+    var a = Model.actionRequest(root.snapshot, verb, uuid)
+    if (!a.ok) return root._refuse(a.why, verb, uuid)
+    if (fromIpc && root._ipcAbilityStreak >= 3) return root._refuse("ipcability", a.verb, uuid)
+    var why = Model.canAct(root._pending, root._inflightAction, a.uuid, Date.now(), root._lastActionLaunchAt)
+    if (why) return root._refuse(why, a.verb, a.uuid)
+    var req = root._descriptorFor(a)
+    if (!req) return root._refuse("notapplicable", a.verb, a.uuid)
+    root._inflightAction = { verb: a.verb, uuid: a.uuid, name: a.name, targetType: a.targetType, kind: a.kind, status: a.status, at: Date.now(), fromIpc: !!fromIpc }
+    root._setPending(root._inflightAction, null)
+    root._lastActionLaunchAt = Date.now()
+    var log = root._actionLog.filter(function(t) { return Date.now() - t < 60000 }); log.push(Date.now()); root._actionLog = log
+    if (!root._launch(actionReq, req, 10)) {
+      root._clearPending(a.uuid); root._inflightAction = null
+      return root._refuse("busy", a.verb, a.uuid)
+    }
+    console.log("omarify action launch " + a.verb + " " + a.uuid.slice(0, 8) + (fromIpc ? " ipc" : ""))
+    return "queued"
+  }
+
+  function _descriptorFor(a) {
+    switch (a.verb) {
+      case "deploy": return Api.reqDeploy(a.uuid, false)
+      case "redeploy": return Api.reqDeploy(a.uuid, true)
+      case "start": case "stop": case "restart": return Api.reqLifecycle(a.kind, a.uuid, a.verb)
+      case "cancel": return Api.reqCancel(a.uuid)
+      case "validate": return Api.reqValidate(a.uuid)
+      default: return null
+    }
+  }
+
+  // Local refusals: one status line each, no request, lastAction.result "refused".
+  // Returns the IPC token; the panel reads the status line.
+  function _refuse(why, verb, uuid) {
+    var u = String(uuid || ""), u8 = u.slice(0, 8), token = why
+    switch (why) {
+      case "notconfigured": root._say("Not configured", "urgent"); token = "not configured"; break
+      case "unsafe": root._say("Config is unsafe", "urgent"); token = "config unsafe"; break
+      case "probe": root._say("Token rejected", "urgent"); token = "token rejected"; break
+      case "ratelimited": root._say("Rate limited · backing off " + (root._paused ? root._backoffSec : 60) + "s", "urgent"); token = "rate limited"; break
+      case "invalid": case "unknown": {
+        var e = root._pending[u]
+        root._say("Coolify no longer has that " + (e && e.targetType ? e.targetType : "resource"), "urgent"); token = "unknown uuid " + u; break
+      }
+      case "notapplicable": root._say("Nothing to " + verb, "dim"); token = "not applicable " + verb + " " + u; break
+      case "already pending": {
+        var p = root._pending[u] || (root._inflightAction && root._inflightAction.uuid === u ? root._inflightAction : null)
+        root._say((p && p.name ? p.name : "It") + " is already " + Model.gerund(p ? p.verb : verb), "dim"); token = "already pending " + u; break
+      }
+      case "busy": root._say("Busy, try again", "dim"); token = "busy"; break
+      case "ipcability": root._say("Token lacks the " + (root._lastAbility || "required") + " permission", "urgent"); token = "refused: token lacks the " + (root._lastAbility || "required") + " permission"; break
+      default: root._say("Nothing to " + verb, "dim")
+    }
+    root._lastAction = { verb: String(verb || ""), uuid8: u8, code: 0, curlExit: 0, ms: 0, at: Date.now(), result: "refused" }
+    console.log("omarify action refuse " + why + " " + String(verb || "") + " " + u8)
+    return token
+  }
+
+  // Called from _finish after _syncBusy() and the liveSeq guard. Never _fail, never
+  // _error/_backoff/_probeMode/consecutiveFailures; the one escalation is a 429 pause.
+  function _finishAction(p, code, out, err) {
+    var a = root._inflightAction; root._inflightAction = null
+    if (!a) return
+    var rec = Model.splitResponses(out)[0] || { exit: code || 1, code: 0, body: "", timeMs: 0, bytes: 0, errmsg: "",
+                                               headers: { retryAfter: null, rateLimitRemaining: null, rateLimitLimit: null } }
+    var o = Model.actionOutcome(a.verb, a.targetType, rec)
+    root._record("action", rec)
+    var limited = !!(o.error && o.error.kind === "ratelimited")
+    if (limited) root._pauseFor(rec.headers)
+    if (o.ok) root._setPending(a, o.deploymentUuid)
+    else if (!limited) root._clearPending(a.uuid)
+    if (o.error && o.error.kind === "ability") {
+      root._lastAbility = Model.abilityOf(o.error.detail) || ""
+      if (a.fromIpc) root._ipcAbilityStreak += 1
+    } else if (o.ok) root._ipcAbilityStreak = 0
+    var result = o.ok ? (o.deploymentUuid ? "queued" : "ok") : (o.error ? (o.error.kind === "ability" ? "ability" : (o.error.kind === "offline" ? "offline" : "http")) : "http")
+    root._say(o.text, o.tone)
+    root._lastAction = { verb: a.verb, uuid8: a.uuid.slice(0, 8), code: rec.code, curlExit: rec.exit, ms: rec.timeMs, at: Date.now(), result: result }
+    console.log("omarify action " + a.verb + " " + rec.code + " exit=" + rec.exit + " " + rec.timeMs + "ms " + a.uuid.slice(0, 8))
+  }
+
+  function _say(text, tone) {
+    root._actionStatus = String(text || "")
+    root._actionTone = tone === "urgent" ? "urgent" : "dim"
+    actionStatusTimer.interval = tone === "urgent" ? 6000 : 2200
+    actionStatusTimer.restart()
+  }
+
+  function _copyPending() { var p = {}; for (var k in root._pending) p[k] = root._pending[k]; return p }
+
+  function _setPending(a, depUuid) {
+    var p = root._copyPending(); var ex = p[a.uuid]
+    p[a.uuid] = { verb: a.verb, targetType: a.targetType, kind: a.kind || null, name: a.name || "",
+                  since: ex ? ex.since : Date.now(),
+                  baseStatus: a.targetType === "resource" ? (a.status || null) : null,
+                  deploymentUuid: depUuid || (ex ? ex.deploymentUuid : null), stale: !!(ex && ex.stale) }
+    root._pending = p
+  }
+
+  function _clearPending(uuid) {
+    if (!Object.prototype.hasOwnProperty.call(root._pending, uuid)) return
+    var p = root._copyPending(); delete p[uuid]; root._pending = p
+  }
+
+  // The per-verb clear table (docs/architecture.md, Actions). Runs on the reaper tick;
+  // reassigns _pending only when an entry was dropped or flipped to stale.
+  function _expirePending(now) {
+    var keys = Object.keys(root._pending)
+    if (!keys.length) return
+    var p = root._copyPending(), changed = false
+    for (var i = 0; i < keys.length; i++) {
+      var u = keys[i], e = p[u], drop = false
+      var res = null, srv = null, dep = null
+      if (e.targetType === "resource") res = root._resources.filter(function(r) { return r.uuid === u })[0] || null
+      else if (e.targetType === "server") srv = root._servers.filter(function(s) { return s.uuid === u })[0] || null
+      else dep = root._deployments.filter(function(d) { return d.uuid === u })[0] || null
+      var gone = e.targetType === "resource" ? !res : (e.targetType === "server" ? !srv : !dep)
+      if (gone || now - e.since >= Model.PENDING_DROP_MS) drop = true
+      else if (e.verb === "deploy" || e.verb === "redeploy" || e.verb === "restart") {
+        if (e.deploymentUuid) {
+          drop = root._activeUuids.indexOf(e.deploymentUuid) >= 0 || root._recent.some(function(d) { return d.uuid === e.deploymentUuid })
+        } else if (e.kind === "application") {
+          drop = root._deployments.some(function(d) { return d.appUuid === u })
+        } else {
+          drop = (root._lastPollAt.resources || 0) > e.since + 2000
+        }
+      } else if (e.verb === "stop" || e.verb === "start") {
+        if (res.status !== e.baseStatus) drop = true
+        else if (!e.stale && now - e.since >= Model.PENDING_STALE_MS) { e.stale = true; p[u] = e; changed = true }
+      } else if (e.verb === "validate") {
+        drop = (root._lastPollAt.servers || 0) > e.since + 2000
+      }
+      // cancel: the deployment leaving the active list is the `gone` case above
+      if (drop) { delete p[u]; changed = true }
+    }
+    if (changed) root._pending = p
+  }
+
+  Timer { id: actionStatusTimer; interval: 2200; repeat: false; running: false; onTriggered: root._actionStatus = "" }
 
   // ---- scheduler -----------------------------------------------------------------------
 
@@ -657,7 +840,17 @@ Item {
         if (p.running && p.deadline > 0 && now > p.deadline) {
           p.kill()
           var pk = root._perKindEntry(p.kind)
-          pk.reaps += 1; pk.lastReapAt = now; pk.consecutiveFailures += 1
+          pk.reaps += 1; pk.lastReapAt = now
+          if (p === actionReq) {
+            // A reaped POST may have landed: pending stays, no backoff, no retry (SR7).
+            root._perKind = root._perKind
+            var ia = root._inflightAction; root._inflightAction = null
+            root._say("Sent, but Coolify did not answer", "urgent")
+            root._lastAction = { verb: ia ? ia.verb : "", uuid8: ia ? ia.uuid.slice(0, 8) : "", code: 0, curlExit: 0, ms: 0, at: now, result: "reaped" }
+            console.warn("omarify reaped action")
+            continue
+          }
+          pk.consecutiveFailures += 1
           root._perKind = root._perKind
           var bo = root._backoff; var a = ((bo[p.kind] && bo[p.kind].attempt) || 0) + 1
           bo[p.kind] = { until: now + (a <= 1 ? 30 : 60) * 1000, attempt: a }; root._backoff = bo
@@ -668,6 +861,7 @@ Item {
       var changed = false
       for (var id in root._panels) if (now - root._panels[id] > 5000) { delete root._panels[id]; changed = true }
       if (changed) { root._panels = root._panels; root._syncOpenPanels() }
+      root._expirePending(now)
       root._syncBusy()
     }
   }
@@ -678,6 +872,7 @@ Item {
     reaper.running = false
     deploymentsTimer.running = false; resourcesTimer.running = false; serversTimer.running = false; topologyTimer.running = false
     startupRamp.running = false; probeTimer.running = false; pauseTimer.running = false; topologyKick.running = false; topologyStep.running = false
+    actionStatusTimer.running = false
     tokenCmd.running = false
     statProc.running = false
     mkdirProc.running = false
@@ -710,13 +905,33 @@ Item {
       error: root._error ? { kind: root._error.kind, request: root._error.request, httpCode: root._error.httpCode, curlExit: root._error.curlExit } : null,
       warning: root._warning ? root._warning.kind : null,
       bar: { glyph: "U+" + root.bar.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: root.bar.dimmed, active: root.bar.active },
-      topologyQueue: root._topologyQueue.length
+      topologyQueue: root._topologyQueue.length,
+      lastAction: root._lastAction,
+      pending: Object.keys(root._pending).length,
+      pendingStale: Object.keys(root._pending).filter(function(k) { return !!root._pending[k].stale }).length,
+      actionsLastMin: root._actionsLastMin(),
+      inflightAction: root._inflightAction !== null
     }
+  }
+
+  // CLI verbs never confirm: typing the verb is the confirmation. The result is the
+  // stdout token and status.lastAction; omarchy-shell exits 0 on dispatch regardless.
+  function _ipcAct(verb, uuid) {
+    var u = String(uuid === undefined || uuid === null ? "" : uuid).trim()
+    if (!u) return "usage: " + verb + " <uuid>"
+    var r = root.act(verb, u, true)
+    var token = r === "queued" ? "queued " + verb + " " + u : r
+    console.log("omarify ipc " + verb + " " + u.slice(0, 8) + " -> " + token)
+    return token
   }
 
   IpcHandler {
     target: "io.github.danjonesio.omarify"
     function refresh(): string { root.refresh(); return "ok" }
     function status(): string { return JSON.stringify(root._status()) }
+    function deploy(uuid: string): string { return root._ipcAct("deploy", uuid) }
+    function restart(uuid: string): string { return root._ipcAct("restart", uuid) }
+    function stop(uuid: string): string { return root._ipcAct("stop", uuid) }
+    function start(uuid: string): string { return root._ipcAct("start", uuid) }
   }
 }
