@@ -56,16 +56,18 @@ Status: **Phase 2 ("act") built on branch `phase-2-act`; Phase 1 ("see") merged.
   Coolify page, built from the instance origin; never `fqdn`. No page → no Open button.
 - No compensating polls after an action. Pending is a service-owned map applied at
   render time and cleared per verb (deploy/redeploy/restart: the created deployment
-  appears; stop/start: the status string changes, "still pending" at 150 s; validate and
-  a service/database restart: the first poll after the action; everything: dropped at
-  300 s). An action's outcome is the status line and nothing else: never `_fail`, not
+  appears, or two deployments polls pass without it; stop/start: the status *state*
+  changes, "still pending" at 150 s; validate and a service/database restart: the first
+  poll after the action; everything: dropped at 300 s). Any non-2xx clears it; only a
+  reap keeps it. An action's outcome is the status line and nothing else: never `_fail`, not
   even its 429 arm (`_pauseFor` is the one escalation).
 - Look native or do not ship: only `qs.Ui` + `qs.Commons`, no hardcoded colours, sizes,
   radii or font families. `docs/design.md` is the spec, `docs/omarchy-shell-reference.md`
   the component reference.
 - Rate limit is 200 req/min per token. Idle polling is ≈17/min (deployments 4 s,
   resources 60 s, servers 120 s, topology one block per 40 s from a ≥600 s cycle), ≈36/min
-  with a deployment; no 60 s window may reach 20. See the schedule in `docs/architecture.md`.
+  with a deployment; no 60 s window may reach 20 with the panel closed (≈ 20 with a panel
+  open, measured). See the schedule in `docs/architecture.md`.
 
 ## Layout
 

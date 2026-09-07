@@ -41,7 +41,7 @@ Acceptance
   `quickshell log` output or in `ps`.
 - Panel passes the theme check in `docs/design.md`.
 
-## Phase 2 — act (built 2026-09-07 on `phase-2-act`; see `docs/plans/greedy-sprouting-quiche.build.md`)
+## Phase 2 — act (built 2026-09-07 on `phase-2-act`; see `docs/plans/phase-2-act.build.md`)
 
 Deliverables
 
@@ -54,8 +54,12 @@ Acceptance
 - Every action works from keyboard and mouse against a real resource and the row
   reflects Coolify's state within one status sweep plus one resources interval (≤ 90 s
   with the panel open) with "pending" in between. Validate is demonstrated as its
-  `write` ability message on the `read` + `deploy` token.
+  `write` ability message on the `read` + `deploy` token. Still unverified after the
+  build (see the record's needs-human rows): the mouse path, and Open on an
+  application, service or database row.
 - A token without `deploy` produces the exact ability message and nothing else breaks.
+  **Unverified by the build**: the run used a `read` + `deploy` token; the `write`
+  ability message on Validate exercised the same code path.
 - Cancel on an in-progress deployment returns `cancelled-by-user` and the row updates.
 
 ## Phase 3 — notify

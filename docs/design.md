@@ -212,8 +212,11 @@ its raw key-event function is never called.
 
 A single caption line between the hero and the callout, dim for 2.2 s after a success
 ("Deployment queued", "Stop requested", "Deployment cancelled", "Validation started")
-or a dim refusal ("api is already stopping", "Busy, try again"), urgent for 6 s after a
-failure ("Token lacks the deploy permission", "Coolify said: Deployment cannot be
+or a dim refusal ("api is already stopping", "Busy, try again", "Nothing to start" when a
+verb does not apply to the target, which the CLI can trigger), urgent for 6 s after a
+failure ("Coolify no longer has that resource|deployment|server" when the target vanished
+before dispatch, "Too many requests · try again shortly", "Rate limited · backing off Ns",
+"Not configured", "Config is unsafe", "Token rejected") or a Coolify ("Token lacks the deploy permission", "Coolify said: Deployment cannot be
 cancelled. Current status: finished", "Coolify's build queue is full", "Coolify is
 unreachable", "Sent, but Coolify did not answer"). Mirrors the tailscale
 `actionStatus`. A 403 ability from a poll still uses the callout; from an action it is
@@ -221,10 +224,23 @@ only this line.
 
 ### Footer
 
-Caption, dim: the three or four most useful keys for the current cursor position.
-Phase 1: hero "enter refresh · j down · r refresh · esc close"; fold row "j/k move ·
-enter fold · g group · r refresh · esc close"; leaf row "j/k move · g group · r refresh
-· esc close".
+Caption, dim: the most useful keys for the current cursor position (`Model.footerHints`;
+`o open` only when the row has a page URL).
+
+| Cursor position | Hint |
+|---|---|
+| hero | `enter refresh · j down · r refresh · esc close` |
+| fold row | `j/k move · enter fold · g group · r refresh · esc close` |
+| application row, running, collapsed | `enter actions · d deploy · s stop · t restart · o open` |
+| application row, stopped, collapsed | `enter actions · d deploy · s start · o open` |
+| service/database row, collapsed | `enter actions · s stop · t restart · o open` (or `s start`) |
+| any row expanded, a button focused | `h/l pick · enter run · esc collapse` |
+| any row expanded, focus back on the row | `l pick · enter collapse · esc collapse` |
+| server row | `enter actions · v validate · o open` |
+| active deployment row | `enter actions · x cancel · o open` |
+| terminal deployment row | `o open · j/k move` |
+| row with no action and no page | `j/k move · g group · r refresh · esc close` |
+| confirm open | `h/l pick · enter confirm · esc cancel` |
 
 ## Keyboard map
 
