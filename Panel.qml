@@ -227,6 +227,15 @@ Panel {
 
   function collapse() { root.expandedKey = ""; root.actionFocus = "" }
 
+  // A left click on a leaf row places the cursor and opens its action strip (or closes
+  // it when it is the expanded one); the strip's buttons are themselves clickable.
+  function clickRow(row) {
+    if (!row || root.confirmOpen) return
+    root.setCursor(row.key)
+    if (root.expandedKey === row.key) root.collapse()
+    else root.expand(row)
+  }
+
   // Every action funnels through here: a button click, a text key, or the confirm.
   // The service re-resolves the uuid and is the authoritative gate; this only decides
   // whether to confirm first and turns "open" into a browser launch.
@@ -348,9 +357,9 @@ Panel {
         if (t === "g" || t === "G") { root.setGroupBy(root.groupBy === "project" ? "server" : "project"); return }
         if (root.focusSection !== "list" || !root.currentRow) return
         var row = root.currentRow
-        // d / D is the one deliberate case-sensitive pair: D is redeploy without cache.
-        if (t === "d") root.runAction("deploy", row.key)
-        else if (t === "D") root.runAction("redeploy", row.key)
+        // d / D is the one deliberate case-sensitive pair: D is the no-cache rebuild.
+        if (t === "d") root.runAction("d", row.key)          // deploy a stopped app, redeploy a running one
+        else if (t === "D") root.runAction("D", row.key)          // rebuild without cache (confirms)
         else if (t === "s" || t === "S") root.runAction("s", row.key)
         else if (t === "t" || t === "T") root.runAction("restart", row.key)
         else if (t === "v" || t === "V") root.runAction("validate", row.key)
@@ -671,7 +680,7 @@ Panel {
               MouseArea {
                 anchors.fill: parent
                 acceptedButtons: Qt.LeftButton | Qt.RightButton
-                onClicked: function(m) { if (m.button === Qt.RightButton) root.openRow(rowDelegate.modelData); else root.setCursor(rowDelegate.modelData.key) }
+                onClicked: function(m) { if (m.button === Qt.RightButton) root.openRow(rowDelegate.modelData); else root.clickRow(rowDelegate.modelData) }
               }
               Row {
                 id: depRow
@@ -742,7 +751,7 @@ Panel {
               MouseArea {
                 anchors.fill: parent
                 acceptedButtons: Qt.LeftButton | Qt.RightButton
-                onClicked: function(m) { if (m.button === Qt.RightButton) root.openRow(rowDelegate.modelData); else root.setCursor(rowDelegate.modelData.key) }
+                onClicked: function(m) { if (m.button === Qt.RightButton) root.openRow(rowDelegate.modelData); else root.clickRow(rowDelegate.modelData) }
               }
               Row {
                 id: srvRow
@@ -802,7 +811,7 @@ Panel {
               MouseArea {
                 anchors.fill: parent
                 acceptedButtons: Qt.LeftButton | Qt.RightButton
-                onClicked: function(m) { if (m.button === Qt.RightButton) root.openRow(rowDelegate.modelData); else root.setCursor(rowDelegate.modelData.key) }
+                onClicked: function(m) { if (m.button === Qt.RightButton) root.openRow(rowDelegate.modelData); else root.clickRow(rowDelegate.modelData) }
               }
               Row {
                 id: resRow
