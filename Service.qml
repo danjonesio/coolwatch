@@ -105,6 +105,11 @@ Item {
   property var _notifyLog: []          // bare timestamps, the _actionLog idiom (filter-push-reassign)
   property var _suppressed: ({})       // rule -> cumulative count, for status
   property var _lastEvent: null
+  // The terminal fetch is now the only source of the Deployed/Failed toast, so a vanished
+  // uuid whose fetch fails (transport, 5xx, 429, reap) is re-queued at the back, twice at
+  // most; a 404 is final. The existing `deployment` backoff and pause gate the next launch.
+  property var _drainTries: ({})       // uuid -> attempts so far; deleted on success, 404 or give-up
+  property int _drainRetries: 0        // cumulative, for status
 
   readonly property int _activeCount: root._deployments.filter(function(d) { return d.status === "queued" || d.status === "in_progress" }).length
   readonly property bool _deploying: root._activeCount > 0
@@ -288,6 +293,7 @@ Item {
     root._pending = {}; root._inflightAction = null; root._ipcAbilityStreak = 0; root._lastAbility = ""
     root._actionStatus = ""; actionStatusTimer.stop()
     root._notifyQueue = []; root._actionAt = {}; root._lastNotified = {}; root._notifyLog = []; root._suppressed = {}; root._lastEvent = null
+    root._drainTries = {}; deploymentReq.inflight = null
     for (var i = 0; i < root._reqs.length; i++) root._reqs[i].kill()
     root._syncBusy()
     if (interrupted) root._say("Action interrupted by a config change", "urgent")
@@ -384,7 +390,7 @@ Item {
 
   Req { id: versionReq }
   Req { id: deploymentsReq }
-  Req { id: deploymentReq }
+  Req { id: deploymentReq; property var inflight: null }   // { uuid } of the terminal fetch in flight; p.arg stays the descriptor list
   Req { id: resourcesReq }
   Req { id: serversReq }
   Req { id: topologyReq }
@@ -416,17 +422,18 @@ Item {
     var results = Model.splitResponses(stdoutText)
     if (results.length === 0) {
       root._fail(p.kind, Model.errorFor({ curlExit: code || 1, errmsg: stderrText, request: p.kind }), null)
-      if (p.kind === "deployment") root._drainTerminal()
+      if (p.kind === "deployment") { root._drainDone(false, false); root._drainTerminal() }
       return
     }
-    var anyOk = false
+    var anyOk = false, gone = false
     for (var i = 0; i < results.length; i++) {
       if (i >= p.arg.length) break               // more trailers than blocks: malformed stream
       var r = results[i]
       root._record(p.kind, r)
       var e = Model.errorFor({ curlExit: r.exit, httpCode: r.code, body: r.body, errmsg: r.errmsg, headers: r.headers, request: p.kind })
       if (e) {
-        if (!(p.kind === "deployment" && r.code === 404)) root._fail(p.kind, e, r.headers)   // 404: vanished for good
+        if (p.kind === "deployment" && r.code === 404) gone = true                     // vanished for good: no _fail, no retry
+        else root._fail(p.kind, e, r.headers)
       } else {
         anyOk = true
         root._dispatch(p.arg[i], r, p.kind)
@@ -435,7 +442,7 @@ Item {
     if (anyOk) root._succeeded(p.kind)
     if (p.kind === "resources" || p.kind === "servers" || p.kind === "topology") root._rejoin()
     else if (p.kind === "deployments") root._joinDeployments()
-    if (p.kind === "deployment") root._drainTerminal()
+    if (p.kind === "deployment") { root._drainDone(anyOk, gone); root._drainTerminal() }
     // Only a successful block can mark the cycle complete: a failed /projects leaves the
     // flag false so the 65 s kick, a panel open and the next cycle all retry it.
     // (A failed stage-2 block after a successful /projects still counts: the tree is usable.)
@@ -628,7 +635,27 @@ Item {
     var q = root._terminalQueue.slice()
     var uuid = q.shift()
     root._terminalQueue = q
+    deploymentReq.inflight = { uuid: uuid }
     root._launch(deploymentReq, Api.reqDeployment(uuid), 6)
+  }
+
+  // The one place a terminal fetch's outcome is settled (called from _finish and the reaper
+  // before the next _drainTerminal). ok: dispatched; gone: 404. Anything else re-queues.
+  function _drainDone(ok, gone) {
+    var f = deploymentReq.inflight; deploymentReq.inflight = null
+    if (!f || !f.uuid) return
+    var t = root._drainTries
+    if (ok || gone) {
+      if (gone) console.log("omarify drain 404 " + Model.uuid8(f.uuid))
+      if (Object.prototype.hasOwnProperty.call(t, f.uuid)) { delete t[f.uuid]; root._drainTries = t }
+      return
+    }
+    var n = (t[f.uuid] || 0) + 1
+    if (n > 2) { delete t[f.uuid]; root._drainTries = t; console.log("omarify drain gave up " + Model.uuid8(f.uuid)); return }
+    t[f.uuid] = n; root._drainTries = t; root._drainRetries += 1
+    var q = root._terminalQueue.slice()
+    if (q.indexOf(f.uuid) < 0 && q.length < 20) q.push(f.uuid)      // the back: one failing uuid must not stall the healthy ones twice
+    root._terminalQueue = q
   }
 
   // ---- errors, backoff, pause, probe ---------------------------------------------------
@@ -969,7 +996,7 @@ Item {
           var bo = root._backoff; var a = ((bo[p.kind] && bo[p.kind].attempt) || 0) + 1
           bo[p.kind] = { until: now + (a <= 1 ? 30 : 60) * 1000, attempt: a }; root._backoff = bo
           console.warn("omarify reaped " + p.kind)
-          if (p.kind === "deployment") root._drainTerminal()
+          if (p.kind === "deployment") { root._drainDone(false, false); root._drainTerminal() }
         }
       }
       var changed = false
@@ -1018,6 +1045,7 @@ Item {
       topologyFetched: root._topologyFetched,
       topologyLoaded: root._topologyLoaded,
       terminalQueue: root._terminalQueue.length,
+      drainRetries: root._drainRetries,
       error: root._error ? { kind: root._error.kind, request: root._error.request, httpCode: root._error.httpCode, curlExit: root._error.curlExit } : null,
       warning: root._warning ? root._warning.kind : null,
       bar: { glyph: "U+" + root.bar.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: root.bar.dimmed, active: root.bar.active },
