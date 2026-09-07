@@ -286,8 +286,8 @@ All actions are `POST` with an empty JSON body (the lifecycle routes reject `GET
 
 | Panel action | Request | Optimistic state |
 |---|---|---|
-| Deploy | `POST /deploy?uuid=<uuid>` | resource `pending: deploy`; deployment appears on next poll |
-| Redeploy (no cache) | `POST /deploy?uuid=<uuid>&force=true` | same, after confirm |
+| Deploy (stopped application) / Redeploy (running application) | `POST /deploy?uuid=<uuid>` | caption `deploying…` / `redeploying…`; clears when the created deployment appears |
+| Rebuild without cache (`D`, keyboard only) | `POST /deploy?uuid=<uuid>&force=true` | `rebuilding…`, after confirm |
 | Restart | `POST /<kind>/{uuid}/restart` | `pending: restart` (apps: a deployment with `restart_only`) |
 | Stop | `POST /<kind>/{uuid}/stop` | `pending: stop`, after confirm |
 | Start | `POST /<kind>/{uuid}/start` | `pending: start` |

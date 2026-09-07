@@ -182,9 +182,11 @@ rows:
 - Kind hint on the right in caption dim: `app`, `service`, `postgres`, `redis`.
 
 Enter (or `l`) on a leaf row emits a non-selectable action strip under it. Actions that
-do not apply are hidden, not disabled: applications running → Deploy · Redeploy ·
-Restart · Stop · Open; applications stopped → Deploy · Redeploy · Start · Open;
-services and databases → Restart · Stop · Open or Start · Open; unknown state → Open;
+do not apply are hidden, not disabled: applications running → Redeploy · Restart ·
+Stop · Open (the no-cache rebuild is keyboard-only, `D`, and confirms); applications
+stopped → Deploy · Start · Open (Deploy brings it up, Redeploy rebuilds a running one;
+both are `POST /deploy`); services and databases → Restart · Stop · Open or Start ·
+Open; unknown state → Open;
 servers → Validate · Open; active deployments → Cancel · Open; terminal → Open. Open is
 present only when a Coolify page URL can be built (it arrives with the topology, about
 a minute after start).
@@ -231,7 +233,7 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 |---|---|
 | hero | `enter refresh · j down · r refresh · esc close` |
 | fold row | `j/k move · enter fold · g group · r refresh · esc close` |
-| application row, running, collapsed | `enter actions · d deploy · s stop · t restart · o open` |
+| application row, running, collapsed | `enter actions · d redeploy · s stop · t restart · o open` |
 | application row, stopped, collapsed | `enter actions · d deploy · s start · o open` |
 | service/database row, collapsed | `enter actions · s stop · t restart · o open` (or `s start`) |
 | any row expanded, a button focused | `h/l pick · enter run · esc collapse` |
@@ -259,8 +261,8 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 | Enter, Space | fold row | expand / collapse |
 | Enter, Space | hero | refresh |
 | Enter, Space | leaf row | expand (first button focused); on an expanded row: run the focused button, or collapse |
-| `d` | application row | deploy |
-| `D` | application row | redeploy without cache (confirm); the one case-sensitive pair |
+| `d` | application row | deploy a stopped application, redeploy a running one |
+| `D` | running application row | rebuild without cache (confirm); the one case-sensitive pair |
 | `s` / `S` | resource row | stop (confirm) or start, whichever applies |
 | `t` / `T` | resource row | restart |
 | `x` / `X` | active deployment row | cancel (confirm) (via `deleteRequested`; a no-op elsewhere) |
@@ -271,8 +273,9 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 | Tab / Shift+Tab | anywhere, confirm closed | neighbouring bar panel |
 | Esc | anywhere | close confirm, else collapse row, else close panel; one rung per 250 ms |
 
-Mouse: hover moves the cursor (never colours from `containsMouse`), click activates,
-right-click on a row opens it in the browser.
+Mouse: hover moves the cursor (never colours from `containsMouse`); a left click on a
+leaf row opens its action strip (or closes the open one) and the strip's buttons are
+clickable; a click on a fold row folds; right-click on a row opens it in the browser.
 
 ## Loading, empty and error states
 

@@ -45,7 +45,7 @@ var UI_SEGMENT = { application: "application", service: "service", database: "da
 // panel-closed resources interval (60 s) plus margin; every entry is dropped at 300 s.
 var PENDING_STALE_MS = 150 * 1000
 var PENDING_DROP_MS = 300 * 1000
-var GERUND = { deploy: "deploying", redeploy: "rebuilding", restart: "restarting", stop: "stopping", start: "starting", validate: "validating", cancel: "cancelling" }
+var GERUND = { deploy: "deploying", redeploy: "redeploying", rebuild: "rebuilding", restart: "restarting", stop: "stopping", start: "starting", validate: "validating", cancel: "cancelling" }
 var RUNNING_STATES = { running: true, starting: true, restarting: true, degraded: true }
 var STOPPED_STATES = { exited: true, paused: true }
 
@@ -744,8 +744,9 @@ function withPending(row, entry) {
 // THE table: which buttons a row offers, in order. Hidden, never disabled. Every other
 // applicability decision (keys, IPC, the confirm) is a lookup over this list (SR3).
 
-function act(id, label, destructive, confirm) { return { id: id, label: label, destructive: !!destructive, confirm: !!confirm } }
+function act(id, label, destructive, confirm, button) { return { id: id, label: label, destructive: !!destructive, confirm: !!confirm, button: button !== false } }
 var OPEN = act("open", "Open", false, false)
+function buttons(list) { return list.filter(function (a) { return a.button }) }
 
 function actionsFor(row) {
   if (!row) return []
@@ -753,7 +754,13 @@ function actionsFor(row) {
   if (row.type === "resource") {
     var running = !!RUNNING_STATES[row.state], stopped = !!STOPPED_STATES[row.state]
     if (running || stopped) {
-      if (row.kind === "application") { out.push(act("deploy", "Deploy")); out.push(act("redeploy", "Redeploy", true, true)) }
+      // One button follows the state: Deploy brings a stopped application up, Redeploy
+      // rebuilds a running one (both POST /deploy). The no-cache rebuild (`D`) is
+      // keyboard-only and confirms.
+      if (row.kind === "application") {
+        if (running) { out.push(act("redeploy", "Redeploy")); out.push(act("rebuild", "Rebuild", true, true, false)) }
+        else out.push(act("deploy", "Deploy"))
+      }
       if (running) { out.push(act("restart", "Restart")); out.push(act("stop", "Stop", true, true)) }
       else out.push(act("start", "Start"))
     }
@@ -766,10 +773,14 @@ function actionsFor(row) {
   return out
 }
 
-// `s` resolves to stop or start, `D` to redeploy; canonical ids pass through.
+// `s` resolves to stop or start, `d`/`deploy` to deploy or redeploy, `D` to rebuild;
+// canonical ids pass through.
 function actionFor(row, verb) {
   var list = actionsFor(row)
-  var want = verb === "s" ? (RUNNING_STATES[row && row.state] ? "stop" : "start") : (verb === "D" ? "redeploy" : verb)
+  var running = !!RUNNING_STATES[row && row.state]
+  var want = verb === "s" ? (running ? "stop" : "start")
+           : (verb === "d" || verb === "deploy") ? (running ? "redeploy" : "deploy")
+           : (verb === "D" ? "rebuild" : verb)
   for (var i = 0; i < list.length; i++) if (list[i].id === want) return list[i]
   return null
 }
@@ -807,14 +818,14 @@ function confirmCopy(verb, name) {
   var n = String(name || "it")
   switch (verb) {
     case "stop": return { message: "Stop " + n + "?", cancelText: "Cancel", confirmText: "Stop" }
-    case "redeploy": return { message: "Rebuild " + n + " without cache?", cancelText: "Cancel", confirmText: "Rebuild" }
+    case "rebuild": return { message: "Rebuild " + n + " without cache?", cancelText: "Cancel", confirmText: "Rebuild" }
     case "cancel": return { message: "Cancel the deployment of " + n + "?", cancelText: "Keep it", confirmText: "Cancel it" }
     default: return { message: gerund(verb) + " " + n + "?", cancelText: "Cancel", confirmText: "Confirm" }
   }
 }
 
 var TARGET_WORD = { resource: "resource", deployment: "deployment", server: "server" }
-var OK_TEXT = { deploy: "Deployment queued", redeploy: "Rebuild queued", stop: "Stop requested", start: "Start requested",
+var OK_TEXT = { deploy: "Deployment queued", redeploy: "Redeploy queued", rebuild: "Rebuild queued", stop: "Stop requested", start: "Start requested",
                 cancel: "Deployment cancelled", validate: "Validation started" }
 
 // One splitResponses record (or the service's empty-stream fallback) -> the status line.
@@ -873,7 +884,7 @@ function spliceActions(rows, ui) {
   var i = indexOfKey(rows, ui.expandedKey)
   if (i < 0) return rows
   var row = rows[i]
-  var list = actionsFor(row)
+  var list = buttons(actionsFor(row))
   if (!list.length) return rows
   rows.splice(i + 1, 0, { type: "actions", key: "act:" + row.key, parentKey: row.key, uuid: row.uuid,
                           targetType: targetTypeOf(row), name: row.name, actions: list })
@@ -983,8 +994,8 @@ function firstSelectableInSection(rows, title) {
   return -1
 }
 
-var HINT_KEY = { deploy: "d deploy", stop: "s stop", start: "s start", restart: "t restart", validate: "v validate", cancel: "x cancel", open: "o open" }
-var HINT_ORDER = ["deploy", "stop", "start", "restart", "validate", "cancel", "open"]
+var HINT_KEY = { deploy: "d deploy", redeploy: "d redeploy", stop: "s stop", start: "s start", restart: "t restart", validate: "v validate", cancel: "x cancel", open: "o open" }
+var HINT_ORDER = ["deploy", "redeploy", "stop", "start", "restart", "validate", "cancel", "open"]
 
 function footerHints(focusSection, row, ui) {
   ui = ui || {}
@@ -993,7 +1004,7 @@ function footerHints(focusSection, row, ui) {
   if (row && row.type === "fold") return "j/k move · enter fold · g group · r refresh · esc close"
   if (ui.expanded && ui.actionFocus) return "h/l pick · enter run · esc collapse"
   if (ui.expanded) return "l pick · enter collapse · esc collapse"
-  var list = actionsFor(row)
+  var list = buttons(actionsFor(row))
   if (!list.length) return "j/k move · g group · r refresh · esc close"
   var ids = {}
   list.forEach(function (a) { ids[a.id] = true })

@@ -49,10 +49,13 @@ Status: **Phase 2 ("act") built on branch `phase-2-act`; Phase 1 ("see") merged.
   `finished`, `failed`, `cancelled-by-user`.
 - Lifecycle endpoints are POST only. Restart of an application is itself a deployment
   (`restart_only: true`) and will appear in the deployments list.
-- Stop, Redeploy-without-cache and Cancel confirm (in the panel). Deploy, Restart, Start,
-  Validate do not. CLI verbs never confirm: typing the verb is the confirmation.
-- Deploy and Redeploy are offered on applications only (`POST /deploy` accepts services
-  and databases but that is Start under another name). Open targets the resource's
+- Stop, Rebuild-without-cache (`D`, keyboard only) and Cancel confirm (in the panel).
+  Deploy, Redeploy, Restart, Start, Validate do not. CLI verbs never confirm: typing the
+  verb is the confirmation.
+- One deploy button follows the state: Deploy on a stopped application, Redeploy on a
+  running one (both `POST /deploy`; `d` and IPC `deploy` resolve the same way). Only
+  applications get it (`POST /deploy` accepts services and databases but that is Start
+  under another name). A left click on a row opens its strip; the buttons are clickable. Open targets the resource's
   Coolify page, built from the instance origin; never `fqdn`. No page → no Open button.
 - No compensating polls after an action. Pending is a service-owned map applied at
   render time and cleared per verb (deploy/redeploy/restart: the created deployment

@@ -65,8 +65,9 @@ Phases are defined in `docs/roadmap.md`. Every feature below names the API it re
 
 - Row actions: Deploy, Redeploy (force, no cache), Restart, Stop or Start, Open in
   browser. Deployment rows: Cancel, Open. Server rows: Validate, Open.
-- Confirm dialog for Stop, Redeploy without cache and Cancel. Deploy and Redeploy on
-  applications only. Open goes to the resource's Coolify page (never `fqdn`).
+- Confirm dialog for Stop, Rebuild without cache (`D`) and Cancel. Deploy (stopped) or
+  Redeploy (running) on applications only, one button that follows the state; rows open
+  their action strip on click or Enter. Open goes to the resource's Coolify page (never `fqdn`).
 - Optimistic "pending" state on the row until Coolify's status catches up (or, for an
   action with no visible end state, until the first poll after it landed).
 - Full keyboard map (see `docs/design.md`).

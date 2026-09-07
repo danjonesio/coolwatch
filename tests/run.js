@@ -187,7 +187,7 @@ test("Api.reqDeploy: hostile uuid is percent-encoded in the query; force only wh
   const b = A.block(inst, TOK, d, 10)
   eq(count(b, "url = "), 1)
   assert(b.indexOf("uuid=a%2F..%2Fb%3Fx%3D1&force=true") >= 0, b)
-  eq(d.verb, "redeploy"); eq(d.kind, "action"); eq(d.method, "POST")
+  eq(d.verb, "rebuild"); eq(d.kind, "action"); eq(d.method, "POST")
   const plain = A.reqDeploy("u1", false)
   eq(plain.path, "/deploy?uuid=u1"); eq(plain.verb, "deploy")
 })
@@ -706,8 +706,12 @@ test("Model.openUrl: resource shape from topology, server shape, missing parts y
 
 test("Model.actionsFor: the applicability table; Open only with a url", () => {
   const ids = r => M.actionsFor(r).map(a => a.id).join(",")
-  eq(ids({ type: "resource", kind: "application", state: "running", url: "u" }), "deploy,redeploy,restart,stop,open")
-  eq(ids({ type: "resource", kind: "application", state: "exited", url: "u" }), "deploy,redeploy,start,open")
+  eq(ids({ type: "resource", kind: "application", state: "running", url: "u" }), "redeploy,rebuild,restart,stop,open")
+  eq(ids({ type: "resource", kind: "application", state: "exited", url: "u" }), "deploy,start,open")
+  const vis = M.actionsFor({ type: "resource", kind: "application", state: "running", url: "u" }).filter(a => a.button).map(a => a.id).join(",")
+  eq(vis, "redeploy,restart,stop,open", "rebuild is keyboard-only")
+  assert(M.actionsFor({ type: "resource", kind: "application", state: "running" }).find(a => a.id === "rebuild").confirm === true)
+  assert(M.actionsFor({ type: "resource", kind: "application", state: "running" }).find(a => a.id === "redeploy").confirm === false)
   eq(ids({ type: "resource", kind: "service", state: "restarting", url: "u" }), "restart,stop,open")
   eq(ids({ type: "resource", kind: "database", state: "paused", url: "u" }), "start,open")
   eq(ids({ type: "resource", kind: "application", state: "unknown", url: "u" }), "open")
@@ -719,13 +723,18 @@ test("Model.actionsFor: the applicability table; Open only with a url", () => {
   eq(ids({ type: "fold" }), ""); eq(ids(null), "")
   const stop = M.actionsFor({ type: "resource", kind: "application", state: "running" }).find(a => a.id === "stop")
   assert(stop.destructive && stop.confirm, "stop confirms")
-  assert(M.actionsFor({ type: "resource", kind: "application", state: "running" }).find(a => a.id === "deploy").confirm === false)
+  assert(M.actionsFor({ type: "resource", kind: "application", state: "exited" }).find(a => a.id === "deploy").confirm === false)
 })
 
-test("Model.actionFor: s resolves to stop or start; D to redeploy; unknown verb null", () => {
+test("Model.actionFor: s resolves to stop or start; d/deploy to deploy or redeploy; D to rebuild; unknown verb null", () => {
+  eq(M.actionFor({ type: "resource", kind: "application", state: "running" }, "d").id, "redeploy")
+  eq(M.actionFor({ type: "resource", kind: "application", state: "running" }, "deploy").id, "redeploy")
+  eq(M.actionFor({ type: "resource", kind: "application", state: "exited" }, "d").id, "deploy")
+  eq(M.actionFor({ type: "resource", kind: "application", state: "exited" }, "deploy").id, "deploy")
+  eq(M.actionFor({ type: "resource", kind: "application", state: "exited" }, "D"), null, "no rebuild on a stopped app")
   eq(M.actionFor({ type: "resource", kind: "application", state: "running" }, "s").id, "stop")
   eq(M.actionFor({ type: "resource", kind: "service", state: "exited" }, "s").id, "start")
-  eq(M.actionFor({ type: "resource", kind: "application", state: "running" }, "D").id, "redeploy")
+  eq(M.actionFor({ type: "resource", kind: "application", state: "running" }, "D").id, "rebuild")
   eq(M.actionFor({ type: "resource", kind: "service", state: "running" }, "D"), null)
   eq(M.actionFor({ type: "resource", kind: "application", state: "running" }, "bogus"), null)
   eq(M.actionFor({ type: "server" }, "validate").id, "validate")
@@ -769,17 +778,17 @@ test("Model.canAct: pending and inflight dedupe by uuid; inflight or 1 s spacing
 
 test("Model.confirmCopy: three verbs; every label fits the cell (SR8)", () => {
   eq(M.confirmCopy("stop", "api").message, "Stop api?")
-  eq(M.confirmCopy("redeploy", "api").message, "Rebuild api without cache?")
+  eq(M.confirmCopy("rebuild", "api").message, "Rebuild api without cache?")
   const c = M.confirmCopy("cancel", "api")
   eq(c.message, "Cancel the deployment of api?"); eq(c.cancelText, "Keep it"); eq(c.confirmText, "Cancel it")
-  for (const v of ["stop", "redeploy", "cancel"]) {
+  for (const v of ["stop", "rebuild", "cancel"]) {
     const x = M.confirmCopy(v, "api")
     assert(x.cancelText.length <= 9 && x.confirmText.length <= 9, v + " labels fit")
   }
 })
 
 test("Model.pendingVerb / gerund: seven verbs with and without stale", () => {
-  const want = { deploy: "deploying", redeploy: "rebuilding", restart: "restarting", stop: "stopping", start: "starting", validate: "validating", cancel: "cancelling" }
+  const want = { deploy: "deploying", redeploy: "redeploying", rebuild: "rebuilding", restart: "restarting", stop: "stopping", start: "starting", validate: "validating", cancel: "cancelling" }
   for (const v in want) {
     eq(M.gerund(v), want[v])
     eq(M.pendingVerb(v, false), want[v] + "…")
@@ -809,7 +818,8 @@ test("Model.actionOutcome: every fixture maps to its exact line and tone (SR4, S
   const o = (verb, tt, code, name, exit) => M.actionOutcome(verb, tt, rec(code, name ? fixture(name) : "", exit))
   let r = o("deploy", "resource", 200, "action-deploy-ok.json")
   assert(r.ok); eq(r.text, "Deployment queued"); eq(r.tone, "dim"); eq(r.deploymentUuid, "n3wd3pl0ym3ntuu1dxk2q9pr"); eq(r.error, null)
-  r = o("redeploy", "resource", 200, "action-deploy-ok.json"); eq(r.text, "Rebuild queued")
+  r = o("redeploy", "resource", 200, "action-deploy-ok.json"); eq(r.text, "Redeploy queued")
+  r = o("rebuild", "resource", 200, "action-deploy-ok.json"); eq(r.text, "Rebuild queued")
   r = o("deploy", "resource", 200, "action-deploy-queue-full.json")
   assert(!r.ok); eq(r.text, "Coolify's build queue is full"); eq(r.tone, "urgent"); eq(r.deploymentUuid, null); assert(r.error && r.error.kind !== "ratelimited", "never pauses the instance")
   r = o("stop", "resource", 200, "action-stop-ok.json"); assert(r.ok); eq(r.text, "Stop requested"); eq(r.deploymentUuid, null)
@@ -850,7 +860,7 @@ test("Model.panelRows with expandedKey: the actions row follows its parent, is n
   const rows = M.panelRows(s, { expandedKey: "res:" + APP })
   const i = M.indexOfKey(rows, "res:" + APP)
   eq(rows[i + 1].type, "actions"); eq(rows[i + 1].key, "act:res:" + APP); eq(rows[i + 1].parentKey, "res:" + APP); eq(rows[i + 1].uuid, APP)
-  eq(rows[i + 1].actions.map(a => a.id).join(","), "deploy,redeploy,restart,stop,open")
+  eq(rows[i + 1].actions.map(a => a.id).join(","), "redeploy,restart,stop,open")
   eq(rows[i + 1].targetType, "resource"); assert(rows[i + 1].name.length > 0)
   assert(M.nextSelectable(rows, i, 1) !== i + 1, "actions row is skipped by j")
   assert(M.nextSelectable(rows, i + 2, -1) !== i + 1, "and by k")
@@ -867,7 +877,7 @@ test("Model.panelRows with expandedKey: the actions row follows its parent, is n
   assert(!M.sameRows(a1, b), "rowRev changes when the action id list changes")
   const noUrl = actSnap({ instance: Object.assign({}, s.instance, { url: "" }) })
   const c = M.panelRows(noUrl, { expandedKey: "res:" + APP })
-  eq(c[M.indexOfKey(c, "res:" + APP) + 1].actions.map(a => a.id).join(","), "deploy,redeploy,restart,stop", "no Open without a url")
+  eq(c[M.indexOfKey(c, "res:" + APP) + 1].actions.map(a => a.id).join(","), "redeploy,restart,stop", "no Open without a url")
   assert(!M.sameRows(a1, c), "url presence is in rowRev")
 })
 
@@ -891,11 +901,11 @@ test("Model.GLYPHS: the pending dot and every glyph a pending row can emit are i
 test("Model.footerHints: every cursor position; no o open without a url", () => {
   eq(M.footerHints("hero", null), "enter refresh · j down · r refresh · esc close")
   eq(M.footerHints("list", { type: "fold" }), "j/k move · enter fold · g group · r refresh · esc close")
-  eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }), "enter actions · d deploy · s stop · t restart · o open")
+  eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }), "enter actions · d redeploy · s stop · t restart · o open")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "exited", url: "u" }), "enter actions · d deploy · s start · o open")
   eq(M.footerHints("list", { type: "resource", kind: "service", state: "running", url: "u" }), "enter actions · s stop · t restart · o open")
   eq(M.footerHints("list", { type: "resource", kind: "database", state: "exited", url: "u" }), "enter actions · s start · o open")
-  eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "" }), "enter actions · d deploy · s stop · t restart")
+  eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "" }), "enter actions · d redeploy · s stop · t restart")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }, { expanded: true, actionFocus: "stop" }), "h/l pick · enter run · esc collapse")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }, { expanded: true, actionFocus: "" }), "l pick · enter collapse · esc collapse")
   eq(M.footerHints("list", { type: "server", url: "u" }), "enter actions · v validate · o open")

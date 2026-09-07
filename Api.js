@@ -91,7 +91,7 @@ var GROUP = { application: "applications", service: "services", database: "datab
 var LIFECYCLE = { start: true, stop: true, restart: true }
 
 function reqDeploy(uuid, force) {
-  return { kind: "action", verb: force ? "redeploy" : "deploy", target: uuid, method: "POST",
+  return { kind: "action", verb: force ? "rebuild" : "deploy", target: uuid, method: "POST",
            path: "/deploy?uuid=" + seg(uuid) + (force ? "&force=true" : "") }
 }
 function reqLifecycle(kind, uuid, verb) {

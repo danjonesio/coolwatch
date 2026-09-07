@@ -645,8 +645,8 @@ Item {
 
   function _descriptorFor(a) {
     switch (a.verb) {
-      case "deploy": return Api.reqDeploy(a.uuid, false)
-      case "redeploy": return Api.reqDeploy(a.uuid, true)
+      case "deploy": case "redeploy": return Api.reqDeploy(a.uuid, false)
+      case "rebuild": return Api.reqDeploy(a.uuid, true)
       case "start": case "stop": case "restart": return Api.reqLifecycle(a.kind, a.uuid, a.verb)
       case "cancel": return Api.reqCancel(a.uuid)
       case "validate": return Api.reqValidate(a.uuid)
@@ -745,7 +745,7 @@ Item {
       else dep = root._deployments.filter(function(d) { return d.uuid === u })[0] || null
       var gone = e.targetType === "resource" ? !res : (e.targetType === "server" ? !srv : !dep)
       if (gone || now - e.since >= Model.PENDING_DROP_MS) drop = true
-      else if (e.verb === "deploy" || e.verb === "redeploy" || e.verb === "restart") {
+      else if (e.verb === "deploy" || e.verb === "redeploy" || e.verb === "rebuild" || e.verb === "restart") {
         if (e.deploymentUuid) {
           // Seen in the active list or in recent; or two deployments polls have run since the
           // action without listing it (a deployment shorter than the poll interval): the
