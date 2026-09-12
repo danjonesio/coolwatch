@@ -161,7 +161,8 @@ Item {
     tree: root._tree, byServer: root._byServer,
     failedUnacked: root._failedUnacked, lastPollAt: root._lastPollAt,
     busy: root._busy, openPanels: root._openPanels, baselineDone: root._baselineDone,
-    backoffSec: root._backoffSec, topologyFetched: root._topologyLoaded   // the latch: "loading" is a startup state, not a per-cycle one
+    backoffSec: root._backoffSec, topologyFetched: root._topologyLoaded,   // the latch: "loading" is a startup state, not a per-cycle one
+    tags: root._tags, sensitive: root._sensitive                            // Phase 4: names only; never log text
   })
   readonly property var bar: Model.barState(root.snapshot)
 
@@ -178,6 +179,7 @@ Item {
     root.acknowledgeFailures()
     if (root._ready) {
       root._prime("stale")
+      root.fetchTags()                                       // Phase 4: the TAGS fold exists only once the names are known; at most once a minute, never on a timer
       if (!root._topologyFetched && !root._topologyQueue.length && !topologyReq.running) root._pollTopology()
     }
   }
@@ -904,7 +906,7 @@ Item {
     root._launch(historyReq, Api.reqHistory(appUuid, skip), 12)
   }
 
-  // On TAGS fold open, at most once a minute; never on a timer.
+  // On panel open, at most once a minute; never on a timer (the fold cannot bootstrap itself).
   function fetchTags() {
     if (!root._ready || Date.now() - root._tagsAt < 60000) return
     if (serviceReq.running || serviceReq.stopping) return

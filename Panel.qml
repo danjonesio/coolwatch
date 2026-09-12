@@ -1036,6 +1036,7 @@ Panel {
               : rowDelegate.rowType === "deployment" ? deploymentComp
               : rowDelegate.rowType === "server" ? serverComp
               : rowDelegate.rowType === "resource" ? resourceComp
+              : rowDelegate.rowType === "tag" ? tagComp
               : rowDelegate.rowType === "actions" ? actionsComp
               : null
           }
@@ -1311,6 +1312,59 @@ Panel {
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   elide: Text.ElideRight
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+              }
+            }
+          }
+
+          // ---- tag row (Phase 4): name · "deploying…" while pending. No page in Coolify, so no Open.
+          Component {
+            id: tagComp
+            CursorSurface {
+              implicitHeight: tagRow.implicitHeight + Style.spacing.rowPaddingX
+              hasCursor: rowDelegate.selected && !(root.actionFocus && root.expandedKey === rowDelegate.modelData.key)
+              current: rowDelegate.selected && !!root.actionFocus && root.expandedKey === rowDelegate.modelData.key
+              foreground: root.foreground
+              accent: root.accent
+              HoverHandler { onHoveredChanged: if (hovered) root.hoverCursor(rowDelegate.modelData.key) }
+              MouseArea { anchors.fill: parent; onClicked: root.clickRow(rowDelegate.modelData) }
+              Row {
+                id: tagRow
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: Style.space(8) + Style.space(14)
+                anchors.rightMargin: Style.space(8)
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.space(8)
+                Text {
+                  width: Style.space(22)
+                  textFormat: Text.PlainText
+                  text: rowDelegate.modelData.dot || Model.G.foldClosed
+                  color: rowDelegate.modelData.pendingVerb ? root.toneColor(rowDelegate.modelData.tone) : root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  horizontalAlignment: Text.AlignHCenter
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                  width: parent.width - Style.space(22) - tagSub.implicitWidth - parent.spacing * 2
+                  textFormat: Text.PlainText
+                  text: rowDelegate.modelData.name || ""
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                  elide: Text.ElideRight
+                  anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                  id: tagSub
+                  textFormat: Text.PlainText
+                  text: rowDelegate.modelData.sub || ""
+                  color: rowDelegate.modelData.pendingVerb ? root.toneColor(rowDelegate.modelData.tone) : root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
                   anchors.verticalCenter: parent.verticalCenter
                 }
               }

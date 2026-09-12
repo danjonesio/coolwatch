@@ -1574,10 +1574,12 @@ test("Model.actionRequest: nav verbs never reach act(); the tag arm keys on the 
 test("Model.actionOutcome deployTag: per-item queued/refused counts and every deployment uuid; queue_full is a refusal (SR35)", () => {
   const rec = { exit: 0, code: 200, body: fixture("action-deploy-tag-ok.json"), errmsg: "", headers: null }
   const o = M.actionOutcome("deployTag", "tag", rec)
-  assert(o.ok); eq(o.queued, 1); eq(o.refused, 1); eq(o.deploymentUuids.join(","), "t4gdep1oymentuuid000001"); eq(o.deploymentUuid, "t4gdep1oymentuuid000001")
+  assert(o.ok); eq(o.queued, 1); eq(o.refused, 1); eq(o.deploymentUuids.join(","), "c6vkvflj6qdkvw5k9sicwssh"); eq(o.deploymentUuid, "c6vkvflj6qdkvw5k9sicwssh")
   eq(o.text, "1 queued, 1 refused (queue full)"); eq(o.tone, "urgent"); eq(o.error, null)
   const all = M.actionOutcome("deployTag", "tag", { exit: 0, code: 200, body: JSON.stringify({ deployments: [{ message: "ok", resource_uuid: "r", deployment_uuid: "d1abc" }] }), errmsg: "", headers: null })
-  eq(all.text, "1 queued"); eq(all.tone, "dim"); eq(all.refused, 0)
+  eq(all.text, "1 queued", "the documented `deployments` key still reads"); eq(all.tone, "dim"); eq(all.refused, 0)
+  const real = M.actionOutcome("deployTag", "tag", { exit: 0, code: 200, body: JSON.stringify({ details: [{ resource_uuid: "r", deployment_uuid: "d1abc" }], message: ["queued."] }), errmsg: "", headers: null })
+  eq(real.text, "1 queued", "the live `details` shape"); eq(real.deploymentUuid, "d1abc")
   const none = M.actionOutcome("deployTag", "tag", { exit: 0, code: 200, body: JSON.stringify({ deployments: [] }), errmsg: "", headers: null })
   eq(none.text, "0 queued"); assert(none.ok)
   eq(M.actionOutcome("deployTag", "tag", { exit: 0, code: 403, body: fixture("error-403-ability.json"), errmsg: "", headers: null }).text, "Token lacks the deploy permission")
@@ -1594,7 +1596,7 @@ test("Model.panelRows: TAGS fold after RESOURCES only when tags exist, on both r
   const fold = rows[M.indexOfKey(rows, "fold:tags")]
   eq(fold.type, "fold"); eq(fold.open, false, "closed by default"); eq(fold.count, 2)
   eq(rows.filter(r => r.type === "tag").length, 0, "folded: no tag rows")
-  const open = M.panelRows(s, { folded: { "fold:tags": false } })
+  const open = M.panelRows(s, { folded: { "fold:tags": true } })
   const tagRows = open.filter(r => r.type === "tag")
   eq(tagRows.length, 2); eq(tagRows[1].name, "production-landing"); eq(tagRows[1].key, "tag:" + tags[1].uuid)
   const fi = M.indexOfKey(open, "fold:tags")
@@ -1603,11 +1605,11 @@ test("Model.panelRows: TAGS fold after RESOURCES only when tags exist, on both r
   const empty = actSnap({ resources: [], tree: [], byServer: {}, tags })
   assert(M.indexOfKey(M.panelRows(empty, {}), "sec:tags") >= 0, "the empty-resources path carries it too")
   const pending = {}; pending[tags[1].uuid] = { verb: "deployTag", since: 0, stale: false }
-  const pend = M.panelRows(s, { folded: { "fold:tags": false }, pending })
+  const pend = M.panelRows(s, { folded: { "fold:tags": true }, pending })
   const pr = pend[M.indexOfKey(pend, "tag:" + tags[1].uuid)]
   assert(pr.pendingVerb.length > 0, "pending decorates the tag row"); eq(pr.tone, "accent")
   assert(!M.sameRows(open, pend), "rowRev sees the pending flip")
-  const withStrip = M.panelRows(s, { folded: { "fold:tags": false }, expandedKey: "tag:" + tags[1].uuid })
+  const withStrip = M.panelRows(s, { folded: { "fold:tags": true }, expandedKey: "tag:" + tags[1].uuid })
   const ti = M.indexOfKey(withStrip, "tag:" + tags[1].uuid)
   eq(withStrip[ti + 1].type, "actions"); eq(withStrip[ti + 1].actions.map(a => a.id).join(","), "deployTag"); eq(withStrip[ti + 1].targetType, "tag")
   for (const r of open) for (const g of [r.dot, r.glyph]) if (g) assert(M.GLYPHS.indexOf(g) >= 0, "glyph in allowlist")

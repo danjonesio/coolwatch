@@ -1224,14 +1224,17 @@ function actionOutcome(verb, targetType, rec) {
   var body = parseJson(rec.body)
   var v = body.ok && body.value && typeof body.value === "object" ? body.value : {}
   if (verb === "deployTag") {
-    // Phase 4: one entry per tagged resource; a full queue is a per-item refusal inside the
-    // 200, reported as a count, never as a bare success (SR35).
-    var items = Array.isArray(v.deployments) ? v.deployments : []
+    // Phase 4: one entry per tagged resource. Live on 4.3.19 the body is
+    // {details: [{resource_uuid, deployment_uuid}], message: [..]} (docs/coolify-api.md said
+    // `deployments`; both are read). An item without a deployment uuid, a 429 status or a
+    // queue-full message is a refusal, reported as a count, never as a bare success (SR35).
+    var items = Array.isArray(v.details) ? v.details : (Array.isArray(v.deployments) ? v.deployments : [])
     items.forEach(function (it) {
       if (!it || typeof it !== "object") return
-      if (Number(it.status) === 429 || /queue_full/i.test(String(it.message || ""))) { out.refused += 1; return }
+      var dep = typeof it.deployment_uuid === "string" && UUID_RE.test(it.deployment_uuid) ? it.deployment_uuid : null
+      if (!dep || Number(it.status) === 429 || /queue_full|queue is full/i.test(String(it.message || ""))) { out.refused += 1; return }
       out.queued += 1
-      if (typeof it.deployment_uuid === "string" && UUID_RE.test(it.deployment_uuid)) out.deploymentUuids.push(it.deployment_uuid)
+      out.deploymentUuids.push(dep)
     })
     out.ok = true; out.error = null; out.tone = out.refused ? "urgent" : "dim"
     out.deploymentUuid = out.deploymentUuids[0] || null
@@ -1311,7 +1314,7 @@ function panelRows(s, ui) {
     if (!tags.length) return
     rows.push({ type: "separator", key: "sep:" + (++sep) })
     rows.push({ type: "section", key: "sec:tags", title: "TAGS", control: null })
-    var open = folded["fold:tags"] === false
+    var open = folded["fold:tags"] === true      // closed by default, so for this one fold the flag means "opened" (toggleFold flips undefined -> true)
     rows.push({ type: "fold", key: "fold:tags", title: "Tags", open: open, count: tags.length, indent: 0 })
     if (open) tags.forEach(function (t) { rows.push(pend(tagRow(t))) })
   }
