@@ -1,0 +1,194 @@
+{
+  "_note": "hand-authored from the shape of a real failed build (no real hosts, images, or repo paths): entry 0 has no `order`, the failing step is a hidden stderr entry with a 250-char command ending in pull', the visible summary follows, then 11 hidden stack-trace lines; batch is non-monotonic",
+  "status": "failed",
+  "entries": [
+    {
+      "command": null,
+      "output": "Docker 29.8.0 with BuildKit detected on deployment server (example-host).",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:00Z",
+      "hidden": false,
+      "batch": 1
+    },
+    {
+      "command": "docker inspect --format '{{.State.Status}}' example-container",
+      "output": "running",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:01Z",
+      "hidden": true,
+      "batch": 1,
+      "order": 2
+    },
+    {
+      "command": null,
+      "output": "Pulling & building required images.",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:02Z",
+      "hidden": false,
+      "batch": 1,
+      "order": 3
+    },
+    {
+      "command": "docker login -u '****' -p '****' example.invalid",
+      "output": "Login Succeeded",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:03Z",
+      "hidden": true,
+      "batch": 2,
+      "order": 4
+    },
+    {
+      "command": null,
+      "output": "Starting deployment of exampleapp:main to example-host.",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:04Z",
+      "hidden": false,
+      "batch": 1,
+      "order": 5
+    },
+    {
+      "command": "docker network inspect example-net",
+      "output": "[{\"Name\":\"example-net\"}]",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:05Z",
+      "hidden": true,
+      "batch": 1,
+      "order": 6
+    },
+    {
+      "command": "docker exec exampledeployuuid000000000 bash -c 'docker compose --project-name exampleappuuid0000000000 --project-directory /artifacts/exampledeployuuid000000000 --env-file /artifacts/exampledeployuuid000000000/.env --profile build --ansi never pull'",
+      "output": "Image example.invalid/img:tag\nError failed to resolve reference \"example.invalid/img:tag\": not found",
+      "type": "stderr",
+      "timestamp": "2026-09-08T11:02:06Z",
+      "hidden": true,
+      "batch": 8,
+      "order": 7
+    },
+    {
+      "command": null,
+      "output": "Deployment failed: Rolling update failed (App\\Exceptions\\DeploymentException): Failed to start container: Command execution failed (exit code 1): docker exec exampledeployuuid000000000 bash -c 'docker c\u2026",
+      "type": "stderr",
+      "timestamp": "2026-09-08T11:02:07Z",
+      "hidden": false,
+      "batch": 1,
+      "order": 8
+    },
+    {
+      "command": null,
+      "output": "#0 /var/www/html/app/Jobs/ApplicationDeploymentJob.php(601): App\\Jobs\\ApplicationDeploymentJob->rolling_update()",
+      "type": "stderr",
+      "timestamp": "2026-09-08T11:02:08Z",
+      "hidden": true,
+      "batch": 9,
+      "order": 9
+    },
+    {
+      "command": null,
+      "output": "#1 /var/www/html/app/Jobs/ApplicationDeploymentJob.php(388): App\\Jobs\\ApplicationDeploymentJob->deploy_docker_compose_buildpack()",
+      "type": "stderr",
+      "timestamp": "2026-09-08T11:02:09Z",
+      "hidden": true,
+      "batch": 9,
+      "order": 10
+    },
+    {
+      "command": null,
+      "output": "#2 /var/www/html/vendor/laravel/framework/src/Illuminate/Container/BoundMethod.php(36): App\\Jobs\\ApplicationDeploymentJob->handle()",
+      "type": "stderr",
+      "timestamp": "2026-09-08T11:02:10Z",
+      "hidden": true,
+      "batch": 9,
+      "order": 11
+    },
+    {
+      "command": null,
+      "output": "#3 [internal function]: Illuminate\\Container\\BoundMethod::Illuminate\\Container\\{closure}()",
+      "type": "stderr",
+      "timestamp": "2026-09-08T11:02:11Z",
+      "hidden": true,
+      "batch": 9,
+      "order": 12
+    },
+    {
+      "command": null,
+      "output": "#4 /var/www/html/vendor/laravel/framework/src/Illuminate/Container/Util.php(43): call_user_func_array()",
+      "type": "stderr",
+      "timestamp": "2026-09-08T11:02:12Z",
+      "hidden": true,
+      "batch": 9,
+      "order": 13
+    },
+    {
+      "command": null,
+      "output": "#5 /var/www/html/vendor/laravel/framework/src/Illuminate/Container/BoundMethod.php(95): Illuminate\\Container\\Util::unwrapIfClosure()",
+      "type": "stderr",
+      "timestamp": "2026-09-08T11:02:13Z",
+      "hidden": true,
+      "batch": 9,
+      "order": 14
+    },
+    {
+      "command": null,
+      "output": "#6 /var/www/html/vendor/laravel/framework/src/Illuminate/Container/BoundMethod.php(35): Illuminate\\Container\\BoundMethod::callBoundMethod()",
+      "type": "stderr",
+      "timestamp": "2026-09-08T11:02:14Z",
+      "hidden": true,
+      "batch": 9,
+      "order": 15
+    },
+    {
+      "command": null,
+      "output": "#7 /var/www/html/vendor/laravel/framework/src/Illuminate/Container/Container.php(696): Illuminate\\Container\\BoundMethod::call()",
+      "type": "stderr",
+      "timestamp": "2026-09-08T11:02:15Z",
+      "hidden": true,
+      "batch": 9,
+      "order": 16
+    },
+    {
+      "command": null,
+      "output": "Error code: 0",
+      "type": "stderr",
+      "timestamp": "2026-09-08T11:02:16Z",
+      "hidden": true,
+      "batch": 9,
+      "order": 17
+    },
+    {
+      "command": null,
+      "output": "Error type: App\\Exceptions\\DeploymentException",
+      "type": "stderr",
+      "timestamp": "2026-09-08T11:02:17Z",
+      "hidden": true,
+      "batch": 9,
+      "order": 18
+    },
+    {
+      "command": null,
+      "output": "Location: /var/www/html/app/Jobs/ApplicationDeploymentJob.php:601",
+      "type": "stderr",
+      "timestamp": "2026-09-08T11:02:18Z",
+      "hidden": true,
+      "batch": 9,
+      "order": 19
+    },
+    {
+      "command": "docker rm -f example-container-new",
+      "output": "example-container-new",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:19Z",
+      "hidden": true,
+      "batch": 11,
+      "order": 20
+    },
+    {
+      "command": null,
+      "output": "Deployment failed. Removing the new version of your application.",
+      "type": "stderr",
+      "timestamp": "2026-09-08T11:02:20Z",
+      "hidden": false,
+      "batch": 1,
+      "order": 21
+    }
+  ]
+}

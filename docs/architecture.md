@@ -159,10 +159,12 @@ write-out = "\n<RS>%{exitcode} %{http_code} %{time_total} %{size_download} %{err
   topology) so kinds overlap but the same kind never stacks. Each carries a monotonic
   `seq`/`liveSeq`; output from a reaped or superseded request is dropped (the
   `MultiSelect.optionsCommand` pattern). Collectors are `id`'d and read in `onExited`.
-- Per-kind `max-time` (deployments 12, deployment 12, version 6, resources 10, servers 10,
-  topology 8 per block; the two log-bearing kinds carry `maxBytes` 4 MB, the largest cap
-  a 12 s transfer can deliver at the slowest measured throughput, because with
-  `read:sensitive` every deployment row carries its full build log). A `Req`'s deadline is `blocks × max-time + 3` s; one 5 s reaper
+- Per-kind `max-time` (deployments 12, deployment 12, buildlog 12, history 12, containerlog
+  12, service 12, tags 12, version 6, resources 10, servers 10, topology 8 per block; the
+  four log-bearing kinds `deployments`, `deployment`, `buildlog` and `history` carry
+  `maxBytes` 4 MB, the largest cap a 12 s transfer can deliver at the slowest measured
+  throughput, because with `read:sensitive` every deployment row carries its full build
+  log). A `Req`'s deadline is `blocks × max-time + 3` s; one 5 s reaper
   `Timer`, armed once at service start, kills a `Req` past its deadline (bumping `seq`
   first) and counts a reap as a failure.
 - Errors map per transfer: exit 6/7/28/35/60 → offline; exit 63 → response too large;
@@ -215,6 +217,21 @@ and under 60/min with one deployment. Idle is ≈17/min at 3 projects and 3 serv
   resource polling would return the same bytes.
 - Vanished deployment uuids go on a deduped queue (cap 20) drained one at a time by the
   `deployment` `Req`; its dispatch and fail handlers pop the next uuid immediately.
+- Phase 4 view fetches never run on a timer: `GET /deployments/{uuid}` once for a build
+  log that is neither active nor just drained, `GET /{applications,databases,services}/
+  {uuid}/logs?lines=200` on `L` and `r`, `GET /services/{uuid}` once for the picker,
+  `GET /deployments/applications/{uuid}?skip&take=10` per history page, `GET /tags` on
+  panel open at most once a minute. The active build's log is read off the deployments
+  poll (every row carries it under `read:sensitive`); the terminal body off the drain.
+  With a build running the deployments interval steps up with the last body size
+  (256 KB → 4 s, 1 MB → 8 s, 4 MB → 15 s; `Model.deploymentsInterval`; the 15 s rung sits
+  above the 4 MB transport cap and is reachable only if that cap is raised), a dropped tick
+  is counted in `perKind.<kind>.skipped` (a panel-open prime or `r` colliding with an
+  in-flight poll increments it too, and it is cumulative since the service started, not
+  cleared by `_resetStore`, so only `deployments.skipped` rising during a build is the
+  starvation signal), and `perKind.<kind>.bytesLastMin` is a bare-number ring. The view
+  refetch keys are throttled to one launch per second. Measured 2026-09-12: 19 closed, 22 open during the first drain, 29
+  with a build running and the log view open.
 - "Panel open" is a registry keyed by panel id: `panelOpened(id)`, `panelClosed(id)`
   (also from `Component.onDestruction`), and a `panelAlive(id)` ping every second
   while open, which also re-registers a panel after a service reload once two pings
@@ -230,7 +247,17 @@ plain object built by `Model.js`, never a live QObject in a ListView.
 
 ```
 snapshot:  { instance, error, warning, servers, resources, deployments, recent, tree,
-             byServer, failedUnacked, lastPollAt, busy, openPanels, baselineDone, backoffSec }
+             byServer, failedUnacked, lastPollAt, busy, openPanels, baselineDone, backoffSec,
+             topologyFetched, tags, sensitive }          // tags: [{uuid, name}]; sensitive: "unknown" | "yes" | "no"
+views:     { buildLogs, containerLogs, picks, history } // beside snapshot, the `pending` precedent: the panel binds on these, never through snapshot
+           buildLogs[uuid]:     { uuid, entries: [{ i, seq, hidden, stream, command, output, at }], dropped, rev, status, terminal,
+                                  source: "list" | "drain" | "fetch", truncated, refused, bytes, fetchedAt, message, at }   // LRU 3, panel targets pinned
+           containerLogs[uuid]: { uuid, kind, sub, label, lines | null, truncated, fetchedAt, message, at }             // LRU 3
+           picks[uuid]:         { uuid, label, names | null, message }
+           history[appUuid]:    { appUuid, label, count, rows: [deployment], skip, loading, message, at }               // LRU 3; never merged into recent
+           bounds: 2000 entries and 5000 physical lines (tail, `dropped` counts the head), 200 lines and 4000 chars per output, 320 per command (middle-elided),
+                   a logs string above 3 MB is refused unparsed; every slice write assigns a fresh copy (a var property
+                   assigned the same object emits no change)
 instance:  { id, name, url, version, plaintext }
 error:     null | { kind, title, detail, httpCode, curlExit, request, at, staleSince }
            kind ∈ noconfig | configerror | unsafe | tokencmd | waitingtoken | auth |
@@ -499,6 +526,43 @@ refused after three consecutive ability failures until a 2xx or a config change.
     service read `doNotDisturb === true` from the shell; `null` means the plugin id.
 26. (plan SR24) Verification hygiene: staging only via `COOLWATCH_DEST`, no `--delete` tool
     against a real path, the token needle check fails loudly when the needle is empty.
+27. (Phase 4 SR25) No rich text: every `Text`, `TextEdit` and `TextArea` in every `.qml`
+    is PlainText; `bin/check` bans `Text.RichText|StyledText|MarkdownText|AutoText`.
+    Log text is the most attacker-influenced string in the product.
+28. (Phase 4 SR26) Log text is view-only: it lives in the service's view slices and the
+    panel's overlay model and never enters `snapshot`, `_status()`, `recent.json`, a
+    `console.*` line, an error `detail` or a notifier argv; `Model.logViewStatus` emits
+    counts and a digits-only rev; `bin/check` greps `Service.qml` for a console line
+    naming a log field. `views` is readable through `serviceFor()` like `_token` and
+    `snapshot` (the machine is the trust boundary).
+29. (Phase 4 SR27) Every parsed log entry is validated as an object and bounded: C0/C1
+    control characters stripped (`\n`, `\t` kept), output ≤ 4000 chars, command ≤ 320
+    (middle-elided), ≤ 2000 entries kept from the tail with `dropped`, a `logs` string
+    above 3 MB refused rather than parsed; malformed input yields an empty log, never a
+    throw.
+30. (Phase 4 SR28) Query values through `Api.seg`, integers from constants: `lines` (200)
+    and `take` (10) are module constants, `skip` is clamped, the container endpoint
+    family comes from a `hasOwnProperty` whitelist, one tag per request (`TAG_RE`
+    excludes the comma).
+31. (Phase 4 SR29) A view fetch never poisons global state: the empty-stream branch, the
+    per-result branch and the reaper route the five view kinds to `_viewFail`, which sets
+    the view's message only; a view success never calls `_succeeded`; only 429 pauses.
+32. (Phase 4 SR30) Per-descriptor `max-filesize` (4 MB on the log-bearing kinds, the
+    largest a 12 s transfer delivers at the slowest measured throughput), a byte-aware
+    deployments cadence, `skipped` and `bytesLastMin` so starvation is observable.
+33. (Phase 4 SR31) Fixtures cannot carry a real log or a `read:sensitive` secret:
+    `bin/check` walks each fixture's JSON and requires a `logs`/`configuration_snapshot`
+    value to be null or `«scrubbed»` and the keys the new ability returns
+    (`manual_webhook_secret_*`, `sentinel_token`, `sentinel_custom_url`, `logdrain_*`,
+    `last_saved_proxy_configuration`, `last_applied_settings`, `last_saved_settings`,
+    `validation_logs`) to be scrubbed; build-log fixtures are hand-authored entry arrays
+    under `entries`, the container-log fixture keeps its text under `text`.
+34. (Phase 4 SR35) Tag deploy states its blast radius: the confirm says the API cannot
+    list what a tag deploys, the response is counted per item (queued / refused, a
+    missing deployment uuid or a queue-full item is a refusal), one tag per request.
+35. (Phase 4 SR37) Missing `read:sensitive` is detected, not silent: a terminal
+    deployment row without `logs` sets `sensitive: "no"` (one-way toward `"yes"`), the
+    log view shows the swap-the-token sentence, `_status().sensitive` reports it.
 
 ## Testing
 
@@ -511,10 +575,17 @@ refused after three consecutive ability failures until a 2xx or a config change.
   `resources.json`, `projects.json`, `project-detail.json`, `deployments-active.json`,
   `deployments-empty.json`, `deployment-finished.json`, `deployment-failed.json`,
   `error-401.json`, `error-403-api-disabled.json`, `error-403-ability.json`,
-  `error-429.json`, `headers-2xx.json`, `batch-stream.txt`. Hand-written ones say so
-  in a `_note` key.
-- `bin/check`: node tests, repo symlink scan, fixture secret scan, PlainText and
-  `font.family` count gates, hardcoded-token grep, `omarchy plugin validate` of a staged
+  `error-429.json`, `headers-2xx.json`, `batch-stream.txt`; Phase 4 adds `tags.json`,
+  `history-page.json` (trimmed to 3 rows), `history-empty.json`, `history-404.json`,
+  `service-detail.json` (trimmed), `container-log-400.json`, `container-log-404.json`,
+  and the hand-written `deployment-log-failed.json`, `deployment-log-finished.json`
+  (entry arrays under `entries`, fabricated hosts and images), `container-log.json`
+  (text under `text`), `tags-empty.json`, `action-deploy-tag-ok.json`. Hand-written ones
+  say so in a `_note` key.
+- `bin/check`: node tests, repo symlink scan, fixture secret scan (a jq walk: SR31),
+  PlainText and `font.family` count gates over every `.qml` including `TextEdit`/
+  `TextArea`, the rich-text ban (SR25), the no-log-text-in-console grep (SR26),
+  hardcoded-token grep, `omarchy plugin validate` of a staged
   copy of the shipping list, and `qmllint` through a temp import root containing
   `qs -> /usr/share/omarchy/shell`, gated on import/type-resolution failures and hard
   errors. `--no-shell` is the CI subset.

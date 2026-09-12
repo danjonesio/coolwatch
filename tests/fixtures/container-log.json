@@ -1,0 +1,4 @@
+{
+  "_note": "hand-written: the text of GET /applications/{uuid}/logs?lines=3 lives under `text`; the test wraps it as {logs: text} so no fixture holds a logs value (bin/check SR31)",
+  "text": "[2026-09-12 07:00:01] request GET /health 200 1ms\n[2026-09-12 07:00:02] worker tick\n[2026-09-12 07:00:03] request GET / 200 4ms"
+}

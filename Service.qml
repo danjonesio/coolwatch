@@ -124,10 +124,32 @@ Item {
   property int _recentPersisted: 0
   property bool _recentRejected: false
 
+  // Depth (Phase 4). View slices live beside `snapshot` (the `pending` precedent): log
+  // text never enters snapshot, _status(), recent.json, a console line or a toast (SR26).
+  // Every write assigns a fresh shallow copy (_fresh) so the panel's bindings fire.
+  property var _buildLogs: ({})        // uuid -> { uuid, entries, dropped, rev, status, terminal, source, truncated, refused, bytes, fetchedAt, message, at }; LRU 3, targets pinned
+  property var _containerLogs: ({})    // uuid -> { uuid, kind, sub, label, lines (null while loading), truncated, fetchedAt, message, at }; LRU 3
+  property var _servicePicks: ({})     // uuid -> { uuid, label, names (null while loading), message }
+  property var _history: ({})          // appUuid -> { appUuid, label, count, rows, skip, loading, message, at }; LRU 3
+  property var _tags: []
+  property double _tagsAt: 0
+  property var _logTargets: ({})       // panelId -> uuid: pins a build log against eviction; re-asserted by panelAlive, released with the panel
+  property string _sensitive: "unknown"   // SR37: "no" only from a terminal row without logs, one-way toward "yes"
+  property int _deploymentsBytes: 0    // last deployments body size; written by Qt.callLater after _finish, never inside it
+  property var _bytesAt: []            // bare numbers, three parallel rings (the _requestLog idiom): when, how many, which kind
+  property var _bytesN: []
+  property var _bytesKind: []
+  readonly property var _viewKinds: ({ buildlog: true, containerlog: true, service: true, history: true, tags: true })
+  readonly property string sensitiveMessage: "Logs need the read:sensitive ability. Create a new token under Security → API Tokens with read, read:sensitive and deploy, and swap it in."
+  readonly property var views: ({ buildLogs: root._buildLogs, containerLogs: root._containerLogs, picks: root._servicePicks, history: root._history })
+  property double _lastViewFetchAt: 0     // the view refetch keys have no auto-repeat filter upstream: one launch per second at most
+
   readonly property int _activeCount: root._deployments.filter(function(d) { return d.status === "queued" || d.status === "in_progress" }).length
   readonly property bool _deploying: root._activeCount > 0
   readonly property bool _panelOpen: root._openPanels > 0
-  readonly property int _deploymentsSec: root._deploying ? 2 : (root._cfg ? root._cfg.poll.deploymentsSec : 4)
+  // Byte-aware cadence (SR30): 2 s while deploying unless the last body was large.
+  readonly property int _deploymentsSec: Model.deploymentsInterval(root._deploying, root._cfg ? root._cfg.poll.deploymentsSec : 4, root._deploymentsBytes)
+  on_DeployingChanged: if (!root._deploying) root._deploymentsBytes = 0
   readonly property int _resourcesSec: Math.min(root._cfg ? root._cfg.poll.resourcesSec : 60, root._deploying ? 15 : 100000, root._panelOpen ? 30 : 100000)
   readonly property int _serversSec: root._cfg ? root._cfg.poll.serversSec : 120
   property int _topologySec: 600
@@ -140,7 +162,8 @@ Item {
     tree: root._tree, byServer: root._byServer,
     failedUnacked: root._failedUnacked, lastPollAt: root._lastPollAt,
     busy: root._busy, openPanels: root._openPanels, baselineDone: root._baselineDone,
-    backoffSec: root._backoffSec, topologyFetched: root._topologyLoaded   // the latch: "loading" is a startup state, not a per-cycle one
+    backoffSec: root._backoffSec, topologyFetched: root._topologyLoaded,   // the latch: "loading" is a startup state, not a per-cycle one
+    tags: root._tags, sensitive: root._sensitive, paused: root._paused      // Phase 4: names only; never log text; paused feeds the view footer
   })
   readonly property var bar: Model.barState(root.snapshot)
 
@@ -157,18 +180,22 @@ Item {
     root.acknowledgeFailures()
     if (root._ready) {
       root._prime("stale")
+      root.fetchTags()                                       // Phase 4: the TAGS fold exists only once the names are known; at most once a minute, never on a timer
       if (!root._topologyFetched && !root._topologyQueue.length && !topologyReq.running) root._pollTopology()
     }
   }
   function panelClosed(id) {
     var p = root._panels; delete p[String(id)]; root._panels = p
     root._syncOpenPanels()
+    root.closeView(id)
   }
   // Also the re-registration path: a hot-reloaded service starts with an empty
   // registry and open panels ping every second. A single stray ping does not register;
-  // two within 2.5 s (a panel that is really open) do.
-  function panelAlive(id) {
+  // two within 2.5 s (a panel that is really open) do. `viewUuid` (Phase 4) re-asserts
+  // the build log the panel is showing every second, so a candidate panel never loses it.
+  function panelAlive(id, viewUuid) {
     var key = String(id), now = Date.now()
+    root._setLogTarget(key, viewUuid)
     if (root._panels[key] !== undefined) { var p = root._panels; p[key] = now; root._panels = p; return }
     var first = root._panelCandidates[key]
     if (first !== undefined && now - first <= 2500) {
@@ -349,6 +376,10 @@ Item {
     root._notifyQueue = []; root._actionAt = {}; root._lastNotified = {}; root._notifyLog = []; root._suppressed = Model.suppressedZero(); root._lastEvent = null
     root._drainTries = {}; deploymentReq.inflight = null
     root._recentLoaded = false; root._recentKey = ""; root._lastRecentKey = ""   // never writes; _configText re-arms the read
+    // Phase 4: a revoked or swapped token must not leave fetched log text on screen (SR26).
+    root._buildLogs = {}; root._containerLogs = {}; root._servicePicks = {}; root._history = {}; root._tags = []; root._tagsAt = 0
+    root._logTargets = {}; root._sensitive = "unknown"; root._deploymentsBytes = 0
+    logReq.target = null; historyReq.target = null; serviceReq.target = null
     for (var i = 0; i < root._reqs.length; i++) root._reqs[i].kill()
     root._syncBusy()
     if (interrupted) root._say("Action interrupted by a config change", "urgent")
@@ -450,13 +481,24 @@ Item {
   Req { id: serversReq }
   Req { id: topologyReq }
   Req { id: actionReq }                // single-flight; every action goes through _launch like a poll
+  // Phase 4 view fetches: one-shot, panel-driven, settled by _viewDone from the same three
+  // sites as _drainDone. Bookkeeping rides on `target`; p.arg stays the descriptor list.
+  Req { id: logReq; property var target: null }        // buildlog (one-shot, a uuid neither active nor drained) and containerlog
+  Req { id: historyReq; property var target: null }    // history pages
+  Req { id: serviceReq; property var target: null }    // GET /services/{uuid} for the picker, and GET /tags
 
-  readonly property var _reqs: [versionReq, deploymentsReq, deploymentReq, resourcesReq, serversReq, topologyReq, actionReq]
+  readonly property var _reqs: [versionReq, deploymentsReq, deploymentReq, resourcesReq, serversReq, topologyReq, actionReq, logReq, historyReq, serviceReq]
 
   function _syncBusy() { root._busy = root._reqs.some(function(p) { return p.running }) }
+  function _isViewKind(kind) { return !!root._viewKinds[kind] }
 
   function _launch(p, reqs, maxTime) {
-    if (p.running || p.stopping) return false
+    if (p.running || p.stopping) {
+      // A dropped tick is starvation, not silence: count it so a byte-starved poll is visible (SR30).
+      var k0 = Array.isArray(reqs) ? "topology" : reqs.kind
+      root._perKindEntry(k0).skipped += 1; root._perKind = root._perKind
+      return false
+    }
     var list = Array.isArray(reqs) ? reqs : [reqs]
     p.seq += 1
     p.kind = Array.isArray(reqs) ? "topology" : reqs.kind
@@ -474,8 +516,11 @@ Item {
     root._syncBusy()
     if (p.liveSeq !== p.seq) return
     if (p === actionReq) { root._finishAction(p, code, stdoutText, stderrText); return }   // after the stale guard, never before
+    var isView = root._isViewKind(p.kind)
     var results = Model.splitResponses(stdoutText)
     if (results.length === 0) {
+      // A view fetch's failure is text inside the view, never the panel-wide error (SR29).
+      if (isView) { root._viewFail(p, { exit: code || 1, code: 0, body: "", errmsg: stderrText, headers: null }); root._viewDone(p); return }
       root._fail(p.kind, Model.errorFor({ curlExit: code || 1, errmsg: stderrText, request: p.kind }), null)
       if (p.kind === "deployment") { root._drainDone(false, false); root._drainTerminal() }
       return
@@ -489,13 +534,19 @@ Item {
       var e = Model.errorFor({ curlExit: r.exit, httpCode: r.code, body: r.body, errmsg: r.errmsg, headers: r.headers, request: p.kind })
       if (e) {
         if (p.kind === "deployment" && r.code === 404) gone = true                     // vanished for good: no _fail, no retry
+        else if (isView) root._viewFail(p, r)
         else root._fail(p.kind, e, r.headers)
       } else {
         anyOk = true
         root._dispatch(p.arg[i], r, p.kind)
       }
     }
+    if (isView) { root._viewDone(p); root._flushNotify(); return }   // never _succeeded: a user fetch must not lift probe mode
     if (anyOk) root._succeeded(p.kind)
+    // The interval binding reads this; written after the loop so the byte input cannot make
+    // _catchUp re-enter _launch mid-_finish (the other input, _deploying, is guarded by the
+    // _markPoll ordering in the deployments arm) (SR30).
+    if (p.kind === "deployments" && results[0]) { var nb = results[0].bytes || 0; Qt.callLater(function() { root._deploymentsBytes = nb }) }
     if (p.kind === "resources" || p.kind === "servers" || p.kind === "topology") root._rejoin()
     else if (p.kind === "deployments") root._joinDeployments()
     if (p.kind === "deployment") { root._drainDone(root._drainDispatched, gone); root._drainTerminal() }   // dispatch success, not HTTP success
@@ -565,6 +616,13 @@ Item {
         root._markPoll("version", now)
         break
       case "deployments": {
+        // Phase 4: every active row carries its build log (read:sensitive); capture it here,
+        // before normalise drops it, for at most three deployments (targets pinned).
+        if (Array.isArray(json.value)) json.value.forEach(function(row) {
+          if (!row || typeof row !== "object") return
+          root._noteSensitive(row)
+          if (typeof row.deployment_uuid === "string" && row.deployment_uuid) root._captureLog(row.deployment_uuid, row.logs, row.status, "list", true)
+        })
         var norm = Model.normaliseDeployments(json.value)
         // root._deployments still holds the previous poll; the baseline flag is read before _markPoll flips it.
         var diff = Model.diffDeployments(root._deployments, norm, !root._baseline.deployments)
@@ -574,8 +632,11 @@ Item {
           root._terminalQueue = q
         }
         root._activeUuids = norm.map(function(d) { return d.uuid })
-        root._deployments = norm
+        // _markPoll first: assigning _deployments flips _deploying, which re-evaluates the
+        // deployments interval and runs _catchUp against _lastPollAt synchronously; a stale
+        // stamp there would re-enter _launch on this Req while _finish is still on the stack.
         root._markPoll("deployments", now)
+        root._deployments = norm
         root._queueNotify(diff.events)
         root._drainTerminal()
         break
@@ -588,6 +649,10 @@ Item {
         var d = Model.joinBranch([Model.normaliseDeployment(json.value)], root._resources)[0]
         if (d.uuid) {
           root._drainDispatched = true
+          // Phase 4: the terminal body is the log view's terminal source, present in the
+          // same dispatch as the Deployed/Failed toast at zero extra requests.
+          root._noteSensitive(json.value)
+          root._captureLog(d.uuid, json.value.logs, d.status, "drain", false)
           if (!Model.hasTerminal(root._recent, d.uuid)) root._queueNotify([Model.terminalEvent(d)])
           var rec = root._recent.filter(function(x) { return x.uuid !== d.uuid })
           rec.unshift(d)
@@ -626,8 +691,251 @@ Item {
         var bs = root._byServer; bs[req.arg] = Model.serverResourceUuids(json.value); root._byServer = bs
         break
       }
+      // ---- Phase 4 view kinds: one-shot, settled by _viewDone in _finish ----
+      case "buildlog": {
+        var raw = json.value && typeof json.value === "object" ? json.value : {}
+        root._noteSensitive(raw)
+        root._captureLog(req.arg, raw.logs, raw.status, "fetch", false)
+        break
+      }
+      case "containerlog": {
+        var ct = logReq.target || {}
+        root._setContainerLog(req.arg, ct.ckind || "application", ct.sub || null, Model.parseContainerLog(json.value), null, ct.label || "")
+        break
+      }
+      case "service": {
+        var sv = json.value && typeof json.value === "object" ? json.value : {}
+        var names = []
+        ;(Array.isArray(sv.applications) ? sv.applications : []).concat(Array.isArray(sv.databases) ? sv.databases : []).forEach(function(c) {
+          if (c && typeof c === "object" && typeof c.name === "string" && c.name && Model.TAG_RE.test(c.name)) names.push(c.name)
+        })
+        var st = serviceReq.target || {}
+        if (names.length === 1) { root._setPick(req.arg, names, null, st.label || ""); root._fetchContainerLogSub("service", req.arg, names[0], st.label || "", true) }
+        else root._setPick(req.arg, names, names.length ? null : "This service has no containers.", st.label || "")
+        break
+      }
+      case "history": {
+        var ht = historyReq.target || {}
+        var rawRows = json.value && Array.isArray(json.value.deployments) ? json.value.deployments : []
+        rawRows.forEach(function(row) { root._noteSensitive(row) })
+        var page = Model.normaliseHistory(json.value)
+        page.rows = Model.joinBranch(page.rows, root._resources)   // the deployments-kind join does not run for this kind (the drain precedent)
+        root._setHistoryPage(req.arg, ht.skip || 0, page.count, page.rows)
+        break
+      }
+      case "tags":
+        root._tags = Model.normaliseTags(json.value)
+        root._tagsAt = now
+        break
     }
     console.log("coolwatch " + req.kind + " " + r.code + " exit=" + r.exit + " " + r.timeMs + "ms " + r.bytes + "B")
+  }
+
+  // ---- depth (Phase 4): capture, view slices, view failures ------------------------------
+  // The store slices hold log text; nothing here reaches snapshot, _status() or a console
+  // line beyond counts (SR26). A failed view fetch sets the record's message and nothing
+  // else: never _error, _backoff, _probeMode or _failedUnacked; 429 still pauses (SR29).
+
+  function _noteSensitive(raw) {
+    var s = Model.sensitiveState(raw)
+    if (s === "yes") { if (root._sensitive !== "yes") root._sensitive = "yes" }
+    else if (s === "no" && root._sensitive === "unknown") root._sensitive = "no"
+  }
+
+  // A var property assigned the same object emits no change; the panel binds on these maps,
+  // so every writer assigns a fresh shallow copy.
+  function _fresh(m) { var o = {}; for (var k in m) if (Object.prototype.hasOwnProperty.call(m, k)) o[k] = m[k]; return o }
+
+  function _isLogTarget(uuid) { for (var k in root._logTargets) if (root._logTargets[k] === uuid) return true; return false }
+
+  function _setLogTarget(panelKey, uuid) {
+    var t = root._logTargets, cur = t[panelKey]
+    if (uuid) { if (cur !== uuid) { t[panelKey] = uuid; root._logTargets = root._fresh(t) } }
+    else if (cur !== undefined) { delete t[panelKey]; root._logTargets = root._fresh(t) }
+  }
+
+  // Oldest unpinned records go first; the map is reassigned by the caller.
+  function _evictLru(m, cap, isPinned) {
+    var keys = Object.keys(m)
+    while (keys.length > cap) {
+      var oldest = null
+      for (var i = 0; i < keys.length; i++) {
+        if (isPinned && isPinned(keys[i])) continue
+        if (oldest === null || (m[keys[i]].at || 0) < (m[oldest].at || 0)) oldest = keys[i]
+      }
+      if (oldest === null) return
+      delete m[oldest]
+      keys = Object.keys(m)
+    }
+  }
+
+  // source/fetchedAt always update, status/terminal only when a status is supplied; the
+  // parse runs only when the raw length changed. `opportunistic` (the list poll) never grows the map past the cap.
+  function _captureLog(uuid, raw, status, source, opportunistic) {
+    if (!uuid) return
+    var m = root._buildLogs, rec = m[uuid] || null
+    if (!rec && opportunistic && !root._isLogTarget(uuid) && Object.keys(m).length >= 3) return
+    var now = Date.now()
+    if (!rec) rec = { uuid: uuid, entries: [], dropped: 0, rev: "", status: "", terminal: false, source: source, truncated: false, refused: false, bytes: -1, fetchedAt: 0, message: null, at: 0 }
+    if (status) { rec.status = String(status); rec.terminal = !!Model.TERMINAL[rec.status] }   // a call without a status keeps what is known (a refetch must not erase "failed")
+    rec.source = source; rec.fetchedAt = now; rec.at = now
+    if (typeof raw === "string") {
+      if (raw.length !== rec.bytes) {
+        var p = Model.parseBuildLog(raw)
+        rec.entries = p.entries; rec.dropped = p.dropped; rec.truncated = p.truncated; rec.refused = p.refused; rec.bytes = p.bytes
+        rec.rev = Model.buildLogRev(p.entries, p.dropped)
+        var n = p.entries.length
+        console.log("coolwatch logview " + source + " " + Model.uuid8(uuid) + " n=" + n + " dropped=" + p.dropped + " bytes=" + p.bytes + (p.refused ? " refused" : ""))
+      }
+      rec.message = null
+    } else {
+      if (rec.bytes < 0) rec.bytes = 0
+      if (root._sensitive === "no" && rec.terminal) rec.message = root.sensitiveMessage   // SR37: a terminal row with no log
+    }
+    m[uuid] = root._fresh(rec)                                   // a fresh record too: the panel binds on the record reference
+    root._evictLru(m, 3, root._isLogTarget)
+    root._buildLogs = root._fresh(m)
+  }
+
+  function _setBuildLogMessage(uuid, text) {
+    var m = root._buildLogs, rec = m[uuid]
+    if (!rec) { rec = { uuid: uuid, entries: [], dropped: 0, rev: "", status: "", terminal: false, source: "fetch", truncated: false, refused: false, bytes: 0, fetchedAt: 0, message: null, at: Date.now() }; m[uuid] = rec }
+    rec.message = text; rec.at = Date.now()
+    m[uuid] = root._fresh(rec)
+    root._buildLogs = root._fresh(m)
+  }
+
+  function _setContainerLog(uuid, kind, sub, parsed, message, label) {
+    var m = root._containerLogs, rec = m[uuid] || { uuid: uuid, kind: kind, sub: sub, label: label || "", lines: null, truncated: false, fetchedAt: 0, message: null, at: 0 }
+    rec.kind = kind; rec.sub = sub; if (label) rec.label = label
+    if (parsed) { rec.lines = parsed.lines; rec.truncated = !!parsed.truncated; rec.fetchedAt = Date.now(); rec.message = null }
+    else if (message !== undefined) rec.message = message
+    if (!parsed && message === null) rec.lines = null      // loading again
+    rec.at = Date.now()
+    m[uuid] = root._fresh(rec)
+    root._evictLru(m, 3, null)
+    root._containerLogs = root._fresh(m)
+  }
+  function _setContainerLogMessage(uuid, text) { root._setContainerLog(uuid, (root._containerLogs[uuid] || {}).kind || "application", (root._containerLogs[uuid] || {}).sub || null, null, text, "") }
+
+  function _setPick(uuid, names, message, label) {
+    var m = root._servicePicks
+    m[uuid] = { uuid: uuid, label: label || ((m[uuid] || {}).label || ""), names: names, message: message === undefined ? null : message }
+    root._servicePicks = root._fresh(m)
+  }
+
+  function _setHistoryPage(appUuid, skip, count, rows) {
+    var h = root._history, page = h[appUuid] || { appUuid: appUuid, label: "", count: 0, rows: [], skip: 0, loading: false, message: null, at: 0 }
+    var merged = skip > 0 ? page.rows.slice() : []
+    var seen = {}; merged.forEach(function(r) { seen[r.uuid] = true })
+    rows.forEach(function(r) { if (!seen[r.uuid]) { merged.push(r); seen[r.uuid] = true } })
+    page.rows = merged; page.count = count; page.skip = skip; page.loading = false; page.message = null; page.at = Date.now()
+    h[appUuid] = root._fresh(page)
+    root._evictLru(h, 3, null)
+    root._history = root._fresh(h)
+  }
+  function _setHistoryMessage(appUuid, text) {
+    var h = root._history, page = h[appUuid]
+    if (!page) return
+    page.loading = false; page.message = text; page.at = Date.now()
+    h[appUuid] = root._fresh(page)
+    root._history = root._fresh(h)
+  }
+
+  function _viewFail(p, r) {
+    var t = p.target || {}
+    var o = Model.fetchOutcome(p.kind, r, t.label || "")
+    var text = o ? o.text : "Coolify returned nothing"
+    switch (p.kind) {
+      case "buildlog": root._setBuildLogMessage(t.uuid || (p.arg && p.arg[0] ? p.arg[0].arg : ""), text); break
+      case "containerlog": root._setContainerLogMessage(t.uuid || (p.arg && p.arg[0] ? p.arg[0].arg : ""), text); break
+      case "service": root._setPick(t.uuid || (p.arg && p.arg[0] ? p.arg[0].arg : ""), [], text, t.label || ""); break
+      case "history": root._setHistoryMessage(t.appUuid || (p.arg && p.arg[0] ? p.arg[0].arg : ""), text); break
+      case "tags": break                                   // the fold simply stays as it was
+    }
+    if (o && o.error && o.error.kind === "ratelimited") root._pauseFor(r ? r.headers : null)
+    console.warn("coolwatch " + p.kind + " view failed: " + (o && o.error ? o.error.kind + " http=" + o.error.httpCode + " exit=" + o.error.curlExit : "empty"))
+  }
+  function _viewDone(p) { p.target = null }
+
+  // ---- depth (Phase 4): the panel-facing surface ------------------------------------------
+
+  // A build log for a deployment: active -> the list poll captures it (pinned from now);
+  // drained or fetched before -> already here; anything else -> one fetch.
+  function openBuildLog(panelId, uuid) {
+    uuid = String(uuid || "")
+    if (!uuid) return
+    root._setLogTarget(String(panelId), uuid)
+    if (root._buildLogs[uuid]) return
+    var dep = root._deployments.filter(function(d) { return d.uuid === uuid })[0] || null
+    if (dep) { root._captureLog(uuid, undefined, dep.status, "list", false); return }   // a placeholder until the next poll
+    root.refetchBuildLog(uuid)
+  }
+  // A held `r` would otherwise fire one request per round trip (PanelKeyCatcher has no
+  // auto-repeat filter) until the token's 429 paused every timer. A view's first fetch
+  // (`first`: no record yet for that target) is never dropped: dropping it would leave the
+  // view on its loading note with nothing to refetch.
+  function _viewThrottled(first) {
+    var now = Date.now()
+    if (!first && now - root._lastViewFetchAt < 1000) return true
+    root._lastViewFetchAt = now
+    return false
+  }
+  function refetchBuildLog(uuid) {
+    if (root._activeUuids.indexOf(uuid) >= 0) return       // the list poll owns an active one
+    if (root._viewThrottled(!root._buildLogs[uuid])) return
+    var rec = root._recent.filter(function(d) { return d.uuid === uuid })[0] || null
+    var known = root._buildLogs[uuid] || null
+    root._captureLog(uuid, undefined, rec ? rec.status : (known ? known.status : ""), "fetch", false)
+    if (logReq.running || logReq.stopping) { root._setBuildLogMessage(uuid, "Busy · press r to retry"); return }
+    logReq.target = { kind: "buildlog", uuid: uuid, label: "" }
+    root._launch(logReq, Api.reqBuildLog(uuid), 12)
+  }
+  function closeView(panelId) { root._setLogTarget(String(panelId), "") }
+
+  function fetchContainerLog(kind, uuid, label) {
+    uuid = String(uuid || ""); label = String(label || "")
+    if (kind === "service") {
+      if (root._viewThrottled(!root._servicePicks[uuid])) return
+      root._setPick(uuid, null, null, label)
+      if (serviceReq.running || serviceReq.stopping) { root._setPick(uuid, [], "Busy · try again", label); return }
+      serviceReq.target = { kind: "service", uuid: uuid, label: label }
+      root._launch(serviceReq, Api.reqService(uuid), 12)
+      return
+    }
+    root._fetchContainerLogSub(kind, uuid, null, label)
+  }
+  function fetchContainerLogSub(uuid, sub, label) { root._fetchContainerLogSub("service", String(uuid || ""), String(sub || ""), String(label || "")) }
+  function _fetchContainerLogSub(kind, uuid, sub, label, internal) {
+    var req = Api.reqContainerLog(kind, uuid, sub)
+    if (!req) return
+    var known = root._containerLogs[uuid] || null
+    if (!internal && root._viewThrottled(!known || known.sub !== sub)) return   // internal: the service arm's own continuation, not a key press
+    root._setContainerLog(uuid, kind, sub, null, null, label)   // lines null: loading
+    if (logReq.running || logReq.stopping) { root._setContainerLogMessage(uuid, "Busy · press r to retry"); return }
+    logReq.target = { kind: "containerlog", uuid: uuid, label: label, ckind: kind, sub: sub }
+    root._launch(logReq, req, 12)   // measured 1.1-1.3 s regardless of size: a live docker logs over SSH
+  }
+
+  function fetchHistory(appUuid, skip, label) {
+    appUuid = String(appUuid || ""); skip = Math.max(0, skip | 0)
+    var h = root._history, page = h[appUuid] || { appUuid: appUuid, label: String(label || ""), count: 0, rows: [], skip: 0, loading: false, message: null, at: 0 }
+    if (label) page.label = String(label)
+    if (root._viewThrottled(!h[appUuid] || skip !== page.skip)) return   // a first page or a new page is never dropped
+    if (historyReq.running || historyReq.stopping) { page.message = "Busy · try again"; h[appUuid] = root._fresh(page); root._history = root._fresh(h); return }
+    page.loading = true; page.message = null; page.skip = skip; page.at = Date.now()
+    h[appUuid] = root._fresh(page); root._evictLru(h, 3, null); root._history = root._fresh(h)
+    historyReq.target = { kind: "history", appUuid: appUuid, skip: skip, label: page.label }
+    root._launch(historyReq, Api.reqHistory(appUuid, skip), 12)
+  }
+
+  // On panel open, at most once a minute; never on a timer (the fold cannot bootstrap itself).
+  function fetchTags() {
+    if (!root._ready || Date.now() - root._tagsAt < 60000) return
+    if (serviceReq.running || serviceReq.stopping) return
+    root._tagsAt = Date.now()                                 // stamped at launch: a failing /tags must not refetch on every panel open
+    serviceReq.target = { kind: "tags" }
+    root._launch(serviceReq, Api.reqTags(), 12)
   }
 
   function _markPoll(kind, now) {
@@ -735,6 +1043,21 @@ Item {
     if (r.exit === 0 && r.code < 400) pk.consecutiveFailures = 0
     if (r.headers && r.headers.rateLimitRemaining !== null) root._rateLimitRemaining = r.headers.rateLimitRemaining
     root._perKind = root._perKind
+    root._noteBytes(kind, r.bytes || 0)
+  }
+
+  // Three parallel bare-number rings: bytes per minute per kind, the number the request
+  // count cannot show once a body is sized by a build log (SR30).
+  function _noteBytes(kind, n) {
+    var now = Date.now(), at = [], num = [], kinds = []
+    for (var i = 0; i < root._bytesAt.length; i++) if (now - root._bytesAt[i] < 60000) { at.push(root._bytesAt[i]); num.push(root._bytesN[i]); kinds.push(root._bytesKind[i]) }
+    at.push(now); num.push(n); kinds.push(kind)
+    root._bytesAt = at; root._bytesN = num; root._bytesKind = kinds
+  }
+  function _bytesLastMin(kind) {
+    var now = Date.now(), sum = 0
+    for (var i = 0; i < root._bytesAt.length; i++) if (now - root._bytesAt[i] < 60000 && root._bytesKind[i] === kind) sum += root._bytesN[i]
+    return sum
   }
 
   function _fail(kind, e, headers) {
@@ -771,7 +1094,7 @@ Item {
   function _maxBackoffUntil() { var m = 0; for (var k in root._backoff) if (k !== "action") m = Math.max(m, root._backoff[k].until); return m }
 
   function _perKindEntry(kind) {
-    if (!root._perKind[kind]) root._perKind[kind] = { lastAt: 0, lastCode: 0, lastMs: 0, lastBytes: 0, interval: 0, consecutiveFailures: 0, reaps: 0, lastReapAt: 0 }
+    if (!root._perKind[kind]) root._perKind[kind] = { lastAt: 0, lastCode: 0, lastMs: 0, lastBytes: 0, interval: 0, consecutiveFailures: 0, reaps: 0, lastReapAt: 0, skipped: 0 }
     return root._perKind[kind]
   }
 
@@ -829,6 +1152,7 @@ Item {
       case "start": case "stop": case "restart": return Api.reqLifecycle(a.kind, a.uuid, a.verb)
       case "cancel": return Api.reqCancel(a.uuid)
       case "validate": return Api.reqValidate(a.uuid)
+      case "deployTag": return Model.TAG_RE.test(a.name || "") ? Api.reqDeployTag(a.name) : null   // the name is the query value (SR28)
       default: return null
     }
   }
@@ -845,9 +1169,10 @@ Item {
       case "ratelimited": root._say("Rate limited · backing off " + root._backoffSec + "s", "urgent"); token = "rate limited"; break
       case "toomany": root._say("Too many requests · try again shortly", "urgent"); token = "rate limited"; break
       case "invalid": case "unknown": {
-        var word = targetHint === "deployment" || targetHint === "server" ? targetHint : "resource"
+        var word = targetHint === "deployment" || targetHint === "server" || targetHint === "tag" ? targetHint : "resource"
         root._say("Coolify no longer has that " + word, "urgent"); token = "unknown uuid " + u; break
       }
+      case "nav":                      // Phase 4: open/logs/history are the panel's, never an action
       case "notapplicable": root._say("Nothing to " + verb, "dim"); token = "not applicable " + verb + " " + u; break
       case "already pending": {
         var p = root._pending[u] || (root._inflightAction && root._inflightAction.uuid === u ? root._inflightAction : null)
@@ -874,7 +1199,7 @@ Item {
     var limited = !!(o.error && o.error.kind === "ratelimited")
     if (limited) root._pauseFor(rec.headers)
     // Any non-2xx clears pending (a 429 answers before the action runs); only a reap keeps it.
-    if (o.ok) root._setPending(a, o.deploymentUuid)
+    if (o.ok) root._setPending(a, o.deploymentUuid, o.deploymentUuids)
     else root._clearPending(a.uuid)
     if (o.error && o.error.kind === "ability") {
       root._lastAbility = Model.abilityOf(o.error.detail) || ""
@@ -895,13 +1220,15 @@ Item {
 
   function _copyPending() { var p = {}; for (var k in root._pending) p[k] = root._pending[k]; return p }
 
-  function _setPending(a, depUuid) {
+  function _setPending(a, depUuid, depUuids) {
     var p = root._copyPending(); var ex = p[a.uuid]
     p[a.uuid] = { verb: a.verb, targetType: a.targetType, kind: a.kind || null, name: a.name || "",
                   since: ex ? ex.since : Date.now(),
                   baseStatus: a.targetType === "resource" ? (a.status || null) : null,
                   baseState: a.targetType === "resource" ? Model.parseStatus(a.status || "").state : null,
-                  deploymentUuid: depUuid || (ex ? ex.deploymentUuid : null), stale: !!(ex && ex.stale) }
+                  deploymentUuid: depUuid || (ex ? ex.deploymentUuid : null),
+                  deploymentUuids: Array.isArray(depUuids) && depUuids.length ? depUuids.slice() : (ex && ex.deploymentUuids ? ex.deploymentUuids : []),   // Phase 4: a tag deploy names several
+                  stale: !!(ex && ex.stale) }
     root._pending = p
     root._actionAt[a.uuid] = Date.now(); root._actionAt = root._actionAt   // a user action explains a later flap (Phase 3)
   }
@@ -922,9 +1249,17 @@ Item {
       var res = null, srv = null, dep = null
       if (e.targetType === "resource") res = root._resources.filter(function(r) { return r.uuid === u })[0] || null
       else if (e.targetType === "server") srv = root._servers.filter(function(s) { return s.uuid === u })[0] || null
-      else dep = root._deployments.filter(function(d) { return d.uuid === u })[0] || null
-      var gone = e.targetType === "resource" ? !res : (e.targetType === "server" ? !srv : !dep)
+      else if (e.targetType !== "tag") dep = root._deployments.filter(function(d) { return d.uuid === u })[0] || null
+      // A tag is in none of the three lists, so it is never `gone`; its own arm below clears it.
+      var gone = e.targetType === "tag" ? false : (e.targetType === "resource" ? !res : (e.targetType === "server" ? !srv : !dep))
       if (gone || now - e.since >= Model.PENDING_DROP_MS) drop = true
+      else if (e.verb === "deployTag") {
+        // Phase 4: cleared when any named deployment is listed or finished, or 10 s of
+        // deployments polls have run since the action without listing one.
+        var ids = e.deploymentUuids || []
+        drop = ids.some(function(id) { return root._activeUuids.indexOf(id) >= 0 || root._recent.some(function(d) { return d.uuid === id }) })
+            || (root._lastPollAt.deployments || 0) > e.since + 10000
+      }
       else if (e.verb === "deploy" || e.verb === "redeploy" || e.verb === "rebuild" || e.verb === "restart") {
         if (e.deploymentUuid) {
           // Seen in the active list or in recent; or two deployments polls have run since the
@@ -1025,7 +1360,7 @@ Item {
     onTriggered: { ticks += 1; root._prime("missing") }
   }
   // 401/403: everything stops; one deployments probe a minute until a 2xx or a config change.
-  Timer { id: probeTimer; interval: 60000; repeat: true; running: root._ready && root._probeMode; onTriggered: root._launch(deploymentsReq, Api.reqDeployments(), 6) }
+  Timer { id: probeTimer; interval: 60000; repeat: true; running: root._ready && root._probeMode; onTriggered: root._launch(deploymentsReq, Api.reqDeployments(), 12) }   // log-bearing: 12 s, 4 MB (SR30)
   // 429: everything pauses for Retry-After (clamped) or the ladder.
   Timer { id: pauseTimer; interval: 30000; repeat: false; running: false; onTriggered: { root._paused = false; root._prime("all"); root._drainTerminal() } }
 
@@ -1054,6 +1389,14 @@ Item {
             console.warn("coolwatch reaped action")
             continue
           }
+          if (root._isViewKind(p.kind)) {
+            // A reaped view fetch is a message in the view: no failure count, no backoff (SR29).
+            root._perKind = root._perKind
+            root._viewFail(p, { exit: 28, code: 0, body: "", errmsg: "no answer in time", headers: null })
+            root._viewDone(p)
+            console.warn("coolwatch reaped " + p.kind)
+            continue
+          }
           pk.consecutiveFailures += 1
           root._perKind = root._perKind
           var bo = root._backoff; var a = ((bo[p.kind] && bo[p.kind].attempt) || 0) + 1
@@ -1063,7 +1406,7 @@ Item {
         }
       }
       var changed = false
-      for (var id in root._panels) if (now - root._panels[id] > 5000) { delete root._panels[id]; changed = true }
+      for (var id in root._panels) if (now - root._panels[id] > 5000) { delete root._panels[id]; changed = true; root.closeView(id) }
       if (changed) { root._panels = root._panels; root._syncOpenPanels() }
       root._expirePending(now)
       root._pruneNotify(now)
@@ -1088,7 +1431,12 @@ Item {
   function _status() {
     var intervals = { deployments: root._deploymentsSec, resources: root._resourcesSec, servers: root._serversSec, topology: root._topologySec, version: 0, deployment: 0 }
     var per = {}
-    for (var k in root._perKind) { per[k] = {}; for (var f in root._perKind[k]) per[k][f] = root._perKind[k][f]; per[k].interval = intervals[k] || 0 }
+    for (var k in root._perKind) { per[k] = {}; for (var f in root._perKind[k]) per[k][f] = root._perKind[k][f]; per[k].interval = intervals[k] || 0; per[k].bytesLastMin = root._bytesLastMin(k) }
+    // Phase 4: the newest pinned build log, counts only (SR26).
+    var lv = null, tk = Object.keys(root._logTargets)
+    if (tk.length) { var tu = root._logTargets[tk[tk.length - 1]]; lv = Model.logViewStatus({ kind: "buildlog", uuid: tu }, root._buildLogs[tu] || null) }
+    var hist = null, hk = Object.keys(root._history)
+    if (hk.length) { var hp = root._history[hk[hk.length - 1]]; hist = { uuid8: Model.uuid8(hp.appUuid), rows: hp.rows.length, count: hp.count, skip: hp.skip, loading: hp.loading, pages: Math.ceil(hp.rows.length / Api.HISTORY_TAKE) } }
     var configState = root._error && ["noconfig", "configerror", "unsafe", "tokencmd", "waitingtoken"].indexOf(root._error.kind) >= 0
       ? root._error.kind : (root._ready ? "ok" : "unconfigured")
     return {
@@ -1121,6 +1469,11 @@ Item {
       actionsLastMin: root._actionsLastMin(),
       inflightAction: root._inflightAction !== null,
       baseline: { deployments: root._baseline.deployments, resources: root._baseline.resources, servers: root._baseline.servers, version: root._baseline.version },
+      logView: lv,
+      buildLogsHeld: Object.keys(root._buildLogs).length,
+      history: hist,
+      tags: { count: root._tags.length, fetchedAt: root._tagsAt },
+      sensitive: root._sensitive,
       notify: {
         enabled: root._cfg ? root._cfg.notify : Model.notifyDefaults(),
         warning: root._cfg && root._cfg.warning ? root._cfg.warning : null,   // visible even when another warning holds the callout

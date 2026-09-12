@@ -1,0 +1,19 @@
+{
+  "_note": "POST /deploy?tag=<name> on Coolify Cloud 4.3.19, recorded 2026-09-12 and pasted through the scrubber; the second item is a hand-added queue-full refusal (no deployment uuid) to pin the per-item count",
+  "details": [
+    {
+      "resource_uuid": "qkyqt4xzvclreyhdutkrib9p",
+      "deployment_uuid": "c6vkvflj6qdkvw5k9sicwssh"
+    },
+    {
+      "resource_uuid": "h0wxyg40kc0lz727dom9l03i",
+      "deployment_uuid": null,
+      "status": 429,
+      "message": "Deployment queue is full (queue_full). Try again later."
+    }
+  ],
+  "message": [
+    "Application landing:main-qkyqt4xzvclreyhdutkrib9p deployment queued.",
+    "Application storefront:main-h0wxyg40kc0lz727dom9l03i queue is full."
+  ]
+}

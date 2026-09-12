@@ -89,6 +89,28 @@ function reqProjects()            { return { kind: "projects", path: "/projects"
 function reqProject(uuid)         { return { kind: "project", path: "/projects/" + seg(uuid), arg: uuid } }
 function reqServerResources(uuid) { return { kind: "serverResources", path: "/servers/" + seg(uuid) + "/resources", arg: uuid } }
 
+// Depth descriptors (Phase 4). Query integers are module constants, never a caller's
+// number (SR28); every Coolify-supplied value goes through seg; the container endpoint
+// family comes from a hasOwnProperty whitelist like GROUP (SR3).
+var HISTORY_TAKE = 10
+var CONTAINER_LINES = 200
+var CONTAINER_GROUP = { application: "applications", database: "databases", service: "services" }
+
+function reqBuildLog(uuid)        { return { kind: "buildlog", path: "/deployments/" + seg(uuid), arg: uuid, maxBytes: MAX_FILESIZE_LOG } }
+function reqHistory(uuid, skip) {
+  var s = Number(skip); s = isFinite(s) ? Math.max(0, Math.floor(s)) : 0
+  return { kind: "history", path: "/deployments/applications/" + seg(uuid) + "?skip=" + s + "&take=" + HISTORY_TAKE, arg: uuid, maxBytes: MAX_FILESIZE_LOG }
+}
+function reqContainerLog(kind, uuid, sub) {
+  if (!Object.prototype.hasOwnProperty.call(CONTAINER_GROUP, kind)) return null
+  var q = "?lines=" + CONTAINER_LINES + "&show_timestamps=false" + (kind === "service" ? "&sub_service_name=" + seg(sub) : "")
+  return { kind: "containerlog", path: "/" + CONTAINER_GROUP[kind] + "/" + seg(uuid) + "/logs" + q, arg: uuid }
+}
+function reqService(uuid)         { return { kind: "service", path: "/services/" + seg(uuid), arg: uuid } }
+function reqTags()                { return { kind: "tags", path: "/tags" } }
+// Same block shape as reqDeploy: block() emits the constant data-raw, so no body field here.
+function reqDeployTag(name)       { return { kind: "action", verb: "deployTag", target: name, method: "POST", path: "/deploy?tag=" + seg(name) } }
+
 // Action descriptors (Phase 2): every one is a POST with the constant empty body.
 // `kind: "action"` is what Service._finish branches on; `verb` and `target` ride along
 // for bookkeeping. The endpoint family comes from GROUP, checked with hasOwnProperty so

@@ -1072,20 +1072,20 @@ test("Model.openUrl: resource shape from topology, server shape, missing parts y
 
 test("Model.actionsFor: the applicability table; Open only with a url", () => {
   const ids = r => M.actionsFor(r).map(a => a.id).join(",")
-  eq(ids({ type: "resource", kind: "application", state: "running", url: "u" }), "redeploy,rebuild,restart,stop,open")
-  eq(ids({ type: "resource", kind: "application", state: "exited", url: "u" }), "deploy,start,open")
+  eq(ids({ type: "resource", kind: "application", state: "running", url: "u" }), "redeploy,rebuild,restart,stop,logs,history,open")
+  eq(ids({ type: "resource", kind: "application", state: "exited", url: "u" }), "deploy,start,history,open")
   const vis = M.actionsFor({ type: "resource", kind: "application", state: "running", url: "u" }).filter(a => a.button).map(a => a.id).join(",")
-  eq(vis, "redeploy,restart,stop,open", "rebuild is keyboard-only")
+  eq(vis, "redeploy,restart,stop,logs,history,open", "rebuild is keyboard-only")
   assert(M.actionsFor({ type: "resource", kind: "application", state: "running" }).find(a => a.id === "rebuild").confirm === true)
   assert(M.actionsFor({ type: "resource", kind: "application", state: "running" }).find(a => a.id === "redeploy").confirm === false)
-  eq(ids({ type: "resource", kind: "service", state: "restarting", url: "u" }), "restart,stop,open")
+  eq(ids({ type: "resource", kind: "service", state: "restarting", url: "u" }), "restart,stop,logs,open")
   eq(ids({ type: "resource", kind: "database", state: "paused", url: "u" }), "start,open")
-  eq(ids({ type: "resource", kind: "application", state: "unknown", url: "u" }), "open")
-  eq(ids({ type: "resource", kind: "application", state: "unknown", url: "" }), "")
+  eq(ids({ type: "resource", kind: "application", state: "unknown", url: "u" }), "history,open")
+  eq(ids({ type: "resource", kind: "application", state: "unknown", url: "" }), "history")
   eq(ids({ type: "server", url: "u" }), "validate,open")
-  eq(ids({ type: "deployment", status: "queued", url: "u" }), "cancel,open")
-  eq(ids({ type: "deployment", status: "in_progress", url: "" }), "cancel")
-  eq(ids({ type: "deployment", status: "finished", url: "u" }), "open")
+  eq(ids({ type: "deployment", status: "queued", url: "u" }), "logs,cancel,open")
+  eq(ids({ type: "deployment", status: "in_progress", url: "" }), "logs,cancel")
+  eq(ids({ type: "deployment", status: "finished", url: "u" }), "logs,open")
   eq(ids({ type: "fold" }), ""); eq(ids(null), "")
   const stop = M.actionsFor({ type: "resource", kind: "application", state: "running" }).find(a => a.id === "stop")
   assert(stop.destructive && stop.confirm, "stop confirms")
@@ -1115,7 +1115,7 @@ test("Model.actionRequest: the single gate — invalid, unknown, not applicable,
   eq(M.actionRequest(s, "deploy", SVC_RUNNING).why, "notapplicable", "deploy on a service")
   eq(M.actionRequest(s, "start", APP).why, "notapplicable", "start on a running app")
   eq(M.actionRequest(s, "stop", SVC_EXITED).why, "notapplicable", "stop on an exited service")
-  eq(M.actionRequest(s, "open", APP).why, "notapplicable", "open never reaches the service")
+  eq(M.actionRequest(s, "open", APP).why, "nav", "open never reaches the service")
   eq(M.actionRequest(s, "cancel", APP).why, "notapplicable")
   const a = M.actionRequest(s, "stop", APP)
   assert(a.ok); eq(a.targetType, "resource"); eq(a.kind, "application"); eq(a.confirm, true); eq(a.verb, "stop"); eq(a.status, "running:healthy")
@@ -1226,7 +1226,7 @@ test("Model.panelRows with expandedKey: the actions row follows its parent, is n
   const rows = M.panelRows(s, { expandedKey: "res:" + APP })
   const i = M.indexOfKey(rows, "res:" + APP)
   eq(rows[i + 1].type, "actions"); eq(rows[i + 1].key, "act:res:" + APP); eq(rows[i + 1].parentKey, "res:" + APP); eq(rows[i + 1].uuid, APP)
-  eq(rows[i + 1].actions.map(a => a.id).join(","), "redeploy,restart,stop,open")
+  eq(rows[i + 1].actions.map(a => a.id).join(","), "redeploy,restart,stop,logs,history,open")
   eq(rows[i + 1].targetType, "resource"); assert(rows[i + 1].name.length > 0)
   assert(M.nextSelectable(rows, i, 1) !== i + 1, "actions row is skipped by j")
   assert(M.nextSelectable(rows, i + 2, -1) !== i + 1, "and by k")
@@ -1243,7 +1243,7 @@ test("Model.panelRows with expandedKey: the actions row follows its parent, is n
   assert(!M.sameRows(a1, b), "rowRev changes when the action id list changes")
   const noUrl = actSnap({ instance: Object.assign({}, s.instance, { url: "" }) })
   const c = M.panelRows(noUrl, { expandedKey: "res:" + APP })
-  eq(c[M.indexOfKey(c, "res:" + APP) + 1].actions.map(a => a.id).join(","), "redeploy,restart,stop", "no Open without a url")
+  eq(c[M.indexOfKey(c, "res:" + APP) + 1].actions.map(a => a.id).join(","), "redeploy,restart,stop,logs,history", "no Open without a url")
   assert(!M.sameRows(a1, c), "url presence is in rowRev")
 })
 
@@ -1267,18 +1267,430 @@ test("Model.GLYPHS: the pending dot and every glyph a pending row can emit are i
 test("Model.footerHints: every cursor position; no o open without a url", () => {
   eq(M.footerHints("hero", null), "enter refresh · j down · r refresh · esc close")
   eq(M.footerHints("list", { type: "fold" }), "j/k move · enter fold · g group · r refresh · esc close")
-  eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }), "enter actions · d redeploy · s stop · t restart · o open")
+  eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }), "enter actions · d redeploy · s stop · t restart · L logs · o open")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "exited", url: "u" }), "enter actions · d deploy · s start · o open")
-  eq(M.footerHints("list", { type: "resource", kind: "service", state: "running", url: "u" }), "enter actions · s stop · t restart · o open")
+  eq(M.footerHints("list", { type: "resource", kind: "service", state: "running", url: "u" }), "enter actions · s stop · t restart · L logs · o open")
   eq(M.footerHints("list", { type: "resource", kind: "database", state: "exited", url: "u" }), "enter actions · s start · o open")
-  eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "" }), "enter actions · d redeploy · s stop · t restart")
+  eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "" }), "enter actions · d redeploy · s stop · t restart · L logs")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }, { expanded: true, actionFocus: "stop" }), "h/l pick · enter run · esc collapse")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }, { expanded: true, actionFocus: "" }), "l pick · enter collapse · esc collapse")
   eq(M.footerHints("list", { type: "server", url: "u" }), "enter actions · v validate · o open")
-  eq(M.footerHints("list", { type: "deployment", status: "in_progress", url: "u" }), "enter actions · x cancel · o open")
-  eq(M.footerHints("list", { type: "deployment", status: "finished", url: "u" }), "o open · j/k move")
-  eq(M.footerHints("list", { type: "deployment", status: "finished", url: "" }), "j/k move · g group · r refresh · esc close")
+  eq(M.footerHints("list", { type: "deployment", status: "in_progress", url: "u" }), "enter actions · x cancel · L logs · o open")
+  eq(M.footerHints("list", { type: "deployment", status: "finished", url: "u" }), "enter actions · L logs · o open")
+  eq(M.footerHints("list", { type: "deployment", status: "finished", url: "" }), "enter actions · L logs")
   eq(M.footerHints("list", { type: "resource" }, { confirmOpen: true }), "h/l pick · enter confirm · esc cancel")
+})
+
+// ---- Phase 4 depth: descriptors (SR28, SR36) ------------------------------------------------
+
+test("Api.reqContainerLog: one path per group, constant lines, sub name through seg, hostile kinds refused (SR28)", () => {
+  eq(A.CONTAINER_LINES, 200)
+  eq(A.reqContainerLog("application", "u1").path, "/applications/u1/logs?lines=200&show_timestamps=false")
+  eq(A.reqContainerLog("database", "u1").path, "/databases/u1/logs?lines=200&show_timestamps=false")
+  eq(A.reqContainerLog("service", "u1", "wordpress").path, "/services/u1/logs?lines=200&show_timestamps=false&sub_service_name=wordpress")
+  eq(A.reqContainerLog("service", "u1", "a b&c=d#e/../f\"\n,é").path,
+     "/services/u1/logs?lines=200&show_timestamps=false&sub_service_name=a%20b%26c%3Dd%23e%2F..%2Ff%22%0A%2C%C3%A9")
+  for (const k of ["server", "hasOwnProperty", "constructor", "", null]) eq(A.reqContainerLog(k, "u1"), null, "refused kind " + k)
+  eq(A.reqContainerLog("application", "u1").kind, "containerlog")
+})
+
+test("Api.reqHistory: constant take, skip clamped to a non-negative integer (SR28)", () => {
+  eq(A.HISTORY_TAKE, 10)
+  eq(A.reqHistory("u1", 0).path, "/deployments/applications/u1?skip=0&take=10")
+  eq(A.reqHistory("u1", 10).path, "/deployments/applications/u1?skip=10&take=10")
+  eq(A.reqHistory("u1", -5).path, "/deployments/applications/u1?skip=0&take=10")
+  eq(A.reqHistory("u1", NaN).path, "/deployments/applications/u1?skip=0&take=10")
+  eq(A.reqHistory("u1", "7.9").path, "/deployments/applications/u1?skip=7&take=10")
+  eq(A.reqHistory("u1", 0).maxBytes, A.MAX_FILESIZE_LOG, "history pages carry every row's log")
+  eq(A.reqBuildLog("u1").maxBytes, A.MAX_FILESIZE_LOG)
+  eq(A.reqBuildLog("u1").kind, "buildlog")
+  eq(A.reqTags().path, "/tags")
+  eq(A.reqService("u1").path, "/services/u1")
+})
+
+test("Api.reqDeployTag: one tag per request through seg, same block shape as reqDeploy, no body field (SR28, SR35)", () => {
+  const t = A.reqDeployTag("a,b & c/../d\"\n")
+  eq(t.path, "/deploy?tag=a%2Cb%20%26%20c%2F..%2Fd%22%0A")
+  eq(t.kind, "action"); eq(t.verb, "deployTag"); eq(t.method, "POST")
+  assert(!("body" in t), "no body field on a descriptor")
+  const b = A.block(inst, TOK, t, 10), d = A.block(inst, TOK, A.reqDeploy("u1", false), 10)
+  eq(b.replace(/url = "[^"]*"/, "URL"), d.replace(/url = "[^"]*"/, "URL"), "byte-identical apart from the url line")
+  eq(count(b, 'data-raw = "{}"'), 1)
+})
+
+test("Api.block never emits insecure, -k or proto-default on any descriptor (SR36)", () => {
+  const all = [A.reqVersion(), A.reqDeployments(), A.reqDeployment("u"), A.reqResources(), A.reqServers(), A.reqProjects(), A.reqProject("p"),
+               A.reqServerResources("s"), A.reqBuildLog("u"), A.reqHistory("u", 0), A.reqContainerLog("application", "u"), A.reqService("u"), A.reqTags(),
+               A.reqDeploy("u", true), A.reqLifecycle("application", "u", "stop"), A.reqCancel("u"), A.reqValidate("s"), A.reqDeployTag("t")]
+  for (const r of all) {
+    const b = A.block(inst, TOK, r, 10)
+    assert(!/insecure|proto-default|\n-k\b/.test(b), "no verification bypass in " + r.kind)
+    eq(count(b, 'proto = "=https,http"'), 1)
+  }
+})
+
+// ---- Phase 4 depth: build log parsing (SR26, SR27) --------------------------------------------
+
+const LOGF = fx("deployment-log-failed.json")
+const LOGS = fx("deployment-log-finished.json")
+// The fixture holds the parsed array under `entries`; Coolify's `logs` value is that array as JSON text.
+const encode = entries => JSON.stringify(entries)
+
+test("Model.parseBuildLog: entry 0 without order gets seq 1 and is kept; index is the identity (SR27)", () => {
+  const r = M.parseBuildLog(encode(LOGF.entries))
+  eq(r.entries.length, LOGF.entries.length); eq(r.dropped, 0); eq(r.truncated, false); eq(r.refused, false)
+  eq(r.bytes, encode(LOGF.entries).length, "bytes is the raw string length")
+  eq(r.entries[0].seq, 1); eq(r.entries[0].i, 0); eq(r.entries[1].seq, 2); eq(r.entries[1].i, 1)
+  eq(r.entries[0].hidden, false); eq(r.entries[1].hidden, true); eq(r.entries[6].stream, "stderr"); eq(r.entries[0].command, null)
+  assert(r.entries[6].command.startsWith("docker exec"), "command kept")
+})
+
+test("Model.parseBuildLog: double-encoded, malformed, non-array and non-object entries never throw (SR27)", () => {
+  eq(M.parseBuildLog(JSON.stringify(encode(LOGF.entries))).entries.length, LOGF.entries.length, "a JSON string of the array parses twice")
+  eq(M.parseBuildLog("[{\"command\":").entries.length, 0)
+  eq(M.parseBuildLog("{\"a\":1}").entries.length, 0)
+  eq(M.parseBuildLog("").entries.length, 0)
+  eq(M.parseBuildLog(null).entries.length, 0)
+  eq(M.parseBuildLog(42).entries.length, 0)
+  const mixed = M.parseBuildLog(JSON.stringify([null, 1, "x", [1], { command: null, output: "ok", type: "stdout" }]))
+  eq(mixed.entries.length, 1); eq(mixed.entries[0].i, 4); eq(mixed.entries[0].seq, 5)
+})
+
+test("Model.parseBuildLog: control characters stripped but newline and tab kept; caps on output and command (SR27)", () => {
+  const r = M.parseBuildLog(JSON.stringify([{ command: "a bc", output: "xy\nz\tw", type: "stdout" }]))
+  eq(r.entries[0].command, "abc"); eq(r.entries[0].output, "xy\nz\tw")
+  const big = M.parseBuildLog(JSON.stringify([{ command: "c".repeat(5000), output: "o".repeat(9000), type: "stdout" }]))
+  eq(big.entries[0].output.length, M.LOG_MAX_OUTPUT)
+  eq(big.entries[0].command.length, M.LOG_MAX_COMMAND)
+  assert(big.entries[0].command.indexOf("…") > 0, "middle-elided")
+  eq(M.LOG_MAX_COMMAND, 320)
+})
+
+test("Model.parseBuildLog: 2001 entries keep the 2000 tail with dropped 1; a 3.5 MB string is refused, not parsed (SR27)", () => {
+  const many = []; for (let i = 0; i < 2001; i++) many.push({ command: null, output: "line " + i, type: "stdout" })
+  const r = M.parseBuildLog(JSON.stringify(many))
+  eq(r.entries.length, 2000); eq(r.dropped, 1); eq(r.truncated, true); eq(r.refused, false)
+  eq(r.entries[0].i, 1); eq(r.entries[0].output, "line 1"); eq(r.entries[1999].i, 2000)
+  const huge = "x".repeat(3.5 * 1024 * 1024)
+  const h = M.parseBuildLog(huge)
+  eq(h.refused, true); eq(h.truncated, true); eq(h.entries.length, 0); eq(h.bytes, huge.length)
+  eq(M.LOG_MAX_CHARS, 3145728)
+})
+
+test("Model.buildLogRev: digits and colons only, empty on no entries, changes on append/growth/drop, stable on re-parse (SR26)", () => {
+  const r = M.parseBuildLog(encode(LOGF.entries))
+  const rev = M.buildLogRev(r.entries, r.dropped)
+  assert(/^[0-9:]+$/.test(rev), "rev is digits and colons: " + rev)
+  eq(M.buildLogRev([], 0), "")
+  eq(M.buildLogRev(M.parseBuildLog(encode(LOGF.entries)).entries, 0), rev, "same string, same rev")
+  const more = LOGF.entries.concat([{ command: null, output: "one more", type: "stdout" }])
+  assert(M.buildLogRev(M.parseBuildLog(encode(more)).entries, 0) !== rev, "append changes rev")
+  const grown = LOGF.entries.map((e, i) => i === LOGF.entries.length - 1 ? Object.assign({}, e, { output: e.output + " and more" }) : e)
+  assert(M.buildLogRev(M.parseBuildLog(encode(grown)).entries, 0) !== rev, "a longer last output changes rev")
+  assert(M.buildLogRev(r.entries, 3) !== rev, "dropped changes rev")
+})
+
+test("Model.failingEntry: the hidden stderr command step on a failed build; null on a finished one (acceptance 1)", () => {
+  const f = M.parseBuildLog(encode(LOGF.entries)).entries
+  const e = M.failingEntry(f, "failed")
+  assert(e, "found"); eq(e.i, 6); eq(e.hidden, true); eq(e.stream, "stderr")
+  assert(e.command.endsWith("pull'"), "the un-elided tail names the failing verb: " + e.command.slice(-20))
+  eq(M.failingEntry(M.parseBuildLog(encode(LOGS.entries)).entries, "finished"), null)
+  eq(M.failingEntry(f, "finished"), null, "status gates it")
+})
+
+test("Model.buildLogLines: the failing command is rendered with showHidden false, one row per physical line, stderr alone never urgent (acceptance 1, SR27)", () => {
+  const p = M.parseBuildLog(encode(LOGF.entries))
+  const failing = M.failingEntry(p.entries, "failed")
+  const lines = M.buildLogLines(p.entries, { showHidden: false, failing, uuid: "dep1" })
+  const cmd = lines.filter(l => l.rowType === "line" && l.text.startsWith("$ "))
+  eq(cmd.length, 1, "exactly the failing command is shown among hidden steps")
+  assert(cmd[0].text.endsWith("pull'"), "tail kept: " + cmd[0].text.slice(-12)); eq(cmd[0].tone, "urgent")
+  const mark = lines.findIndex(l => l.rowType === "note" && l.text === "── failure ──")
+  assert(mark >= 0 && lines[mark + 1] === cmd[0], "marker precedes the failing command")
+  const ref = lines.filter(l => /failed to resolve reference/.test(l.text))
+  eq(ref.length, 1); eq(ref[0].tone, "urgent")
+  eq(lines.filter(l => l.i === 6 && l.rowType === "line").length, 3, "command line + two output lines from the multi-line output")
+  const summary = lines.filter(l => /^Deployment failed/.test(l.text))
+  eq(summary.length, 2); eq(summary[0].tone, "urgent")
+  assert(lines.every(l => l.hidden !== true || l.i === 6), "no other hidden entry rendered")
+  assert(lines.every(l => !/^#[0-9] /.test(l.text)), "stack trace hidden by default")
+  const all = M.buildLogLines(p.entries, { showHidden: true, failing, uuid: "dep1" })
+  assert(all.length > lines.length && all.some(l => /^#0 /.test(l.text)), "H shows the hidden steps")
+  eq(all.filter(l => l.hidden && l.i !== 6 && l.tone !== "dim").length, 0, "hidden steps are dim, never urgent")
+  const fin = M.buildLogLines(M.parseBuildLog(encode(LOGS.entries)).entries, { showHidden: false, failing: null, uuid: "dep2" })
+  eq(fin.filter(l => l.tone === "urgent").length, 0, "a successful build's stderr tail is not urgent")
+  assert(fin.some(l => l.text.startsWith("$ docker compose")), "visible command steps render on a finished build")
+  const keys = new Set(lines.map(l => l.key)); eq(keys.size, lines.length, "row keys unique")
+})
+
+test("Model.viewRow: every overlay row builder emits the same key set (ListModel roles)", () => {
+  const want = M.VIEW_KEYS.slice().sort().join(",")
+  const p = M.parseBuildLog(encode(LOGF.entries))
+  const rows = M.buildLogLines(p.entries, { showHidden: true, failing: M.failingEntry(p.entries, "failed"), uuid: "d" })
+  const hist = M.normaliseHistory(fx("history-page.json"))
+  rows.push(M.historyRow(hist.rows[0], "app1", "https://app.coolify.io"))
+  rows.push(M.moreRow({ appUuid: "app1", rows: hist.rows, count: hist.count, loading: false }, 10))
+  rows.push(M.pickRow("svc1", "wordpress"))
+  rows.push(M.noteRow("n", "Loading…"))
+  for (const r of rows) eq(Object.keys(r).sort().join(","), want, "keys of a " + r.rowType + " row")
+  for (const r of rows) eq(r.type, r.rowType, "type mirrors rowType so the cursor helpers see it")
+  const list = [M.historyRow(hist.rows[0], "app1", ""), M.historyRow(hist.rows[1], "app1", ""), M.moreRow({ appUuid: "app1", rows: hist.rows, count: 39, loading: false }, 10)]
+  eq(M.nextSelectable(list, 1, 1), 2, "j reaches the Show more row"); eq(list[2].type, "more")
+  eq(M.nextSelectable([M.pickRow("s", "a"), M.pickRow("s", "b")], 0, 1), 1, "j reaches the second container")
+  for (const r of rows) if (r.rowType === "line" || r.rowType === "note") assert(!M.SELECTABLE[r.type], "log lines and notes never take the cursor")
+})
+
+test("Model.parseContainerLog: split on newline, no trailing newline, empty and missing logs, cap and tail", () => {
+  const text = fx("container-log.json").text
+  const r = M.parseContainerLog({ logs: text })
+  eq(r.lines.length, 3); eq(r.truncated, false); assert(r.lines[2].endsWith("4ms"))
+  eq(M.parseContainerLog(JSON.stringify({ logs: text })).lines.length, 3, "a body string parses")
+  eq(M.parseContainerLog({ logs: "" }).lines.length, 0)
+  eq(M.parseContainerLog({}).lines.length, 0)
+  eq(M.parseContainerLog(null).lines.length, 0)
+  eq(M.parseContainerLog("not json").lines.length, 0)
+  const big = M.parseContainerLog({ logs: "x\n".repeat(2100).slice(0, -1) })
+  eq(big.lines.length, 2000); eq(big.truncated, true)
+  eq(M.parseContainerLog({ logs: "a b[31mc" }).lines[0], "ab[31mc", "control bytes stripped")
+})
+
+test("Model.normaliseHistory: {count, rows} newest first, no logs key on any row; historyRow never renders HEAD (SR26)", () => {
+  const h = M.normaliseHistory(fx("history-page.json"))
+  eq(h.count, 39); eq(h.rows.length, 3)
+  for (const r of h.rows) assert(!("logs" in r), "no logs on a normalised row")
+  assert(Date.parse(h.rows[0].createdAt) >= Date.parse(h.rows[1].createdAt), "newest first")
+  const row = M.historyRow(h.rows[0], "app1", "https://app.coolify.io")
+  eq(row.type, "history"); eq(row.rowType, "history"); eq(row.key, "hist:" + h.rows[0].uuid); eq(row.appUuid, "app1")
+  eq(row.sub, "deploy", "commit HEAD and no branch renders as deploy"); assert(!("age" in row) || row.age === null)
+  eq(M.historyRow(Object.assign({}, h.rows[0], { restartOnly: true }), "app1", "").sub, "restart")
+  eq(M.historyRow(Object.assign({}, h.rows[0], { branch: "main" }), "app1", "").sub, "main")
+  eq(M.historyRow(Object.assign({}, h.rows[0], { branch: "HEAD" }), "app1", "").sub, "deploy")
+  eq(M.normaliseHistory(fx("history-empty.json")).rows.length, 0); eq(M.normaliseHistory(fx("history-empty.json")).count, 39)
+  eq(M.normaliseHistory(null).count, 0); eq(M.normaliseHistory({ count: -3, deployments: "x" }).count, 0)
+  const more = M.moreRow({ appUuid: "app1", rows: h.rows, count: 39, loading: false }, 10)
+  eq(more.text, "Show 10 more (3 of 39)"); eq(more.shown, 3); eq(more.total, 39)
+  eq(M.moreRow({ appUuid: "app1", rows: h.rows, count: 3, loading: false }, 10), null, "nothing more at the end")
+  eq(M.moreRow({ appUuid: "app1", rows: h.rows, count: 5, loading: false }, 10).text, "Show 2 more (3 of 5)")
+  eq(M.moreRow({ appUuid: "app1", rows: h.rows, count: 39, loading: true }, 10).text, "Loading…")
+})
+
+test("Model.fetchOutcome: not-running, picker, history/buildlog 404, toolarge, 429, offline, ability; null on success (SR29)", () => {
+  const rec = (code, body, exit) => ({ exit: exit || 0, code, body: body || "", errmsg: "", headers: null })
+  eq(M.fetchOutcome("containerlog", rec(404, fixture("container-log-404.json")), "api").text, "api is not running.")
+  eq(M.fetchOutcome("containerlog", rec(400, fixture("container-log-400.json")), "wp").text, "Pick a container.")
+  eq(M.fetchOutcome("history", rec(404, fixture("history-404.json"))).text, "Coolify no longer has that application.")
+  eq(M.fetchOutcome("buildlog", rec(404, "{\"message\":\"Deployment not found\"}")).text, "Coolify no longer has that deployment.")
+  eq(M.fetchOutcome("buildlog", rec(0, "", 63)).text, "This build log is larger than 4 MB. Open it in Coolify.")
+  eq(M.fetchOutcome("buildlog", rec(429, fixture("error-429.json"))).text, "Rate limited · backing off 30s.")
+  eq(M.fetchOutcome("history", rec(0, "", 7)).text, "Offline · retrying.")
+  eq(M.fetchOutcome("history", rec(403, fixture("error-403-ability.json"))).text, M.errorText(M.errorFor({ httpCode: 403, body: fixture("error-403-ability.json") }), null, "history"))
+  eq(M.fetchOutcome("buildlog", rec(200, "{}")), null)
+  eq(M.fetchOutcome("buildlog", undefined).text, "Coolify returned nothing (curl 1)")
+  const o = M.fetchOutcome("history", rec(404, fixture("history-404.json")))
+  eq(o.tone, "urgent"); eq(o.error.httpCode, 404)
+})
+
+test("Model.errorText is the single copy table: actionOutcome still says what it said (SR10)", () => {
+  eq(M.actionOutcome("stop", "resource", { exit: 0, code: 404, body: "{}", errmsg: "", headers: null }).text, "Coolify no longer has that resource")
+  eq(M.actionOutcome("deploy", "resource", { exit: 0, code: 403, body: fixture("error-403-ability.json"), errmsg: "", headers: null }).text, "Token lacks the deploy permission")
+  eq(M.actionOutcome("deploy", "resource", { exit: 7, code: 0, body: "", errmsg: "", headers: null }).text, "Coolify is unreachable")
+})
+
+test("Model.sensitiveState: yes with a string, no only on a terminal row without logs, unknown otherwise (SR37)", () => {
+  eq(M.sensitiveState({ status: "in_progress", logs: "[]" }), "yes")
+  eq(M.sensitiveState({ status: "finished" }), "no")
+  eq(M.sensitiveState({ status: "failed", logs: null }), "no")
+  eq(M.sensitiveState({ status: "in_progress" }), "unknown")
+  eq(M.sensitiveState({ status: "queued", logs: null }), "unknown")
+  eq(M.sensitiveState(null), "unknown")
+})
+
+test("Model.deploymentsInterval: 2 s while deploying, stepping up at 256 KB, 1 MB, 4 MB; the config value when idle (SR30)", () => {
+  eq(M.deploymentsInterval(false, 4, 9999999), 4)
+  eq(M.deploymentsInterval(true, 4, 0), 2)
+  eq(M.deploymentsInterval(true, 4, 262144), 2)
+  eq(M.deploymentsInterval(true, 4, 262145), 4)
+  eq(M.deploymentsInterval(true, 4, 1048577), 8)
+  eq(M.deploymentsInterval(true, 4, 4194305), 15)
+  eq(M.deploymentsInterval(true, 4, undefined), 2)
+})
+
+test("Model.normaliseTags: uuid and name validated, nothing else kept; tagRow shape", () => {
+  const t = M.normaliseTags(fx("tags.json"))
+  eq(t.length, 2); eq(t[1].name, "production-landing"); eq(Object.keys(t[0]).join(","), "uuid,name")
+  eq(M.normaliseTags(fx("tags-empty.json")).length, 0)
+  eq(M.normaliseTags(null).length, 0)
+  eq(M.normaliseTags([{ uuid: "ok1", name: "a b" }, { uuid: "../x", name: "fine" }, { uuid: "ok2", name: "a,b" }, { uuid: "ok3", name: "good-tag" }, null, "x"]).map(x => x.name).join(","), "good-tag")
+  const row = M.tagRow(t[1])
+  eq(row.type, "tag"); eq(row.key, "tag:" + t[1].uuid); eq(row.uuid, t[1].uuid); eq(row.name, "production-landing"); eq(row.pendingVerb, "")
+})
+
+test("Model.logViewStatus: counts and a digits-only rev, never text (SR26)", () => {
+  const p = M.parseBuildLog(encode(LOGF.entries))
+  const rec = { entries: p.entries, dropped: p.dropped, rev: M.buildLogRev(p.entries, p.dropped), bytes: p.bytes, source: "list", terminal: false }
+  const s = M.logViewStatus({ kind: "buildlog", uuid: "abcdefghijklmnop" }, rec)
+  eq(s.kind, "buildlog"); eq(s.uuid8, "abcdefgh"); eq(s.entries, LOGF.entries.length); eq(s.bytes, p.bytes); eq(s.source, "list")
+  assert(/^[0-9:]*$/.test(s.rev), "rev digits only")
+  for (const k of Object.keys(s)) assert(!Array.isArray(s[k]) && !/text|lines|output|command/.test(k), "no text field: " + k)
+  eq(M.logViewStatus({ kind: "containerlog", uuid: "u" }, { lines: ["a", "b"], bytes: 9 }).entries, 2)
+  eq(M.logViewStatus(null, rec), null)
+})
+
+// ---- Phase 4 depth: rows, actions, hints, tables ---------------------------------------------
+
+test("Model.actionsFor / actionFor: Logs first on deployments, Logs on running rows, History on applications, Deploy on tags; L resolves (SR3)", () => {
+  const ids = r => M.actionsFor(r).map(a => a.id).join(",")
+  eq(ids({ type: "deployment", status: "finished", url: "u" }), "logs,open", "a terminal deployment has Logs then Open")
+  eq(ids({ type: "deployment", status: "in_progress", url: "u" }), "logs,cancel,open")
+  eq(ids({ type: "resource", kind: "database", state: "running", url: "u" }), "restart,stop,logs,open")
+  eq(ids({ type: "resource", kind: "database", state: "exited", url: "u" }), "start,open", "no Logs on a stopped container")
+  eq(ids({ type: "resource", kind: "service", state: "exited", url: "u" }), "start,open", "no History off an application")
+  eq(ids({ type: "tag", uuid: "t1", name: "production-landing" }), "deployTag")
+  const tag = M.actionsFor({ type: "tag", uuid: "t1", name: "x" })[0]
+  eq(tag.confirm, true); eq(tag.destructive, false); eq(tag.label, "Deploy")
+  eq(M.actionFor({ type: "tag", uuid: "t1", name: "x" }, "d").id, "deployTag", "d on a tag row")
+  eq(M.actionFor({ type: "deployment", status: "finished", url: "u" }, "L").id, "logs", "L resolves to logs")
+  eq(M.actionFor({ type: "resource", kind: "application", state: "exited", url: "u" }, "L"), null, "no logs on a stopped app")
+  eq(M.targetTypeOf({ type: "tag" }), "tag"); eq(M.targetTypeOf({ type: "actions" }), "")
+})
+
+test("Model.actionRequest: nav verbs never reach act(); the tag arm keys on the tag uuid and carries the name (SR28, SR35)", () => {
+  const s = actSnap({ tags: M.normaliseTags(fx("tags.json")) })
+  for (const v of ["logs", "history", "open"]) eq(M.actionRequest(s, v, APP).why, "nav", v + " is navigation")
+  const t = s.tags[1]
+  const a = M.actionRequest(s, "deployTag", t.uuid)
+  assert(a.ok); eq(a.verb, "deployTag"); eq(a.uuid, t.uuid); eq(a.name, "production-landing"); eq(a.targetType, "tag"); eq(a.confirm, true); eq(a.kind, null)
+  eq(M.actionRequest(s, "d", t.uuid).verb, "deployTag", "d resolves on a tag")
+  eq(M.actionRequest(s, "stop", t.uuid).why, "notapplicable")
+  eq(M.actionRequest(s, "deployTag", APP).why, "notapplicable", "deployTag on an application")
+  eq(M.actionRequest(s, "deployTag", "production-landing").why, "invalid", "a tag name is not a key: the uuid gate refuses it")
+  eq(M.actionRequest(s, "deployTag", "a b").why, "invalid")
+  eq(M.actionRequest(actSnap(), "deployTag", t.uuid).why, "unknown", "no tags loaded")
+  const c = M.confirmCopy("deployTag", "production-landing")
+  eq(c.message, "Deploy everything tagged production-landing? Coolify decides what that is; the API cannot list it."); eq(c.confirmText, "Deploy")
+})
+
+test("Model.actionOutcome deployTag: per-item queued/refused counts and every deployment uuid; queue_full is a refusal (SR35)", () => {
+  const rec = { exit: 0, code: 200, body: fixture("action-deploy-tag-ok.json"), errmsg: "", headers: null }
+  const o = M.actionOutcome("deployTag", "tag", rec)
+  assert(o.ok); eq(o.queued, 1); eq(o.refused, 1); eq(o.deploymentUuids.join(","), "c6vkvflj6qdkvw5k9sicwssh"); eq(o.deploymentUuid, "c6vkvflj6qdkvw5k9sicwssh")
+  eq(o.text, "1 queued, 1 refused (queue full)"); eq(o.tone, "urgent"); eq(o.error, null)
+  const all = M.actionOutcome("deployTag", "tag", { exit: 0, code: 200, body: JSON.stringify({ deployments: [{ message: "ok", resource_uuid: "r", deployment_uuid: "d1abc" }] }), errmsg: "", headers: null })
+  eq(all.text, "1 queued", "the documented `deployments` key still reads"); eq(all.tone, "dim"); eq(all.refused, 0)
+  const real = M.actionOutcome("deployTag", "tag", { exit: 0, code: 200, body: JSON.stringify({ details: [{ resource_uuid: "r", deployment_uuid: "d1abc" }], message: ["queued."] }), errmsg: "", headers: null })
+  eq(real.text, "1 queued", "the live `details` shape"); eq(real.deploymentUuid, "d1abc")
+  const none = M.actionOutcome("deployTag", "tag", { exit: 0, code: 200, body: JSON.stringify({ deployments: [] }), errmsg: "", headers: null })
+  eq(none.text, "0 queued"); assert(none.ok)
+  eq(M.actionOutcome("deployTag", "tag", { exit: 0, code: 403, body: fixture("error-403-ability.json"), errmsg: "", headers: null }).text, "Token lacks the deploy permission")
+  const plain = M.actionOutcome("deploy", "resource", { exit: 0, code: 200, body: fixture("action-deploy-ok.json"), errmsg: "", headers: null })
+  assert(Array.isArray(plain.deploymentUuids), "the field exists on every outcome"); eq(plain.queued, 0)
+})
+
+test("Model.panelRows: TAGS fold after RESOURCES only when tags exist, on both return paths; a tag row is selectable and renders pending through withPending", () => {
+  const tags = M.normaliseTags(fx("tags.json"))
+  const s = actSnap({ tags })
+  const rows = M.panelRows(s, {})
+  const sec = rows.map(r => r.key)
+  assert(sec.indexOf("sec:tags") > sec.indexOf("sec:resources"), "TAGS after RESOURCES")
+  const fold = rows[M.indexOfKey(rows, "fold:tags")]
+  eq(fold.type, "fold"); eq(fold.open, false, "closed by default"); eq(fold.count, 2)
+  eq(rows.filter(r => r.type === "tag").length, 0, "folded: no tag rows")
+  const open = M.panelRows(s, { folded: { "fold:tags": true } })
+  const tagRows = open.filter(r => r.type === "tag")
+  eq(tagRows.length, 2); eq(tagRows[1].name, "production-landing"); eq(tagRows[1].key, "tag:" + tags[1].uuid)
+  const fi = M.indexOfKey(open, "fold:tags")
+  eq(open[M.nextSelectable(open, fi, 1)].type, "tag", "j from the fold lands on a tag row")
+  eq(M.panelRows(actSnap(), {}).filter(r => r.key === "sec:tags").length, 0, "no section without tags")
+  const empty = actSnap({ resources: [], tree: [], byServer: {}, tags })
+  assert(M.indexOfKey(M.panelRows(empty, {}), "sec:tags") >= 0, "the empty-resources path carries it too")
+  const pending = {}; pending[tags[1].uuid] = { verb: "deployTag", since: 0, stale: false }
+  const pend = M.panelRows(s, { folded: { "fold:tags": true }, pending })
+  const pr = pend[M.indexOfKey(pend, "tag:" + tags[1].uuid)]
+  assert(pr.pendingVerb.length > 0, "pending decorates the tag row"); eq(pr.tone, "accent")
+  assert(!M.sameRows(open, pend), "rowRev sees the pending flip")
+  const withStrip = M.panelRows(s, { folded: { "fold:tags": true }, expandedKey: "tag:" + tags[1].uuid })
+  const ti = M.indexOfKey(withStrip, "tag:" + tags[1].uuid)
+  eq(withStrip[ti + 1].type, "actions"); eq(withStrip[ti + 1].actions.map(a => a.id).join(","), "deployTag"); eq(withStrip[ti + 1].targetType, "tag")
+  for (const r of open) for (const g of [r.dot, r.glyph]) if (g) assert(M.GLYPHS.indexOf(g) >= 0, "glyph in allowlist")
+})
+
+test("Model.footerHints: view lines for following/held/paused/terminal logs, container logs, history and the picker; o open only with a page", () => {
+  eq(M.footerHints("view", null, { view: { kind: "buildlog", following: true, terminal: false, hasUrl: true } }), "following · j/k scroll · b newest · H steps · o open · h back")
+  eq(M.footerHints("view", null, { view: { kind: "buildlog", following: false, terminal: false, hasUrl: false } }), "held · j/k scroll · b newest · H steps · h back")
+  eq(M.footerHints("view", null, { view: { kind: "buildlog", following: true, terminal: false, paused: true, hasUrl: true } }), "paused · j/k scroll · b newest · H steps · o open · h back")
+  eq(M.footerHints("view", null, { view: { kind: "buildlog", following: true, terminal: true, hasUrl: true } }), "j/k scroll · b newest · H steps · o open · h back")
+  eq(M.footerHints("view", null, { view: { kind: "containerlog", hasUrl: true } }), "j/k scroll · b newest · r refetch · o open · h back")
+  eq(M.footerHints("view", null, { view: { kind: "history", hasUrl: true } }), "j/k move · enter log · o open · h back")
+  eq(M.footerHints("view", null, { view: { kind: "servicepick" } }), "j/k move · enter logs · h back")
+  eq(M.footerHints("list", { type: "tag", uuid: "t", name: "x" }), "enter actions · d deploy")
+  eq(M.footerHints("view", null, { view: { kind: "history" }, confirmOpen: true }), "h/l pick · enter confirm · esc cancel", "the confirm wins")
+})
+
+// ---- Phase 4 depth: remaining plan cases --------------------------------------------------
+
+test("Model.normaliseHistory rows take joinBranch like the drain arm: branch and appUuid from the joined resources", () => {
+  const s = loadedSnap()
+  const h = M.normaliseHistory(fx("history-page.json"))
+  const joined = M.joinBranch(h.rows, s.resources)
+  eq(joined.length, h.rows.length)
+  for (const r of joined) assert(!("logs" in r), "still no logs after the join")
+  const api = s.resources.filter(r => r.uuid === "xyhpwdxqu33omjgwuo6c7cjp")[0]
+  if (api) { assert(joined.every(r => r.appUuid === "xyhpwdxqu33omjgwuo6c7cjp"), "appUuid joined"); eq(joined[0].branch, api.gitBranch || joined[0].branch) }
+  const row = M.historyRow(joined[0], "xyhpwdxqu33omjgwuo6c7cjp", "https://app.coolify.io")
+  assert(row.sub === "deploy" || row.sub === "restart" || (row.sub && row.sub !== "HEAD"), "sub never renders HEAD: " + row.sub)
+  assert(row.url.indexOf("https://app.coolify.io/") === 0, "url from the instance origin")
+})
+
+test("Model.serialiseRecent never emits a logs key, even when a record carries one (SR26)", () => {
+  const d = M.normaliseDeployment(fx("deployment-finished.json"))
+  d.logs = "[{\"command\":null,\"output\":\"secret build output\"}]"
+  d.entries = [{ output: "x" }]
+  const at = Date.parse(d.finishedAt || d.updatedAt) + 1000       // the file's 24 h age-out is measured from this clock
+  const text = M.serialiseRecent([d], "https://app.coolify.io", at).text
+  assert(text.indexOf("logs") < 0, "no logs key or text"); assert(text.indexOf("secret build output") < 0); assert(text.indexOf("entries") < 0)
+  const back = M.parseRecent(text, "https://app.coolify.io", at)
+  eq(back.rejected, false); eq(back.recent.length, 1); assert(!("logs" in back.recent[0]))
+})
+
+// ---- Phase 4 depth: review-panel findings --------------------------------------------------
+
+test("Model.viewRow coerces every field to its placeholder's type and drops unknown keys (review: security-analyst 3)", () => {
+  const r = M.viewRow("line", { i: "7", hidden: "yes", shown: {}, text: 42, loading: 0, extra: { evil: 1 }, tone: null })
+  eq(r.i, 7); eq(r.hidden, true); eq(r.shown, 0); eq(r.text, "42"); eq(r.loading, false); eq(r.tone, "")
+  assert(!("extra" in r), "an unknown key never becomes a role")
+  eq(Object.keys(r).sort().join(","), M.VIEW_KEYS.slice().sort().join(","))
+})
+
+test("Model.parseBuildLog bounds physical lines: 200 per entry, 5000 per log, dropping head entries with `dropped` (review: security-analyst 1)", () => {
+  eq(M.LOG_MAX_OUTPUT_LINES, 200); eq(M.LOG_MAX_LINES, 5000)
+  const one = M.parseBuildLog(JSON.stringify([{ command: null, output: "x\n".repeat(400).slice(0, -1), type: "stdout" }]))
+  eq(one.entries[0].output.split("\n").length, 200, "per-entry tail")
+  const many = []; for (let i = 0; i < 100; i++) many.push({ command: null, output: "l\n".repeat(100).slice(0, -1), type: "stdout" })
+  const r = M.parseBuildLog(JSON.stringify(many))            // 100 entries x 100 lines = 10 000 physical lines
+  const lines = r.entries.reduce((n, e) => n + e.output.split("\n").length, 0)
+  assert(lines <= 5000, "line budget kept: " + lines); assert(r.truncated); assert(r.dropped >= 50, "head entries dropped: " + r.dropped)
+  eq(r.entries[0].i, r.dropped, "dropped is the first kept index")
+  const rows = M.buildLogLines(r.entries, { showHidden: true, failing: null, uuid: "u" })
+  assert(rows.length <= 5000, "the ListModel never receives more rows than the budget")
+})
+
+test("Model.withPending on a tag row reads deploying…, and GERUND covers deployTag (review: ux-api-designer 2)", () => {
+  eq(M.gerund("deployTag"), "deploying")
+  const row = M.withPending(M.tagRow({ uuid: "t1", name: "production-landing" }), { verb: "deployTag", since: 0, stale: false })
+  eq(row.pendingVerb, "deploying…"); eq(row.sub, "deploying…"); eq(row.tone, "accent")
+  eq(M.tagRow({ uuid: "t1", name: "x" }).dot, M.G.tag, "a tag row has its own bullet")
+  assert(M.GLYPHS.indexOf(M.G.tag) >= 0)
+})
+
+// review re-check (ux 4): the container breadcrumb passes fetchedAt as a number
+test("elapsed and age accept a numeric timestamp as well as ISO", () => {
+  const now = 1789205833000
+  eq(M.elapsed(now - 12000, now), "12s")
+  eq(M.elapsed(new Date(now - 12000).toISOString(), now), "12s")
+  eq(M.elapsed(now - 90000, now), "1m 30s")
+  eq(M.elapsed("not a date", now), "")
+  eq(M.age(now - 12000, now), "Just now")
 })
 
 console.log(passed + " passed, " + failed + " failed")

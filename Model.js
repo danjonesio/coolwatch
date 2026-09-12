@@ -26,7 +26,9 @@ var G = {
   dotOff: "○",            // ○
   dotUnknown: "◌",        // ◌
   foldOpen: "▾",          // ▾
-  foldClosed: "▸"         // ▸
+  foldClosed: "▸",        // ▸
+  back: "‹",              // ‹ U+2039: the overlay breadcrumb (Phase 4; JetBrains Mono Latin-1/punctuation block)
+  tag: "#"                // a tag row's bullet (Phase 4; ASCII)
 }
 var GLYPHS = Object.keys(G).map(function (k) { return G[k] })
 
@@ -45,7 +47,7 @@ var UI_SEGMENT = { application: "application", service: "service", database: "da
 // panel-closed resources interval (60 s) plus margin; every entry is dropped at 300 s.
 var PENDING_STALE_MS = 150 * 1000
 var PENDING_DROP_MS = 300 * 1000
-var GERUND = { deploy: "deploying", redeploy: "redeploying", rebuild: "rebuilding", restart: "restarting", stop: "stopping", start: "starting", validate: "validating", cancel: "cancelling" }
+var GERUND = { deploy: "deploying", redeploy: "redeploying", rebuild: "rebuilding", restart: "restarting", stop: "stopping", start: "starting", validate: "validating", cancel: "cancelling", deployTag: "deploying" }
 var RUNNING_STATES = { running: true, starting: true, restarting: true, degraded: true }
 var STOPPED_STATES = { exited: true, paused: true }
 
@@ -1114,11 +1116,19 @@ function actionsFor(row) {
       }
       if (running) { out.push(act("restart", "Restart")); out.push(act("stop", "Stop", true, true)) }
       else out.push(act("start", "Start"))
+      // Phase 4: the container tail needs a running container (a stopped one is 404).
+      if (running) out.push(act("logs", "Logs"))
     }
+    if (row.kind === "application") out.push(act("history", "History"))
   } else if (row.type === "server") {
     out.push(act("validate", "Validate"))
   } else if (row.type === "deployment") {
+    // Phase 4: Logs first, on every deployment row, so Enter, Enter reaches the build log.
+    out.push(act("logs", "Logs"))
     if (ACTIVE[row.status]) out.push(act("cancel", "Cancel", true, true))
+  } else if (row.type === "tag") {
+    // Phase 4: a fan-out the API cannot enumerate, so it always confirms (SR35).
+    out.push(act("deployTag", "Deploy", false, true))
   } else return []
   if (row.url) out.push(OPEN)
   return out
@@ -1130,18 +1140,20 @@ function actionFor(row, verb) {
   var list = actionsFor(row)
   var running = !!RUNNING_STATES[row && row.state]
   var want = verb === "s" ? (running ? "stop" : "start")
-           : (verb === "d" || verb === "deploy") ? (running ? "redeploy" : "deploy")
-           : (verb === "D" ? "rebuild" : verb)
+           : (verb === "d" || verb === "deploy") ? (row && row.type === "tag" ? "deployTag" : (running ? "redeploy" : "deploy"))
+           : (verb === "D" ? "rebuild" : (verb === "L" ? "logs" : verb))
   for (var i = 0; i < list.length; i++) if (list[i].id === want) return list[i]
   return null
 }
 
-function targetTypeOf(row) { return row.type === "resource" ? "resource" : (row.type === "server" ? "server" : (row.type === "deployment" ? "deployment" : "")) }
+var TARGET_TYPE = { resource: "resource", server: "server", deployment: "deployment", tag: "tag" }
+function targetTypeOf(row) { return (row && TARGET_TYPE[row.type]) || "" }
 
 // The single gate for panel and IPC: is this uuid in the store, and does this verb apply?
 // Returns no Api descriptor (Model never imports Api); the service builds it from `kind`.
 function actionRequest(s, verb, uuid) {
   uuid = String(uuid === undefined || uuid === null ? "" : uuid)
+  if (NAV_VERBS[verb]) return { ok: false, why: "nav" }
   if (!UUID_RE.test(uuid)) return { ok: false, why: "invalid" }
   s = s || {}
   var o = origin(s.instance && s.instance.url)
@@ -1149,8 +1161,11 @@ function actionRequest(s, verb, uuid) {
   ;(s.resources || []).forEach(function (r) { if (!row && r.uuid === uuid) { obj = r; row = resourceRow(r, 0, o) } })
   ;(s.deployments || []).forEach(function (d) { if (!row && d.uuid === uuid) { obj = d; row = deploymentRow(d, o) } })
   ;(s.servers || []).forEach(function (x) { if (!row && x.uuid === uuid) { obj = x; row = serverRow(x, o) } })
+  // Phase 4: a tag is keyed by its Coolify uuid; the name (TAG_RE-validated at normalise)
+  // is what reaches the query string (SR28, SR35).
+  ;(s.tags || []).forEach(function (t) { if (!row && t.uuid === uuid) { obj = t; row = tagRow(t) } })
   if (!row) return { ok: false, why: "unknown" }
-  var a = verb === "open" ? null : actionFor(row, verb)
+  var a = actionFor(row, verb)
   if (!a) return { ok: false, why: "notapplicable" }
   return { ok: true, verb: a.id, uuid: uuid, name: row.name, targetType: targetTypeOf(row),
            kind: row.type === "resource" ? row.kind : null, confirm: a.confirm, destructive: a.destructive,
@@ -1171,39 +1186,62 @@ function confirmCopy(verb, name) {
     case "stop": return { message: "Stop " + n + "?", cancelText: "Cancel", confirmText: "Stop" }
     case "rebuild": return { message: "Rebuild " + n + " without cache?", cancelText: "Cancel", confirmText: "Rebuild" }
     case "cancel": return { message: "Cancel the deployment of " + n + "?", cancelText: "Keep it", confirmText: "Cancel it" }
+    case "deployTag": return { message: "Deploy everything tagged " + n + "? Coolify decides what that is; the API cannot list it.", cancelText: "Cancel", confirmText: "Deploy" }
     default: return { message: gerund(verb) + " " + n + "?", cancelText: "Cancel", confirmText: "Confirm" }
   }
 }
 
-var TARGET_WORD = { resource: "resource", deployment: "deployment", server: "server" }
+var TARGET_WORD = { resource: "resource", deployment: "deployment", server: "server", tag: "tag" }
 var OK_TEXT = { deploy: "Deployment queued", redeploy: "Redeploy queued", rebuild: "Rebuild queued", stop: "Stop requested", start: "Start requested",
                 cancel: "Deployment cancelled", validate: "Validation started" }
+
+// One classified error -> one sentence. Shared by the action status line and the Phase 4
+// view fetches (fetchOutcome), so the ability/offline/429 copy exists once. Never echoes a body.
+function errorText(e, rec, targetType) {
+  var ab
+  switch (e.kind) {
+    case "ability": ab = abilityOf(e.detail); return ab ? "Token lacks the " + ab + " permission" : "Coolify said: " + elide(e.detail, 110)
+    case "apidisabled": return "Coolify's API is disabled on this instance"
+    case "ipblocked": return "This IP is not allowed by the token"
+    case "auth": return "Token rejected"
+    case "ratelimited": return "Rate limited · try again in " + retryAfterSec(rec ? rec.headers : null, 1) + "s"
+    case "offline": return "Coolify is unreachable"
+    case "toolarge": return "Coolify's response was too large"
+    default:
+      if (e.curlExit) return "Coolify returned nothing (curl " + e.curlExit + ")"
+      if (e.httpCode === 404) return "Coolify no longer has that " + (TARGET_WORD[targetType] || "resource")
+      var m = messageOf(rec ? rec.body : "")
+      return m ? "Coolify said: " + elide(redact(m), 110) : "Coolify returned " + e.httpCode
+  }
+}
 
 // One splitResponses record (or the service's empty-stream fallback) -> the status line.
 // errorFor classifies; only the sink differs from polling (SR4, SR10). Never echoes a body.
 function actionOutcome(verb, targetType, rec) {
   if (!rec || typeof rec !== "object" || rec.code === undefined) rec = { exit: 1, code: 0, body: "", errmsg: "", headers: null }
   var e = errorFor({ curlExit: rec.exit, httpCode: rec.code, body: rec.body, errmsg: rec.errmsg, request: "action" })
-  var out = { ok: false, text: "", tone: "urgent", deploymentUuid: null, error: e }
-  if (e) {
-    var ab
-    switch (e.kind) {
-      case "ability": ab = abilityOf(e.detail); out.text = ab ? "Token lacks the " + ab + " permission" : "Coolify said: " + elide(e.detail, 110); break
-      case "apidisabled": out.text = "Coolify's API is disabled on this instance"; break
-      case "ipblocked": out.text = "This IP is not allowed by the token"; break
-      case "auth": out.text = "Token rejected"; break
-      case "ratelimited": out.text = "Rate limited · try again in " + retryAfterSec(rec.headers, 1) + "s"; break
-      case "offline": out.text = "Coolify is unreachable"; break
-      case "toolarge": out.text = "Coolify's response was too large"; break
-      default:
-        if (e.curlExit) out.text = "Coolify returned nothing (curl " + e.curlExit + ")"
-        else if (e.httpCode === 404) out.text = "Coolify no longer has that " + (TARGET_WORD[targetType] || "resource")
-        else { var m = messageOf(rec.body); out.text = m ? "Coolify said: " + elide(redact(m), 110) : "Coolify returned " + e.httpCode }
-    }
-    return out
-  }
+  var out = { ok: false, text: "", tone: "urgent", deploymentUuid: null, deploymentUuids: [], queued: 0, refused: 0, error: e }
+  if (e) { out.text = errorText(e, rec, targetType); return out }
   var body = parseJson(rec.body)
   var v = body.ok && body.value && typeof body.value === "object" ? body.value : {}
+  if (verb === "deployTag") {
+    // Phase 4: one entry per tagged resource. Live on 4.3.19 the body is
+    // {details: [{resource_uuid, deployment_uuid}], message: [..]} (docs/coolify-api.md said
+    // `deployments`; both are read). An item without a deployment uuid, a 429 status or a
+    // queue-full message is a refusal, reported as a count, never as a bare success (SR35).
+    var items = Array.isArray(v.details) ? v.details : (Array.isArray(v.deployments) ? v.deployments : [])
+    items.forEach(function (it) {
+      if (!it || typeof it !== "object") return
+      var dep = typeof it.deployment_uuid === "string" && UUID_RE.test(it.deployment_uuid) ? it.deployment_uuid : null
+      if (!dep || Number(it.status) === 429 || /queue_full|queue is full/i.test(String(it.message || ""))) { out.refused += 1; return }
+      out.queued += 1
+      out.deploymentUuids.push(dep)
+    })
+    out.ok = true; out.error = null; out.tone = out.refused ? "urgent" : "dim"
+    out.deploymentUuid = out.deploymentUuids[0] || null
+    out.text = out.queued + " queued" + (out.refused ? ", " + out.refused + " refused (queue full)" : "")
+    return out
+  }
   var item = Array.isArray(v.deployments) && v.deployments.length ? (v.deployments[0] || {}) : null
   if (item && (Number(item.status) === 429 || /queue_full/i.test(String(item.message || "")))) {
     out.error = makeError("http", String(item.message || "queue_full"), { httpCode: 429, request: "action" })
@@ -1270,10 +1308,21 @@ function panelRows(s, ui) {
   if (!servers.length) rows.push({ type: "note", key: "note:servers", text: noteFor(s, "servers") })
   servers.forEach(function (x) { rows.push(pend(serverRow(x, o))) })
   rows.push({ type: "separator", key: "sep:" + (++sep) })
+  // TAGS (Phase 4): only when the account has tags; a fold, closed by default, after the
+  // resources. Placed here so both returns below carry it.
+  function tagsSection() {
+    var tags = s.tags || []
+    if (!tags.length) return
+    rows.push({ type: "separator", key: "sep:" + (++sep) })
+    rows.push({ type: "section", key: "sec:tags", title: "TAGS", control: null })
+    var open = folded["fold:tags"] === true      // closed by default, so for this one fold the flag means "opened" (toggleFold flips undefined -> true)
+    rows.push({ type: "fold", key: "fold:tags", title: "Tags", open: open, count: tags.length, indent: 0 })
+    if (open) tags.forEach(function (t) { rows.push(pend(tagRow(t))) })
+  }
   // RESOURCES
   rows.push({ type: "section", key: "sec:resources", title: "RESOURCES", control: "groupBy" })
   var resources = s.resources || []
-  if (!resources.length) { rows.push({ type: "note", key: "note:resources", text: noteFor(s, "resources") }); return spliceActions(rows, ui) }
+  if (!resources.length) { rows.push({ type: "note", key: "note:resources", text: noteFor(s, "resources") }); tagsSection(); return spliceActions(rows, ui) }
   var byUuid = {}
   resources.forEach(function (r) { byUuid[r.uuid] = r })
   function fold(key, title, uuids, indent) {
@@ -1303,10 +1352,12 @@ function panelRows(s, ui) {
     var left = resources.filter(function (r) { return !placed[r.uuid] }).map(function (r) { return r.uuid })
     if (left.length) fold("fold:s:unassigned", "Unassigned", left, 0)
   }
+  tagsSection()
   return spliceActions(rows, ui)
 }
 
-var SELECTABLE = { fold: true, deployment: true, server: true, resource: true }
+// history/more/pick are overlay row types; the cursor helpers are pure over any row array.
+var SELECTABLE = { fold: true, deployment: true, server: true, resource: true, tag: true, history: true, more: true, pick: true }
 
 function rowRev(r) {
   return [r.type, r.glyph || r.dot || "", r.tone || "", r.name || r.title || r.text || "", r.sub || r.statusWords || "",
@@ -1348,12 +1399,30 @@ function firstSelectableInSection(rows, title) {
   return -1
 }
 
-var HINT_KEY = { deploy: "d deploy", redeploy: "d redeploy", stop: "s stop", start: "s start", restart: "t restart", validate: "v validate", cancel: "x cancel", open: "o open" }
-var HINT_ORDER = ["deploy", "redeploy", "stop", "start", "restart", "validate", "cancel", "open"]
+var HINT_KEY = { deployTag: "d deploy", deploy: "d deploy", redeploy: "d redeploy", stop: "s stop", start: "s start", restart: "t restart", validate: "v validate", cancel: "x cancel", logs: "L logs", open: "o open" }
+var HINT_ORDER = ["deployTag", "deploy", "redeploy", "stop", "start", "restart", "validate", "cancel", "logs", "open"]
+
+// Phase 4: the footer while an overlay view is open. `o open` only when the view has a page.
+function viewHints(view) {
+  var back = "h back"
+  if (view.kind === "history") return ["j/k move", "enter log"].concat(view.hasUrl ? ["o open"] : []).concat([back]).join(" · ")
+  if (view.kind === "servicepick") return ["j/k move", "enter logs", back].join(" · ")
+  var bits = []
+  if (view.paused) bits.push("paused")
+  else if (view.kind === "buildlog" && !view.terminal) bits.push(view.following ? "following" : "held")
+  bits.push("j/k scroll")
+  bits.push("b newest")
+  if (view.kind === "buildlog") bits.push("H steps")
+  if (view.kind === "containerlog") bits.push("r refetch")
+  if (view.hasUrl) bits.push("o open")
+  bits.push(back)
+  return bits.join(" · ")
+}
 
 function footerHints(focusSection, row, ui) {
   ui = ui || {}
   if (ui.confirmOpen) return "h/l pick · enter confirm · esc cancel"
+  if (ui.view) return viewHints(ui.view)
   if (focusSection === "hero") return "enter refresh · j down · r refresh · esc close"
   if (row && row.type === "fold") return "j/k move · enter fold · g group · r refresh · esc close"
   if (ui.expanded && ui.actionFocus) return "h/l pick · enter run · esc collapse"
@@ -1367,12 +1436,252 @@ function footerHints(focusSection, row, ui) {
   return ["enter actions"].concat(bits).join(" · ")
 }
 
+// ---- depth (Phase 4): build logs, container logs, history, tags --------------------------
+// Log text is view-only: it lives in the service's view slices and the panel's overlay
+// model, never in snapshot, _status(), recent.json, a console line or a toast (SR26).
+// Every parsed entry is validated and bounded (SR27).
+
+var LOG_MAX_ENTRIES = 2000     // tail kept; `dropped` counts what fell off the head
+var LOG_MAX_OUTPUT = 4000      // chars per entry output
+var LOG_MAX_COMMAND = 320      // the real failing command is 162 chars; base64 echo blobs are 4 600
+var LOG_MAX_CHARS = 3145728    // a logs string above this is refused, not parsed (the transport cap is 4 MB)
+var LOG_MAX_OUTPUT_LINES = 200 // physical lines kept per entry (tail); real outputs are 2-4 lines
+var LOG_MAX_LINES = 5000       // physical lines kept per log (tail): the ListModel row budget, applied by dropping head entries
+// notifySafe's control-character class minus \t and \n, which a log line keeps.
+var LOG_CTRL_RE = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g
+// One query value: no whitespace, no URL structure, no comma (Coolify's multi-tag separator).
+var TAG_RE = /^[^\s\/?#&=,]{1,64}$/
+// Verbs the panel navigates on; they never reach act() or an IPC handler.
+var NAV_VERBS = { open: true, logs: true, history: true }
+// Every overlay row carries the union of keys, each with a typed placeholder: a ListModel
+// fixes a role's type on the first append, and a null there would drop every later string.
+var VIEW_DEFAULTS = { rowType: "", type: "", key: "", uuid: "", appUuid: "", i: -1, text: "", tone: "", hidden: false, glyph: "", name: "", sub: "",
+                      createdAt: "", updatedAt: "", finishedAt: "", terminal: false, status: "", url: "", pendingVerb: "", shown: 0, total: 0, loading: false, dim: false }
+var VIEW_KEYS = Object.keys(VIEW_DEFAULTS)
+
+function logText(v, max) {
+  var t = String(v === undefined || v === null ? "" : v).replace(LOG_CTRL_RE, "")
+  return t.length > max ? t.slice(0, max) : t
+}
+// Keeps the head and the tail: `docker exec … 'docker compose … pull'` survives, a
+// right-elide would lose the verb that names the failing step.
+function elideMiddle(s, max) {
+  s = String(s === undefined || s === null ? "" : s)
+  if (s.length <= max) return s
+  var keep = max - 1, head = Math.ceil(keep / 2), tail = keep - head
+  return s.slice(0, head) + "…" + s.slice(s.length - tail)
+}
+
+// The `logs` value of a deployment row: JSON text of an array of {command, output, type,
+// timestamp, hidden, batch, order}. `order` is absent on entry 0 on 4.3.19, so the array
+// index is the identity and `seq` is display only. Never throws; a non-array is an empty log.
+function parseBuildLog(logsString) {
+  var raw = String(logsString === undefined || logsString === null ? "" : logsString)
+  var out = { entries: [], dropped: 0, truncated: false, refused: false, bytes: raw.length }
+  if (raw.length > LOG_MAX_CHARS) { out.refused = true; out.truncated = true; return out }
+  if (!raw) return out
+  var p = parseJson(raw)
+  var arr = p.ok ? p.value : null
+  if (typeof arr === "string") { p = parseJson(arr); arr = p.ok ? p.value : null }
+  if (!Array.isArray(arr)) return out
+  var start = Math.max(0, arr.length - LOG_MAX_ENTRIES)
+  out.dropped = start; out.truncated = start > 0
+  for (var i = start; i < arr.length; i++) {
+    var e = arr[i]
+    if (!e || typeof e !== "object" || Array.isArray(e)) continue
+    var ord = typeof e.order === "number" && isFinite(e.order) ? e.order : i + 1
+    var output = logText(e.output, LOG_MAX_OUTPUT)
+    var parts = output.split("\n")
+    if (parts.length > LOG_MAX_OUTPUT_LINES) output = parts.slice(parts.length - LOG_MAX_OUTPUT_LINES).join("\n")
+    out.entries.push({
+      i: i, seq: ord, hidden: e.hidden === true, stream: e.type === "stderr" ? "stderr" : "stdout",
+      command: typeof e.command === "string" && e.command ? elideMiddle(String(e.command).replace(LOG_CTRL_RE, ""), LOG_MAX_COMMAND) : null,
+      output: output,
+      at: typeof e.timestamp === "string" ? e.timestamp : null
+    })
+  }
+  // The row budget: physical lines summed from the tail; head entries beyond it are dropped
+  // like the entry cap, so a newline-heavy log cannot hand the ListModel a million rows.
+  var lines = 0, keep = out.entries.length
+  for (var k = out.entries.length - 1; k >= 0; k--) {
+    var en = out.entries[k]
+    lines += (en.command !== null ? 1 : 0) + (en.output === "" ? 0 : en.output.split("\n").length)
+    if (lines > LOG_MAX_LINES) { keep = out.entries.length - 1 - k; break }
+  }
+  if (keep < out.entries.length) { out.dropped = out.entries[out.entries.length - keep].i; out.entries = out.entries.slice(out.entries.length - keep); out.truncated = true }
+  return out
+}
+
+// Digits and colons only: it reaches _status() (SR26).
+function buildLogRev(entries, dropped) {
+  if (!entries || !entries.length) return ""
+  var last = entries[entries.length - 1]
+  return entries.length + ":" + (Date.parse(last.at) || 0) + ":" + last.output.length + ":" + (dropped || 0)
+}
+
+// On a failed build the step that failed is a hidden stderr entry carrying a command,
+// before the visible "Deployment failed: …" summary; stderr on its own means nothing (a
+// successful build ends in stderr ssh noise).
+function failingEntry(entries, status) {
+  if (status !== "failed" || !entries) return null
+  var found = null
+  for (var i = 0; i < entries.length; i++) {
+    var e = entries[i]
+    if (e.command === null && /^Deployment failed/.test(e.output)) break
+    if (e.command !== null && e.stream === "stderr") found = e
+  }
+  return found
+}
+
+function viewRow(rowType, fields) {
+  var r = {}
+  for (var k = 0; k < VIEW_KEYS.length; k++) r[VIEW_KEYS[k]] = VIEW_DEFAULTS[VIEW_KEYS[k]]
+  r.rowType = rowType
+  r.type = rowType                       // the cursor helpers (SELECTABLE, nextSelectable) key on `type`
+  if (fields) for (var f in fields) if (Object.prototype.hasOwnProperty.call(fields, f)) {
+    if (!Object.prototype.hasOwnProperty.call(VIEW_DEFAULTS, f)) continue      // an unknown key would add a role later rows lack
+    var v = fields[f], d = VIEW_DEFAULTS[f]
+    if (v === undefined || v === null) { r[f] = d; continue }
+    // Coerce by the placeholder's type: a ListModel fixes a role's type on the first append.
+    if (typeof d === "string") r[f] = String(v)
+    else if (typeof d === "boolean") r[f] = !!v
+    else { var n = Number(v); r[f] = isFinite(n) ? Math.floor(n) : d }
+  }
+  return r
+}
+function noteRow(key, text, tone) { return viewRow("note", { key: key, text: text, tone: tone || "dim" }) }
+
+// One row per physical line: "$ command" for a step, then one per newline-separated
+// chunk of output. The failing entry is always rendered (urgent) and is preceded by a
+// marker; other hidden entries only with showHidden, in dim.
+function buildLogLines(entries, opts) {
+  opts = opts || {}
+  var out = [], failing = opts.failing || null, uuid = String(opts.uuid || "")
+  for (var k = 0; k < (entries || []).length; k++) {
+    var e = entries[k], isFail = !!(failing && e.i === failing.i)
+    if (e.hidden && !opts.showHidden && !isFail) continue
+    var n = 0, base = isFail ? "urgent" : (e.hidden ? "dim" : "fg")
+    if (isFail) { var mark = noteRow(uuid + ":" + e.i + ":mark", "── failure ──", "urgent"); mark.i = e.i; out.push(mark) }   // carries the index so a head trim drops it with its entry
+    if (e.command !== null) out.push(viewRow("line", { key: uuid + ":" + e.i + ":" + (n++), i: e.i, text: "$ " + e.command, tone: isFail ? "urgent" : "dim", hidden: e.hidden }))
+    if (e.output !== "") {
+      var chunks = e.output.split("\n")
+      for (var c = 0; c < chunks.length; c++) {
+        var tone = isFail || /^Deployment failed/.test(chunks[c]) ? "urgent" : base
+        out.push(viewRow("line", { key: uuid + ":" + e.i + ":" + (n++), i: e.i, text: chunks[c], tone: tone, hidden: e.hidden }))
+      }
+    }
+  }
+  return out
+}
+
+// GET /{applications,databases,services}/{uuid}/logs -> {logs: "<text>"}: one line per
+// newline, no trailing newline, no timestamps (show_timestamps=false), ANSI already stripped.
+function parseContainerLog(json) {
+  var v = json
+  if (typeof v === "string") { var p = parseJson(v); v = p.ok ? p.value : null }
+  var text = v && typeof v === "object" && typeof v.logs === "string" ? v.logs : ""
+  if (!text) return { lines: [], truncated: false }
+  var all = text.replace(LOG_CTRL_RE, "").split("\n")
+  var start = Math.max(0, all.length - LOG_MAX_ENTRIES)
+  return { lines: all.slice(start).map(function (l) { return l.length > LOG_MAX_OUTPUT ? l.slice(0, LOG_MAX_OUTPUT) : l }), truncated: start > 0 }
+}
+
+// GET /deployments/applications/{uuid} -> {count, deployments[]} (the openapi's
+// Application[] is wrong); rows share the active-list row shape.
+function normaliseHistory(json) {
+  var v = json && typeof json === "object" ? json : {}
+  var n = Number(v.count)
+  return { count: isFinite(n) && n >= 0 ? Math.floor(n) : 0, rows: normaliseDeployments(v.deployments) }
+}
+
+// deploymentRow plus the history identity; the sub never renders the string "HEAD" (every
+// api row carries commit "HEAD" and no message). Rows carry timestamps, not ages.
+function historyRow(d, appUuid, originStr) {
+  var r = deploymentRow(d, originStr)
+  r.type = "history"; r.key = "hist:" + d.uuid; r.appUuid = appUuid || null; r.finishedAt = d.finishedAt || null
+  r.sub = d.restartOnly ? "restart" : (d.branch && d.branch !== "HEAD" ? d.branch : "deploy")
+  return viewRow("history", r)
+}
+function moreRow(page, take) {
+  if (!page || !Array.isArray(page.rows) || page.rows.length >= page.count) return null
+  var shown = page.rows.length, n = Math.min(take || 10, page.count - shown)
+  return viewRow("more", { key: "more:" + page.appUuid, appUuid: page.appUuid, shown: shown, total: page.count, loading: !!page.loading,
+                           text: page.loading ? "Loading…" : "Show " + n + " more (" + shown + " of " + page.count + ")" })
+}
+function pickRow(uuid, name) { return viewRow("pick", { key: "pick:" + uuid + ":" + name, uuid: uuid, name: name, text: name }) }
+
+// GET /tags -> [{uuid, name, created_at, updated_at}]. No membership exists anywhere in the
+// API, so a tag row is a name and nothing else.
+function normaliseTags(arr) {
+  if (!Array.isArray(arr)) return []
+  var out = []
+  for (var i = 0; i < arr.length; i++) {
+    var t = arr[i]
+    if (!t || typeof t !== "object") continue
+    var uuid = String(t.uuid || ""), name = typeof t.name === "string" ? t.name : ""
+    if (!UUID_RE.test(uuid) || !TAG_RE.test(name)) continue
+    out.push({ uuid: uuid, name: name })
+  }
+  return out
+}
+function tagRow(t) {
+  return { type: "tag", key: "tag:" + t.uuid, uuid: t.uuid, name: t.name, sub: "", dot: G.tag, glyph: null, tone: "dim", dim: false, url: "", pendingVerb: "" }
+}
+
+// Missing read:sensitive is silent (200 with `logs` absent), so it is detected from a
+// terminal row: an in-progress row may honestly have no log yet (SR37).
+function sensitiveState(raw) {
+  if (!raw || typeof raw !== "object") return "unknown"
+  if (typeof raw.logs === "string") return "yes"
+  if (TERMINAL[String(raw.status || "")] && (raw.logs === undefined || raw.logs === null)) return "no"
+  return "unknown"
+}
+
+// The deployments cadence with a byte-aware guard: 2 s while a build runs unless the last
+// body was large (SR30). Steps at 256 KB, 1 MB, 4 MB.
+function deploymentsInterval(deploying, cfgSec, lastBytes) {
+  if (!deploying) return cfgSec
+  var b = Number(lastBytes) || 0
+  if (b > 4194304) return 15
+  if (b > 1048576) return 8
+  if (b > 262144) return 4
+  return 2
+}
+
+// A view fetch's outcome: text for the overlay, never a panel-wide error (SR29).
+// `label` is the resource or application name for the not-running copy.
+var FETCH_TOOLARGE = { buildlog: "This build log is larger than 4 MB. Open it in Coolify.", history: "This history page is larger than 4 MB. Open it in Coolify." }
+function fetchOutcome(kind, rec, label) {
+  if (!rec || typeof rec !== "object" || rec.code === undefined) rec = { exit: 1, code: 0, body: "", errmsg: "", headers: null }
+  var e = errorFor({ curlExit: rec.exit, httpCode: rec.code, body: rec.body, errmsg: rec.errmsg, request: kind })
+  if (!e) return null
+  var out = { text: "", tone: "urgent", error: e }, msg = messageOf(rec.body)
+  if (e.httpCode === 404 && /Container not found/i.test(msg)) out.text = (label || "The container") + " is not running."
+  else if (e.httpCode === 400 && /Sub service name/i.test(msg)) out.text = "Pick a container."
+  else if (e.httpCode === 404 && kind === "history") out.text = "Coolify no longer has that application."
+  else if (e.httpCode === 404 && kind === "buildlog") out.text = "Coolify no longer has that deployment."
+  else if (e.httpCode === 404 && kind === "service") out.text = "Coolify no longer has that service."
+  else if (e.kind === "toolarge") out.text = FETCH_TOOLARGE[kind] || "Coolify's response was too large. Open it in Coolify."
+  else if (e.kind === "ratelimited") out.text = "Rate limited · backing off " + retryAfterSec(rec.headers, 1) + "s."
+  else if (e.kind === "offline") out.text = "Offline · retrying."
+  else out.text = errorText(e, rec, kind)
+  return out
+}
+
+// What _status() may say about a view: counts and a digits-only rev, never text (SR26).
+function logViewStatus(view, rec) {
+  if (!view) return null
+  return { kind: view.kind, uuid8: uuid8(view.uuid), entries: rec && rec.entries ? rec.entries.length : (rec && rec.lines ? rec.lines.length : 0),
+           dropped: rec ? (rec.dropped || 0) : 0, rev: rec ? (rec.rev || "") : "", bytes: rec ? (rec.bytes || 0) : 0,
+           source: rec ? (rec.source || "") : "", terminal: rec ? !!rec.terminal : false }
+}
+
 // ---- format -------------------------------------------------------------------------------------
 
 function pad2(n) { return (n < 10 ? "0" : "") + n }
 
 function elapsed(iso, nowMs) {
-  var t = Date.parse(iso)
+  var t = typeof iso === "number" ? iso : Date.parse(iso)   // fetchedAt is a number; age() takes both too
   if (isNaN(t)) return ""
   var sec = Math.max(0, Math.floor(((nowMs || Date.now()) - t) / 1000))
   if (sec < 60) return sec + "s"

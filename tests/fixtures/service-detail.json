@@ -1,0 +1,20 @@
+{
+  "_note": "GET /services/{uuid}, trimmed by hand to the fields the plugin reads (SR31)",
+  "uuid": "ulg0n467viqx9g7nb25pwm6t",
+  "name": "Storefront Prod WP",
+  "status": "exited",
+  "applications": [
+    {
+      "name": "wordpress",
+      "human_name": null,
+      "status": "exited"
+    }
+  ],
+  "databases": [
+    {
+      "name": "mysql",
+      "human_name": null,
+      "status": "exited"
+    }
+  ]
+}

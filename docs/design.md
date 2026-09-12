@@ -147,13 +147,75 @@ queued (dim), `󰄬` finished (dim), `󰅙` failed (`Color.accent`: red in Aethe
 body weight, "branch · commit message" in caption dim (the branch is the joined
 application's `git_branch`; the first seven characters of the commit when the join
 misses), right-aligned elapsed or age. Expanded row (Phase 2) shows an action row:
-**Cancel** (only while queued or in progress; `foreground: root.urgent`), **Logs** (Phase 4),
-**Open**. A pending cancel appends " · cancelling…" to the caption in accent. The section shows all active plus the newest 5 terminal deployments from the
-last hour; older ones drop out on their own (Phase 3 persists them across restarts, Phase 4
-adds history and "show more").
+**Logs** first (Phase 4; `L` is the direct key, so Enter, Enter reaches the build log),
+**Cancel** (only while queued or in progress; `foreground: root.urgent`), **Open**. A pending cancel appends " · cancelling…" to the caption in accent. The section shows all active plus the newest 5 terminal deployments from the
+last hour; older ones drop out on their own (Phase 3 persists them across restarts; the
+history view below, reached from an application's strip, holds the rest).
 
 Elapsed time ticks every second while the panel is open (a `Timer` on `root.opened`),
 formatted `1m 20s`, `45s`, `2h 03m`.
+
+### Log view (Phase 4)
+
+An overlay inside the key catcher that replaces the list while open (the confirm still
+paints above it): its own `ListView` and `ListModel`, one `Text` per physical log line
+(`Style.font.bodySmall`, `root.fontFamily`, `WrapAnywhere`, never a horizontal scroll),
+appended by absolute entry index; the head is trimmed when the 2000-entry tail cap drops
+entries. A breadcrumb in the header (`‹ api · failed · 12m ago`; a click pops) and a
+body pinned at `Style.space(480)` so a filling log never resizes under the reader.
+Command steps render as `$ …` in dim; output lines in the foreground; on a `failed`
+build the failing step (the last stderr entry carrying a command before the
+"Deployment failed" summary, hidden or not) is always shown, in urgent, under a `── failure ──` marker,
+with the "Deployment failed" lines urgent too; every other hidden step is off until
+`H`. The view follows the newest line until `k`, the wheel or a drag moves up (footer
+`held`); `b` follows again. An active build's lines arrive from the deployments poll;
+a terminal build's from the drain or one fetch. A full-fill `MouseArea` beneath the
+overlay's list keeps hover and clicks off the rows underneath.
+
+States, as the note under the lines: `Loading log…`, `Queued. Coolify has not started
+this build yet.`, `Starting…`, `The log is empty.`, `This build log is larger than 3 MB.
+Open it in Coolify.` (the parse refusal; the 4 MB transport cap has its own line), `… N earlier entries not shown. Open it in Coolify for the full
+log.` (above the lines), `Coolify no longer has that deployment.`, `Offline · retrying.`,
+`Rate limited · backing off Ns.`, `Busy · press r to retry` (a refetch refused because
+the request slot is busy), and the `read:sensitive` sentence when the token lacks the
+ability. The breadcrumb age is the deployment's own (`finished_at`, or elapsed time for a
+running build), never the fetch time.
+
+### Container log and picker (Phase 4)
+
+The same overlay for the last 200 lines of a running application, database or service
+container (`L` on the row, or **Logs** in its strip; a stopped container offers neither).
+Breadcrumb `‹ api · last 200 lines · 12s ago` (the fetch age; plus the container name for
+a service); `r` refetches (also in a history view and the picker); the view opens at the
+newest line and does not follow. A service with
+several containers first shows a picker (`‹ wordpress · pick a container`) of
+`applications[].name` and `databases[].name`; Enter on a name fetches its tail; a
+single container skips the picker (the service fetches it at once and the panel swaps the
+view). States: `Loading containers…`, `Fetching the last 200 lines…`, `The container has
+written nothing.`, `… earlier lines not shown.` (above 2000 lines), `<name> is not
+running.` (Coolify's 404), `Pick a container.`, `This service has no containers.`, `Busy ·
+press r to retry`, `Busy · try again` (the picker or a history page while its request slot
+is busy).
+
+### History view (Phase 4)
+
+**History** in an application's strip opens `‹ <app> · N deployments`: ten rows newest
+first, each `glyph · status word` over `branch` / `restart` / `deploy` (never the string
+`HEAD`), right-aligned age from the row's timestamps; then `Show 10 more (10 of 39)`
+until the count is reached. Enter on a row opens that build's log (a second view; `h`
+returns to the history with the cursor still on that row). Pages are fetched on demand,
+never on a timer, and never touch Recent. States: `Loading history…`, `No deployments
+recorded for this application.`, `Coolify no longer has that application.`
+
+### Tags fold (Phase 4)
+
+A **TAGS** section after RESOURCES, only when `GET /tags` (fetched on panel open, at most
+once a minute) returns names; a fold closed by default; one row per tag. The strip offers
+**Deploy** alone (a tag has no page); the row's bullet is `#`. `d` (or Enter, Enter through
+the strip) confirms: "Deploy everything tagged
+<name>? Coolify decides what that is; the API cannot list it." (Cancel / Deploy). The
+status line then reads `N queued` or `N queued, M refused (queue full)` and the row
+shows `deploying…` until a named deployment is listed or finished.
 
 ### Servers section
 
@@ -161,7 +223,8 @@ Row per server: dot glyph (`●` reachable and usable, `󱎖` reachable but not 
 `○` unreachable or disabled), name, caption "<ip> · N resources" plus "unreachable"
 in urgent, "disabled", "build server" as they apply. Unreachable and disabled servers
 dim the whole row. Proxy status and `unreachable_count` need `GET /servers/{uuid}` per
-server and are deferred to Phase 4. Expanded row: **Validate**, **Open**. A pending
+server (the list's `proxy` holds only `redirect_enabled`, verified 2026-09-12) and stay
+deferred: one transfer per server per topology cycle, 5.6 KB each, mostly a Traefik config. Expanded row: **Validate**, **Open**. A pending
 validate appends " · validating…" to the caption in accent and clears on the next
 servers poll (the API exposes no result).
 
@@ -194,8 +257,9 @@ a minute after start).
 
 ### Action row (Phase 2)
 
-`Row` of `Button { bordered: true; focusable: false; fontSize: Style.font.bodySmall }`
-with content-derived widths. `h`/`l` move between them (an id, not an index, so a
+`Flow` of `Button { bordered: true; focusable: false; fontSize: Style.font.bodySmall }`
+with content-derived widths (a running application offers six buttons since Phase 4,
+which wrap to a second line). `h`/`l` move between them (an id, not an index, so a
 button that disappears hands focus to the first); Enter runs. While a button is ringed
 the parent row paints `CursorSurface.current`. Destructive buttons (Stop, Cancel,
 Redeploy) use `foreground: root.urgent`, which tints the label and the hover fill;
@@ -234,14 +298,19 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 |---|---|
 | hero | `enter refresh · j down · r refresh · esc close` |
 | fold row | `j/k move · enter fold · g group · r refresh · esc close` |
-| application row, running, collapsed | `enter actions · d redeploy · s stop · t restart · o open` |
+| application row, running, collapsed | `enter actions · d redeploy · s stop · t restart · L logs · o open` |
 | application row, stopped, collapsed | `enter actions · d deploy · s start · o open` |
-| service/database row, collapsed | `enter actions · s stop · t restart · o open` (or `s start`) |
+| service/database row, collapsed | `enter actions · s stop · t restart · L logs · o open` (or `s start · o open`) |
 | any row expanded, a button focused | `h/l pick · enter run · esc collapse` |
 | any row expanded, focus back on the row | `l pick · enter collapse · esc collapse` |
 | server row | `enter actions · v validate · o open` |
-| active deployment row | `enter actions · x cancel · o open` |
-| terminal deployment row | `o open · j/k move` |
+| active deployment row | `enter actions · x cancel · L logs · o open` |
+| terminal deployment row | `enter actions · L logs · o open` |
+| tag row | `enter actions · d deploy` |
+| build log, following / held / paused | `following · j/k scroll · b newest · H steps · o open · h back` (`held`, `paused`; a terminal log drops the first word) |
+| container log | `j/k scroll · b newest · r refetch · o open · h back` |
+| history | `j/k move · enter log · o open · h back` |
+| container picker | `j/k move · enter logs · h back` |
 | row with no action and no page | `j/k move · g group · r refresh · esc close` |
 | confirm open | `h/l pick · enter confirm · esc cancel` |
 
@@ -271,8 +340,23 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 | `g` | anywhere | toggle grouping |
 | `r` | anywhere | refresh now |
 | `v` / `V` | server row | validate |
-| Tab / Shift+Tab | anywhere, confirm closed | neighbouring bar panel |
-| Esc | anywhere | close confirm, else collapse row, else close panel; one rung per 250 ms |
+| `L` | deployment row; running application/database/service row | the build log; the container log or picker (the catcher takes lowercase `l`) |
+| `d`, Enter | tag row | deploy everything with the tag (confirm) |
+| `j` / `k` | log view | scroll one line; `k` above the end releases the follow |
+| `j` / `k` | history, picker | move the cursor |
+| Enter | history row / `Show more` / container name | that build's log / the next page / that container's tail |
+| `b` | log view | jump to the newest line and follow again |
+| `H` | build log | show or hide Coolify's internal steps (the failing one is always shown) |
+| `r` | container log | refetch (in a build log: refetch a non-active one) |
+| `o` | any view with a page | open it in the browser |
+| `h` | any view | back one view (through the Esc ladder) |
+| Space | history, picker | as Enter (the catcher fires `activateRequested` for both) |
+| `l`, Space in a log view, `g`, `x` | any view | nothing |
+| Tab / Shift+Tab | anywhere, confirm closed | neighbouring bar panel (pops every view first) |
+| Esc | anywhere | close confirm, else back one view, else collapse row, else close panel; one rung per 250 ms |
+
+Unavailable inside a view: `G` (bound to grouping with `g`), Home, End, PageUp and
+PageDown (`PanelKeyCatcher` does not emit them and the panel may not add a `Keys.onPressed`).
 
 Mouse: hover moves the cursor (never colours from `containsMouse`); a left click on a
 leaf row opens its action strip (or closes the open one) and the strip's buttons are
@@ -306,6 +390,8 @@ partial > loading > healthy.
 | No servers | — | "No servers on this team." |
 | No resources | — | "No resources on this team." |
 | Zero servers and resources with a valid token | "NO RESOURCES ON THIS TEAM" | — |
+| A view fetch fails (404, 400, offline, 429, too large) | unchanged | the note inside the view; never the callout, never the bar |
+| The token lacks `read:sensitive` | unchanged | in the log view: "Logs need the read:sensitive ability. Create a new token under Security → API Tokens with read, read:sensitive and deploy, and swap it in." |
 
 ## Notifications
 

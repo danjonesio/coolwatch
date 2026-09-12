@@ -1,0 +1,113 @@
+{
+  "_note": "hand-authored from the shape of a real finished build: visible command entries exist, the tail is stderr ssh noise on a successful build, one hidden base64 echo blob",
+  "status": "finished",
+  "entries": [
+    {
+      "command": null,
+      "output": "Docker 29.8.0 with BuildKit detected on deployment server (example-host).",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:00Z",
+      "hidden": false,
+      "batch": 1
+    },
+    {
+      "command": "docker inspect --format '{{.State.Status}}' example-container",
+      "output": "running",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:01Z",
+      "hidden": true,
+      "batch": 1,
+      "order": 2
+    },
+    {
+      "command": null,
+      "output": "Pulling & building required images.",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:02Z",
+      "hidden": false,
+      "batch": 1,
+      "order": 3
+    },
+    {
+      "command": "docker compose --project-name exampleapp pull",
+      "output": "Pulled example.invalid/img:tag",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:03Z",
+      "hidden": false,
+      "batch": 2,
+      "order": 4
+    },
+    {
+      "command": null,
+      "output": "Starting new application.",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:04Z",
+      "hidden": false,
+      "batch": 1,
+      "order": 5
+    },
+    {
+      "command": "docker compose --project-name exampleapp up -d",
+      "output": "Container example-container Started",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:05Z",
+      "hidden": false,
+      "batch": 3,
+      "order": 6
+    },
+    {
+      "command": null,
+      "output": "Waiting for healthcheck to pass on the new container.",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:06Z",
+      "hidden": false,
+      "batch": 1,
+      "order": 7
+    },
+    {
+      "command": null,
+      "output": "New container is healthy.",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:07Z",
+      "hidden": false,
+      "batch": 1,
+      "order": 8
+    },
+    {
+      "command": "echo 'ZXhhbXBsZQ==' | base64 -d > /artifacts/example.env",
+      "output": "",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:08Z",
+      "hidden": true,
+      "batch": 4,
+      "order": 9
+    },
+    {
+      "command": null,
+      "output": "Removing old containers.",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:09Z",
+      "hidden": false,
+      "batch": 1,
+      "order": 10
+    },
+    {
+      "command": null,
+      "output": "ControlSocket /tmp/ssh-example already exists, disabling multiplexing",
+      "type": "stderr",
+      "timestamp": "2026-09-08T11:02:10Z",
+      "hidden": false,
+      "batch": 1,
+      "order": 11
+    },
+    {
+      "command": null,
+      "output": "Deployment finished.",
+      "type": "stdout",
+      "timestamp": "2026-09-08T11:02:11Z",
+      "hidden": false,
+      "batch": 1,
+      "order": 12
+    }
+  ]
+}
