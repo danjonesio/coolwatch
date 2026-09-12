@@ -8,8 +8,9 @@ deployments, and the actions to deploy, redeploy, restart, stop, start and cance
 Notifications when deployments queue, build, finish or fail. It is a Quickshell plugin
 that runs inside `omarchy-shell`; there is no daemon and no second process.
 
-Status: **Phase 3 ("notify") built on branch `phase-3-notify`; Phases 1 ("see") and 2
-("act") merged.** Read `docs/roadmap.md` before writing code.
+Status: **Phase 4 depth (build logs, container logs, history, tag deploy) built on branch
+`phase-4-depth`; Phases 1 ("see"), 2 ("act") and 3 ("notify") merged. Multi-instance
+chips are the next branch, `phase-4-instances`.** Read `docs/roadmap.md` before writing code.
 
 ## Product locks
 
@@ -34,6 +35,15 @@ Status: **Phase 3 ("notify") built on branch `phase-3-notify`; Phases 1 ("see") 
   **except** a critical event while DND is on, which is sent as `omarchy-action` (Dan,
   2026-09-07; it shows as that sender in history). `Model.notifyPlan` decides it from a
   boolean the service read from the notifications service, never from Coolify data.
+- Phase 4 views (build log, container log, service picker, history, tags) are one-shot,
+  panel-driven fetches on their own `Req`s (`logReq`, `historyReq`, `serviceReq`), settled
+  by `_viewDone` from the same three sites as `_drainDone`. Their failure is a message in
+  the view and nothing else: never `_fail`, `_error`, `_backoff`, `_probeMode` or
+  `consecutiveFailures`, and a success never lifts probe mode; only a 429 pauses (SR29).
+  The active build's log is read off the deployments poll that already carries it and the
+  terminal body off the drain: **no log poller**. Log text lives in the service's view
+  slices (`views`, beside `snapshot`) and the panel's overlay model only; it never enters
+  `snapshot`, `_status()`, `recent.json`, a `console.*` line or a toast (SR26).
 - Config accepts `token` and `tokenCommand`; `tokenCommand` wins when both are set.
 - Kinds: `service` + `bar-widget`, `keepLoaded: true`. The service owns polling, state,
   actions and notifications. The bar widget owns the icon and loads `Panel.qml`. No
@@ -95,6 +105,8 @@ Status: **Phase 3 ("notify") built on branch `phase-3-notify`; Phases 1 ("see") 
   `/projects` kick is skipped once it has), â36/min
   with a deployment; no 60 s window may reach 20 with the panel closed (â 20 with a panel
   open, â 24 during the first topology drain with a panel open, measured). See the schedule in `docs/architecture.md`.
+  Phase 4 changes no cadence: measured 2026-09-12 at 19 closed, 22 open during the first
+  drain, 29 with a build running and the log view open (the view adds no request).
 
 ## Layout
 
@@ -152,10 +164,15 @@ omarchy-shell shell toggle io.github.danjonesio.coolwatch
 omarchy-shell io.github.danjonesio.coolwatch refresh
 omarchy-shell io.github.danjonesio.coolwatch status
 omarchy-shell io.github.danjonesio.coolwatch status | jq '{baseline, notify, recentPersisted, recentRejected, terminalQueue, drainRetries}'   # Phase 3 fields
-quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch (notify|recent|drain) '   # unanchored: the log prefixes "DEBUG qml:"
+omarchy-shell io.github.danjonesio.coolwatch status | jq '{logView, buildLogsHeld, history, tags, sensitive, dep: (.perKind.deployments | {lastBytes, bytesLastMin, skipped})}'   # Phase 4 fields, counts only
+quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch (notify|recent|drain|logview) '   # unanchored: the log prefixes "DEBUG qml:"
+quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch (buildlog|containerlog|service|history|tags) '   # the view fetches; a failure logs "<kind> view failed: <kind> http=<n>"
 omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`
 
-# rollback of a Phase 3 build (placement in shell.json survives; a notify{} block and recent.json are ignored by Phase 2; tests/run.js goes back too so bin/check stays green)
+# rollback of a Phase 4 depth build to the read:sensitive hotfix (placement in shell.json survives; recent.json is unchanged in format;
+# bin/check and bin/record-fixture stay at Phase 4 and are green against these files; tests/run.js goes back too)
+git checkout e64f1fa -- manifest.json Service.qml BarWidget.qml Panel.qml Model.js Api.js tests/run.js && bin/dev-sync && omarchy restart shell
+# rollback of a Phase 3 build (a notify{} block and recent.json are ignored by Phase 2)
 # every commit at or below d194b86 predates the coolwatch rename: files restored from there carry the old id, config/state paths and `omarify …` log prefixes, and bin/dev-sync refuses the target; re-run the rename sweep on anything checked out from before dac3dff
 git checkout b38379c -- manifest.json Service.qml BarWidget.qml Panel.qml Model.js Api.js tests/run.js && bin/dev-sync && omarchy restart shell
 
@@ -194,8 +211,15 @@ bin/record-fixture deployments-active /deployments
 - `GET /deployments/applications/{uuid}` returns `{count, deployments[]}`; the openapi
   says `Application[]` and is wrong.
 - Deployment `logs` need `read:sensitive` and are a JSON string inside JSON; parse twice.
-- Container log endpoints return 400 when the container is not running. Service logs
-  need `sub_service_name` equal to `applications[].name` from `GET /services/{uuid}`.
+- Container log endpoints return **404 `Container not found.`** when the container is not
+  running (the docs say 400; verified on 4.3.19). Service logs need `sub_service_name`
+  equal to `applications[].name` or `databases[].name` from `GET /services/{uuid}`;
+  without it the answer is 400 `Sub service name is required.`.
+- A build log's first entry has no `order` key (the rest run `2..n`): the array index is
+  the identity. `POST /deploy?tag=` answers `{details: [{resource_uuid,
+  deployment_uuid}], message: [..]}`, not the documented `deployments` array. `GET /tags`
+  carries no membership and only `/applications` takes `?tag=`, so a tag's fan-out cannot
+  be listed before deploying. The servers list's `proxy` holds only `redirect_enabled`.
 - `403` means one of three things: API disabled (self-hosted), IP not allowed, or a
   missing ability. Read `message`.
 - `deployment_url` is a relative path; `POST /deploy` reports a full queue (`queue_full`)
@@ -274,6 +298,11 @@ bin/record-fixture deployments-active /deployments
 - Don't commit fixtures with real tokens; uuids and names are fine.
 - Don't route an action result through `_fail` (not even its 429 arm), and don't store
   objects in `_requestLog` (both filters subtract bare timestamps).
+- Don't route a view fetch (`buildlog`, `containerlog`, `service`, `history`, `tags`)
+  through `_fail` either: `_viewFail` sets the view's message and nothing else (SR29).
+- Don't put log text in `snapshot`, `_status()`, a console line, a state file or a
+  toast; `Model.logViewStatus` emits counts and a digits-only rev (SR26, `bin/check`).
+- Don't add a log poller: the deployments poll and the drain already carry the log.
 - Don't let the panel or a reviewer run `bin/dev-sync` or any `--delete` tool against a
   real path; staging is `COOLWATCH_DEST=$(mktemp -d)/plugin`.
 

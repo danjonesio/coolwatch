@@ -91,23 +91,31 @@ Acceptance
 - `recent.json` lives in a 0700 directory (the file is umask-mode) and the panel's
   Recent section is back within 2 s of a restart for deployments under an hour old.
 
-## Phase 4 — depth
+## Phase 4 — depth (built 2026-09-12 on `phase-4-depth` after the `read:sensitive` caps hotfix `e64f1fa`; see `docs/plans/phase-4-depth.build.md`)
 
 Deliverables
 
-- Deployment log viewer (poll, diff by `order`, PlainText, monospace, auto-scroll
-  with a "hold" when the user scrolls up).
-- Container logs tail for a running resource (`lines=200`).
+- Deployment log viewer (read off the deployments poll and the drain, no log poller;
+  keyed by array index because the first entry has no `order`; PlainText, monospace,
+  auto-scroll with a "hold" when the user scrolls up; the failing step always shown on
+  a failed build, other internal steps behind `H`).
+- Container logs tail for a running resource (`lines=200`), with a picker for services.
 - Deployment history per application with "show more".
-- Multi-instance chips; middle-click cycling.
-- Tag deploy from a "Tags" fold if the account uses tags.
+- Tag deploy from a "Tags" fold if the account uses tags (Dan tagged landing
+  `production-landing` for the build; the API cannot list a tag's members).
+- Multi-instance chips; middle-click cycling: split out to `phase-4-instances` so each
+  branch is installable on its own.
 
 Acceptance
 
 - A failed deployment's log is readable in the panel within one poll of failure, with
-  the failing command visible.
+  the failing command visible. Rendering verified from api's recorded failures
+  (`$ docker exec … docker compose … pull'` and the unresolved image reference in
+  urgent); the marker lands in the same dispatch as the Failed toast (the drain), so
+  the latency is one deployments interval plus one drain round trip. The live timing
+  needs a deliberately failed build: needs-human.
 - Two instances (Cloud + a self-hosted test box) switch cleanly with independent
-  polling and error states.
+  polling and error states: `phase-4-instances`.
 
 ## Phase 5 — beyond the API (optional, each item its own decision)
 

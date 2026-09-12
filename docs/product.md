@@ -84,11 +84,15 @@ Phases are defined in `docs/roadmap.md`. Every feature below names the API it re
 
 ### Phase 4 — depth
 
-- Deployment log viewer inside the panel (poll and diff by log `order`).
-- Container log tail for a resource.
-- Deployment history per application (`skip`/`take` pagination).
-- Multi-instance chips (Cloud + self-hosted) in the hero.
-- Tag deploy (`POST /deploy?tag=`).
+- Deployment log viewer inside the panel: read off the deployments poll that already
+  carries every active row's log under `read:sensitive`, keyed by array index (the first
+  entry has no `order`). Built 2026-09-12 on `phase-4-depth`.
+- Container log tail for a running resource (`lines=200`), with a container picker for
+  services. Built.
+- Deployment history per application (`skip`/`take` pagination). Built.
+- Tag deploy (`POST /deploy?tag=`) from a TAGS fold. Built; the API cannot list a
+  tag's members, so the confirm says so and the response is counted per item.
+- Multi-instance chips (Cloud + self-hosted) in the hero: next, on `phase-4-instances`.
 
 ### Phase 5 — beyond the API (optional)
 
@@ -125,7 +129,10 @@ Phases are defined in `docs/roadmap.md`. Every feature below names the API it re
    logs (it also makes every `GET /deployments` poll carry the full logs, so it is not
    held earlier). `write` is optional and only unlocks "Validate server"; without it the
    button explains what is missing. Server proxy status needs `GET /servers/{uuid}` per
-   server and is deferred to Phase 4 (decided 2026-09-07 by the Phase 2 plan).
+   server (the list's `proxy` holds only `redirect_enabled`) and stays deferred: one
+   transfer per server per topology cycle carrying a Traefik config the plugin would
+   discard (decided 2026-09-07 by the Phase 2 plan, re-deferred 2026-09-12 by the Phase 4
+   plan).
 5. **Failed deployments and unreachable servers notify at `critical`.** Everything else
    is `low` or `normal`. The shell silences a plugin-id sender under Do Not Disturb even
    at `critical`, so a critical event while DND is on is sent as `omarchy-action`, the one

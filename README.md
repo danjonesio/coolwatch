@@ -5,7 +5,7 @@ deployments, and the buttons to deploy, redeploy, restart, stop and cancel, in a
 [Omarchy](https://omarchy.org/) panel. Works with Coolify Cloud and self-hosted Coolify
 through the REST API.
 
-**Status: Phase 3 (notifications and a persisted Recent list) built; Phases 1 (read-only bar icon and panel) and 2 (actions) merged.** See [docs/roadmap.md](docs/roadmap.md).
+**Status: Phase 4 depth (build logs, container logs, deployment history, tag deploy) built on `phase-4-depth`; Phases 1 (read-only bar icon and panel), 2 (actions) and 3 (notifications) merged. Multi-instance chips follow on `phase-4-instances`.** See [docs/roadmap.md](docs/roadmap.md).
 
 **Renamed from Omarify on 2026-09-12.** New plugin id `io.github.danjonesio.coolwatch`, config at
 `~/.config/coolwatch/config.json`, state at `~/.local/state/coolwatch/recent.json`. Nothing is read
@@ -21,6 +21,9 @@ config file across, then install again.
   its live status.
 - Deploy, redeploy without cache, restart, stop, start, cancel a deployment, validate a
   server, open in the browser. Keyboard first.
+- A build log inside the panel that fills in while the build runs and shows the failing
+  step when it fails; the last 200 lines of a running container; an application's
+  deployment history; one-key deploy of everything carrying a Coolify tag
 - Notifications when a deployment is queued, building, finished, failed or cancelled,
   when a resource stops unexpectedly, and when a server drops off.
 - Cloud and self-hosted instances side by side.
@@ -65,7 +68,8 @@ server in Coolify. Recent terminal deployments are kept in
 `~/.local/state/coolwatch/recent.json` (a directory the plugin creates as 0700; the file
 holds names, branches, commit messages and the instance URL, never the token) so the
 panel's Recent section survives a shell restart; the panel shows the last hour. Create the token in Coolify under
-Security → API Tokens with the `read` and `deploy` permissions (`write` only if you want
+Security → API Tokens with the `read`, `read:sensitive` and `deploy` permissions
+(`read:sensitive` is what makes build logs readable; without it the log view says so; `write` only if you want
 "Validate server" to succeed; without it the panel says "Token lacks the write
 permission"). Coolify cannot change a token's abilities afterwards: create a new one and
 swap it in. Instead of `token` you can give
@@ -78,6 +82,15 @@ queues the action without a confirmation (typing the verb is the confirmation) a
 prints `queued <verb> <uuid>` or the reason it was refused; `… status | jq .lastAction`
 shows the outcome. Any local process can call these, and any plugin loaded into the
 same shell can call the service directly, so treat the machine as the trust boundary.
+
+In the panel, `L` on a deployment row (or **Logs**, the first button in its strip) opens
+the build log: it follows the newest line until you scroll up (`k` or the wheel), `b`
+follows again, `H` shows Coolify's internal steps, `o` opens the deployment, `h` or Esc
+goes back. `L` on a running application or database shows its last 200 container lines
+(`r` refetches); on a service it first lists the containers. **History** in an
+application's strip lists its deployments ten at a time; Enter on one opens that build's
+log. A **TAGS** fold appears when the account has tags; `d` on a tag deploys everything
+carrying it after a confirmation, because the API cannot say what that is.
 
 ## Docs
 
