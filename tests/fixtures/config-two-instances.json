@@ -1,0 +1,10 @@
+{
+  "_note": "hand-written Phase 4 config: two instances, the second through a token command; no real token",
+  "version": 1,
+  "instances": [
+    { "id": "cloud", "name": "Coolify Cloud", "url": "https://app.coolify.io", "token": "«scrubbed»" },
+    { "id": "homelab", "name": "Homelab", "url": "http://10.0.0.5:8000", "tokenCommand": ["op", "read", "op://Private/Coolify Homelab/credential"] }
+  ],
+  "poll": { "deploymentsSec": 4 },
+  "notify": { "deploymentFailed": true }
+}

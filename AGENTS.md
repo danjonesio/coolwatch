@@ -8,9 +8,10 @@ deployments, and the actions to deploy, redeploy, restart, stop, start and cance
 Notifications when deployments queue, build, finish or fail. It is a Quickshell plugin
 that runs inside `omarchy-shell`; there is no daemon and no second process.
 
-Status: **Phase 4 depth (build logs, container logs, history, tag deploy) built on branch
-`phase-4-depth`; Phases 1 ("see"), 2 ("act") and 3 ("notify") merged. Multi-instance
-chips are the next branch, `phase-4-instances`.** Read `docs/roadmap.md` before writing code.
+Status: **Phase 4 built on two branches: `phase-4-depth` (build logs, container logs,
+history, tag deploy) and `phase-4-instances` (one `InstanceCtx` per configured Coolify,
+chips, per-instance state files); Phases 1 ("see"), 2 ("act") and 3 ("notify") merged.**
+Read `docs/roadmap.md` before writing code.
 
 ## Product locks
 
@@ -45,6 +46,23 @@ chips are the next branch, `phase-4-instances`.** Read `docs/roadmap.md` before 
   slices (`views`, beside `snapshot`) and the panel's overlay model only; it never enters
   `snapshot`, `_status()`, `recent.json`, a `console.*` line or a toast (SR26).
 - Config accepts `token` and `tokenCommand`; `tokenCommand` wins when both are set.
+- `instances[]` may hold several Coolifys (Phase 4). Each `id` is one path segment
+  (`[A-Za-z0-9_-]{1,32}`, unique) because it names a state file and an IPC argument; a
+  URL with credentials is a config error; the same origin twice is a warning, not an
+  error (toasts arrive twice). Every store, timer, request, ledger, baseline, pending
+  map, notify state and state file is per instance (`Service.qml`'s `InstanceCtx`); the
+  root keeps the config file, the panel registry, the per-shell toast budget and the
+  reaper. `snapshot`, `bar`, `views`, `pending` and the action surface mirror the
+  **active** instance; the bar icon follows it and its tooltip names another instance's
+  trouble. Switch with the chips, `h`/`l` on the hero, a middle-click on the icon or
+  `omarchy-shell … instance <id>`; a switch pops every view. IPC verbs resolve against
+  the active instance only; the confirm dialog carries the instance it was opened on and
+  the service refuses with "Instance changed; nothing sent" on a mismatch;
+  `status.lastAction.instance` names it. `instances[0]` keeps `recent.json`; every
+  further instance writes `recent-<id>.json`; every file written now carries `id` and a
+  file with an `id` is rejected by any other instance. Reordering `instances[]` moves
+  which file the first entry reads. A second entry on the same account is the test
+  configuration, not a product one.
 - Kinds: `service` + `bar-widget`, `keepLoaded: true`. The service owns polling, state,
   actions and notifications. The bar widget owns the icon and loads `Panel.qml`. No
   `panel`/`overlay` kind unless Phase 5 says so.
@@ -104,14 +122,24 @@ chips are the next branch, `phase-4-instances`.** Read `docs/roadmap.md` before 
   resources 60 s, servers 120 s, topology one block per 40 s from a â¥600 s cycle, or one
   per 10 s while a panel is open and the first drain has not completed; the 65 s
   `/projects` kick is skipped once it has), â36/min
-  with a deployment; no 60 s window may reach 20 with the panel closed (â 20 with a panel
+  with a deployment; no 60 s window may reach 20 with the panel closed once the service
+  has settled (the first minute after a shell restart holds the startup burst of four
+  kinds at token-ready plus the 65 s `/projects` kick and reached 20 once, measured
+  2026-09-12; the closed-panel ceiling applies once no panel has been open for 60 s, and timer
+  jitter can put a sixteenth deployments poll into a window, so a lone 20 is not a defect; â 20 with a panel
   open, â 24 during the first topology drain with a panel open, measured). See the schedule in `docs/architecture.md`.
   Phase 4: while a build runs the deployments interval is byte-stepped (2 s under 256 KB
   of body, then 4 / 8 / 15 s at 256 KB / 1 MB / 4 MB; `Model.deploymentsInterval`); the
   views are user-driven one-shot fetches (`L`, `r`, History pages, the picker), throttled to
   one launch per second, and `/tags` runs once per panel open at most once a minute. Measured
   2026-09-12 with all of that: 19 closed, 22 open during the first drain, 29 with a build
-  running and the log view open.
+  running and the log view open. With several instances the gate is **per instance**
+  (the 200/min limit is per token): each `status.instances[].requestsLastMin` stays under
+  20 with the panel closed once settled, with the same allowances as above (a panel open
+  primes and drains every context at once: ≤ 24 per instance in the window after it
+  opens), and `requestsTotalLastMin` is reported alongside (measured 2026-09-12 with two
+  entries on one account from a quiet start: 17–19 each, 35–38 total; 24 each in the
+  window after a panel opened).
 
 ## Layout
 
@@ -171,9 +199,17 @@ omarchy-shell io.github.danjonesio.coolwatch status
 omarchy-shell io.github.danjonesio.coolwatch status | jq '{baseline, notify, recentPersisted, recentRejected, terminalQueue, drainRetries}'   # Phase 3 fields
 omarchy-shell io.github.danjonesio.coolwatch status | jq '{logView, buildLogsHeld, history, tags, sensitive, dep: (.perKind.deployments | {lastBytes, bytesLastMin, skipped})}'   # Phase 4 fields, counts only
 quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch (notify|recent|drain|logview) '   # unanchored: the log prefixes "DEBUG qml:"
-quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch (buildlog|containerlog|service|history|tags) '   # the view fetches; a failure logs "<kind> view failed: <kind> http=<n>"
-omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`
+quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [A-Za-z0-9_-]+/(buildlog|containerlog|service|history|tags) '   # the view fetches ("<instance id>/<kind>" since Phase 4); a failure logs "<id>/<kind> view failed: <kind> http=<n>"
+omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`; resolves against the active instance only
+omarchy-shell io.github.danjonesio.coolwatch instances                          # -> "cloud (active), homelab"
+omarchy-shell io.github.danjonesio.coolwatch instance homelab                   # -> "active homelab" | "unknown instance homelab"
+omarchy-shell io.github.danjonesio.coolwatch status | jq '{activeInstance, requestsTotalLastMin, instances: [.instances[]|{id, configState, requestsLastMin, sensitive, paused, error}]}'   # Phase 4 instances; top-level keys mirror the active one
+omarchy-shell io.github.danjonesio.coolwatch status | jq '[.instances[]|{id, requestsLastMin}]'   # the rate gate, per token
+quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [A-Za-z0-9_-]+/(deployments|resources|servers) '   # per-request, failure and reaper lines carry "<instance id>/<kind>" since Phase 4 (ids may hold capitals); "coolwatch notify|recent|drain|logview|action " lines do not
 
+# rollback of a Phase 4 instances build to the depth build (a second instances[] entry is validated and ignored by the depth build;
+# recent-<id>.json files are ignored; recent.json's optional id field is ignored by the older parseRecent)
+git checkout 2f2c4c2 -- manifest.json Service.qml BarWidget.qml Panel.qml Model.js Api.js tests/run.js && bin/dev-sync && omarchy restart shell
 # rollback of a Phase 4 depth build to the read:sensitive hotfix (placement in shell.json survives; recent.json is unchanged in format;
 # bin/check and bin/record-fixture stay at Phase 4 and are green against these files; tests/run.js goes back too)
 git checkout e64f1fa -- manifest.json Service.qml BarWidget.qml Panel.qml Model.js Api.js tests/run.js && bin/dev-sync && omarchy restart shell

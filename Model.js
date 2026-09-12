@@ -58,17 +58,23 @@ var POLL_DEFAULTS = { deploymentsSec: 4, resourcesSec: 60, serversSec: 120, topo
 // error: a quoted "false" must not stop polling and every alert) and keeps its default (SR22).
 var NOTIFY_DEFAULTS = { deploymentQueued: true, deploymentStarted: true, deploymentFinished: true,
                         deploymentFailed: true, resourceStateChanged: true, serverReachability: true }
+// An instance id names a state file (recent-<id>.json) and an IPC argument: one path
+// segment, no dots, no slashes (SR32).
+var ID_RE = /^[A-Za-z0-9_-]{1,32}$/
 
 function normaliseConfig(text) {
-  var out = { ok: false, error: "", warning: "", instances: [], poll: pollDefaults(), notify: notifyDefaults() }
+  var out = { ok: false, error: "", warning: "", instancesWarning: "", instances: [], poll: pollDefaults(), notify: notifyDefaults() }
   var c
   try { c = typeof text === "string" ? JSON.parse(text) : text } catch (e) { out.error = "invalid JSON: " + String(e && e.message ? e.message : e); return out }
   if (!c || typeof c !== "object") { out.error = "config is not an object"; return out }
   if (!Array.isArray(c.instances) || c.instances.length === 0) { out.error = "instances must be a non-empty array"; return out }
+  var ids = {}, origins = {}
   for (var i = 0; i < c.instances.length; i++) {
     var raw = c.instances[i] || {}
     var url = String(raw.url === undefined || raw.url === null ? "" : raw.url).trim()
     if (!/^https?:\/\/[^\s\/]+/i.test(url)) { out.error = "instances[" + i + "].url must start with http:// or https://"; return out }
+    // credentials in the authority would reach browser argv and the shell's history files (SR33)
+    if (/^https?:\/\/[^\/?#]*@/i.test(url)) { out.error = "instances[" + i + "].url must not carry credentials"; return out }
     var inst = {
       id: String(raw.id || ("instance" + i)),
       name: String(raw.name || raw.id || hostOf(url)),
@@ -86,6 +92,15 @@ function normaliseConfig(text) {
       inst.tokenCommand = cmd.slice()
     }
     if (!inst.token && !inst.tokenCommand) { out.error = "instances[" + i + "] needs token or tokenCommand"; return out }
+    if (!ID_RE.test(inst.id)) { out.error = "instances[" + i + "].id must be 1-32 characters of A-Z a-z 0-9 _ -"; return out }
+    if (Object.prototype.hasOwnProperty.call(ids, inst.id)) { out.error = "instances[" + i + "].id \"" + inst.id + "\" is already used by instances[" + ids[inst.id] + "]"; return out }
+    ids[inst.id] = i
+    var org = origin(inst.url)
+    // the same Coolify twice is allowed (a read-only second token is the acceptance setup) but
+    // every toast and drain runs twice; the callout says so. A URL origin() cannot key (a query
+    // or fragment) is never "the same" as another (review: data 4).
+    if (org && Object.prototype.hasOwnProperty.call(origins, org)) { if (!out.instancesWarning) out.instancesWarning = "\"" + inst.id + "\" and \"" + out.instances[origins[org]].id + "\" are the same Coolify (" + hostOf(url) + "): notifications arrive twice" }
+    else if (org) origins[org] = i
     out.instances.push(inst)
   }
   if (c.poll && typeof c.poll === "object") {
@@ -119,7 +134,7 @@ function notifyDefaults() { var p = {}; for (var k in NOTIFY_DEFAULTS) p[k] = NO
 // parts: a notify-only edit must not reset the store.
 function configSansNotify(cfg) {
   var o = {}
-  for (var k in cfg) if (k !== "notify" && k !== "warning") o[k] = cfg[k]
+  for (var k in cfg) if (k !== "notify" && k !== "warning" && k !== "instancesWarning") o[k] = cfg[k]
   return o
 }
 
@@ -241,11 +256,16 @@ var META = {
   ability: "",
   ratelimited: "Rate limited",
   offline: "Offline · retrying",
+  tls: "Certificate rejected",
   toolarge: "Response too large",
   http: "Coolify error"
 }
 
-var OFFLINE_EXITS = { 6: true, 7: true, 28: true, 35: true, 60: true }
+var OFFLINE_EXITS = { 6: true, 7: true, 28: true, 35: true }
+// curl 60: the peer certificate failed verification. curl aborts before any request, so the
+// Bearer header was never sent; retried like a transport error but named, because "offline"
+// would hide a self-hosted instance's expired or self-signed certificate (SR36).
+var TLS_EXIT = 60
 
 function makeError(kind, detail, extra) {
   var e = { kind: kind, title: META[kind] || "", detail: elide(redact(detail === undefined || detail === null ? "" : detail), 140),
@@ -269,6 +289,7 @@ function errorFor(r) {
   var extra = { httpCode: code, curlExit: exit, request: r.request || "" }
   if (exit !== 0) {
     if (OFFLINE_EXITS[exit]) return makeError("offline", r.errmsg || ("curl " + exit), extra)
+    if (exit === TLS_EXIT) return makeError("tls", r.errmsg || "certificate verification failed", extra)
     if (exit === 63) return makeError("toolarge", r.errmsg || "response exceeded the size cap", extra)
     return makeError("http", "curl " + exit + (r.errmsg ? ": " + r.errmsg : ""), extra)
   }
@@ -679,12 +700,14 @@ function notifyCopy(ev, obj, s, ctx) {
     head = appLabel(obj.name, obj.uuid) + (ev.event === "unreachable" ? " unreachable" : " reachable")
     body = ev.event === "unreachable" && ev.down ? ev.down + " resources down" : ""
   } else return null
+  // Two or more instances: the body names which one (the headline stays the resource's).
+  if (ctx.instanceLabel) body = [body, String(ctx.instanceLabel)].filter(function (x) { return !!x }).join(" · ")
   return { toggle: row.toggle, glyph: G[row.glyph], urgency: row.urgency, targetType: row.target,
            headline: notifySafe(head, NOTIFY_MAX_HEADLINE), body: notifyBody(body, NOTIFY_MAX_BODY), url: url }
 }
 
 // events -> { argvs, log, suppressed: {rule: n}, notified: [{key, at}], lastKind }.
-// ctx = { notify, origin, dnd, pending, actionAt, lastNotified, sentLastMin, now, pluginId }.
+// ctx = { notify, origin, dnd, pending, actionAt, lastNotified, sentLastMin, now, pluginId, instanceLabel }.
 // Per-event drops first (first match wins), then critical-first ordering, then the caps.
 function notifyPlan(events, s, ctx) {
   var out = { argvs: [], log: [], suppressed: {}, notified: [], lastKind: "", nonCritical: 0 }   // nonCritical: what the minute ring counts
@@ -780,7 +803,10 @@ function recentEntry(d) {
   return o
 }
 
-function parseRecent(text, instanceKey, nowMs) {
+// `id` (Phase 4): the instance id that owns the file. A file that carries an `id` must match;
+// a Phase 3 file carries none and is accepted only by the first instance (`first`), which is
+// the one that keeps recent.json; any other instance rejects it (review: data 2).
+function parseRecent(text, instanceKey, nowMs, id, first) {
   var out = { recent: [], loaded: false, rejected: false }
   if (text === undefined || text === null || text === "") return out
   if (!instanceKey || typeof text !== "string" || text.length > RECENT_FILE_MAX_CHARS) { out.rejected = true; return out }
@@ -788,6 +814,8 @@ function parseRecent(text, instanceKey, nowMs) {
   if (!v || typeof v !== "object" || Array.isArray(v) || v.version !== RECENT_FILE_VERSION || v.instance !== instanceKey || !Array.isArray(v.recent)) {
     out.rejected = true; return out
   }
+  if (v.id !== undefined && v.id !== null) { if (!id || v.id !== id) { out.rejected = true; return out } }
+  else if (id && !first) { out.rejected = true; return out }
   var now = nowMs || Date.now(), seen = bare()
   for (var i = 0; i < v.recent.length && out.recent.length < RECENT_CAP; i++) {
     var d = v.recent[i]
@@ -803,13 +831,15 @@ function parseRecent(text, instanceKey, nowMs) {
 }
 
 // -> { text, key }: `key` omits savedAt so an unchanged list is a no-op write.
-function serialiseRecent(recent, instanceKey, nowMs) {
+function serialiseRecent(recent, instanceKey, nowMs, id) {
   var list = (recent || []).filter(function (d) { return !!d && typeof d.uuid === "string" && UUID_RE.test(d.uuid) && Object.prototype.hasOwnProperty.call(TERMINAL, String(d.status)) })
     .slice(0, RECENT_CAP).map(recentEntry)
   list.forEach(function (e) { delete e.appUuid; delete e.branch })
-  var key = JSON.stringify({ version: RECENT_FILE_VERSION, instance: instanceKey, recent: list })
-  var text = JSON.stringify({ version: RECENT_FILE_VERSION, instance: instanceKey, savedAt: nowMs || Date.now(), recent: list }, null, 2) + "\n"
-  return { text: text, key: key }
+  var head = { version: RECENT_FILE_VERSION, instance: instanceKey }
+  if (id) head.id = String(id)                                   // Phase 3's parseRecent ignores unknown keys, so a rollback still reads it
+  var keyObj = {}; for (var k in head) keyObj[k] = head[k]; keyObj.recent = list
+  var textObj = {}; for (var k2 in head) textObj[k2] = head[k2]; textObj.savedAt = nowMs || Date.now(); textObj.recent = list
+  return { text: JSON.stringify(textObj, null, 2) + "\n", key: JSON.stringify(keyObj) }
 }
 
 function mergeRecent(memory, loaded) {
@@ -882,6 +912,7 @@ function barState(s) {
   if (ek === "apidisabled") return dim(G.cloudAlert, "Coolwatch — API disabled on this instance")
   if (ek === "ipblocked") return dim(G.cloudAlert, "Coolwatch — this IP is not allowed")
   if (ek === "offline") return dim(G.cloudOff, "Coolwatch — offline, retrying")
+  if (ek === "tls") return dim(G.cloudAlert, "Coolwatch — certificate rejected, retrying")
   if (ek === "ratelimited") return dim(G.cloud, "Coolwatch — rate limited, backing off " + (s.backoffSec || 0) + "s")
   if (!s.baselineDone && !isPartial(s)) return dim(G.cloud, "Coolwatch — starting")
   var failed = s.failedUnacked || []
@@ -909,6 +940,55 @@ function barState(s) {
   return r
 }
 
+// ---- instances (Phase 4) ------------------------------------------------------------------
+// `list` is the service's per-instance summary: [{ id, name, error, failed, down }] (error = the
+// instance's error kind or "", failed = unacknowledged failed builds, down = unreachable servers).
+
+function instanceTroubleOf(x) {
+  if (!x) return ""
+  if (x.error === "ability") return "token lacks an ability"          // META.ability is empty by design (the callout composes it)
+  if (x.error) return META[x.error] ? META[x.error].replace(/ · .*$/, "").toLowerCase() : "error"
+  if (x.failed > 0) return plural(x.failed, "failed build")
+  if (x.down > 0) return plural(x.down, "server") + " unreachable"
+  return ""
+}
+
+// What a context's store was built from: the entry with its token replaced by a
+// fingerprint (length and a djb2 sum), so a token change still resets the context and
+// the key holds no copy of the token (SR34).
+function tokenFingerprint(token) {
+  var s = String(token === undefined || token === null ? "" : token), h = 5381
+  for (var i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0
+  return s.length + ":" + h.toString(16)
+}
+function instanceKey(entry, poll) {
+  var e = {}
+  for (var k in entry) if (k !== "token") e[k] = entry[k]
+  e.tokenFp = tokenFingerprint(entry ? entry.token : "")
+  return JSON.stringify({ e: e, poll: poll || null })
+}
+
+// Chips exist only with two or more instances; one instance shows none.
+function instanceChips(list, activeId) {
+  list = list || []
+  if (list.length < 2) return []
+  return list.map(function (x) {
+    return { id: String(x.id || ""), label: elide(String(x.name || x.id || ""), 24), selected: x.id === activeId, trouble: !!instanceTroubleOf(x) }
+  })
+}
+
+// The bar icon follows the active instance; this names the first other instance in trouble,
+// for the tooltip suffix. "" when none.
+function instanceTrouble(list, activeId) {
+  list = list || []
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].id === activeId) continue
+    var t = instanceTroubleOf(list[i])
+    if (t) return elide(String(list[i].name || list[i].id || ""), 24) + ": " + t
+  }
+  return ""
+}
+
 function failedName(s, uuid) {
   var all = (s.recent || []).concat(s.deployments || [])
   for (var i = 0; i < all.length; i++) if (all[i].uuid === uuid) return all[i].appName || uuid
@@ -930,6 +1010,7 @@ function calloutBody(e, s) {
     case "ability": return "The token is missing the " + (abilityOf(e.detail) || "required") + " ability."
     case "ratelimited": return "Backing off " + ((s && s.backoffSec) || e.backoffSec || 30) + "s."
     case "offline": return "Retrying."
+    case "tls": return "curl could not verify this instance's certificate; nothing was sent. Fix the certificate (or trust its CA on this machine). Retrying."
     case "toolarge": return "Coolify's response exceeded 8 MB and was dropped."
     case "http": return e.detail || ("Coolify returned " + (e.httpCode || 0) + ".")
     default: return e.detail || ""
@@ -1423,7 +1504,7 @@ function footerHints(focusSection, row, ui) {
   ui = ui || {}
   if (ui.confirmOpen) return "h/l pick · enter confirm · esc cancel"
   if (ui.view) return viewHints(ui.view)
-  if (focusSection === "hero") return "enter refresh · j down · r refresh · esc close"
+  if (focusSection === "hero") return (ui.instances > 1 ? "h/l instance · " : "") + "enter refresh · j down · r refresh · esc close"
   if (row && row.type === "fold") return "j/k move · enter fold · g group · r refresh · esc close"
   if (ui.expanded && ui.actionFocus) return "h/l pick · enter run · esc collapse"
   if (ui.expanded) return "l pick · enter collapse · esc collapse"

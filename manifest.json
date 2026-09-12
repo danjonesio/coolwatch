@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.danjonesio.coolwatch",
   "name": "Coolwatch",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "author": "Dan Jones",
   "license": "MIT",
   "description": "Coolify in the Omarchy bar: servers, resources, deployments and their status.",

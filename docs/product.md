@@ -92,7 +92,8 @@ Phases are defined in `docs/roadmap.md`. Every feature below names the API it re
 - Deployment history per application (`skip`/`take` pagination). Built.
 - Tag deploy (`POST /deploy?tag=`) from a TAGS fold. Built; the API cannot list a
   tag's members, so the confirm says so and the response is counted per item.
-- Multi-instance chips (Cloud + self-hosted) in the hero: next, on `phase-4-instances`.
+- Multi-instance chips (Cloud + self-hosted) in the hero: built 2026-09-12 on
+  `phase-4-instances`; one context per `instances[]` entry, the bar follows the current one.
 
 ### Phase 5 — beyond the API (optional)
 
