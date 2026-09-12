@@ -1,6 +1,6 @@
 # Design
 
-Omarify must be indistinguishable from a first-party Omarchy panel. That is achieved by
+Coolwatch must be indistinguishable from a first-party Omarchy panel. That is achieved by
 building only from `qs.Ui` and `qs.Commons`, taking every colour, size, radius and font
 from the shell, and copying the interaction model of the tailscale, network and agents
 panels. `docs/omarchy-shell-reference.md` is the component reference.
@@ -35,15 +35,15 @@ First matching row wins (`Model.barState`):
 
 | # | State | Selector | Glyph | `dimmed` | `active` | Tooltip |
 |---|---|---|---|---|---|---|
-| 1 | Not configured | no config file | `󰅣` F0163 | yes | no | "Omarify — no config at ~/.config/omarify/config.json" |
-| 2 | Config error / unsafe | bad JSON, invalid, or writable by others | `󰧠` F09E0 | yes | no | "Omarify — config error: <first line>" / "Omarify — config is writable by others" |
-| 3 | Token unavailable | `tokenCommand` failed | `󰧠` | yes | no | "Omarify — token command failed (exit N)" |
-| 4 | Waiting for token | `tokenCommand` running | `󰅟` | yes | no | "Omarify — waiting for token command" |
-| 5 | Token rejected | 401 | `󰧠` | yes | no | "Omarify — token rejected" |
-| 6 | API disabled / IP blocked | 403 | `󰧠` | yes | no | "Omarify — API disabled on this instance" / "Omarify — this IP is not allowed" |
-| 7 | Offline | curl exit 6/7/28/35/60 | `󰅤` F0164 | yes | no | "Omarify — offline, retrying" |
-| 8 | Rate limited | 429 | `󰅟` | yes | no | "Omarify — rate limited, backing off Ns" |
-| 9 | Starting | no baseline yet | `󰅟` | yes | no | "Omarify — starting" |
+| 1 | Not configured | no config file | `󰅣` F0163 | yes | no | "Coolwatch — no config at ~/.config/coolwatch/config.json" |
+| 2 | Config error / unsafe | bad JSON, invalid, or writable by others | `󰧠` F09E0 | yes | no | "Coolwatch — config error: <first line>" / "Coolwatch — config is writable by others" |
+| 3 | Token unavailable | `tokenCommand` failed | `󰧠` | yes | no | "Coolwatch — token command failed (exit N)" |
+| 4 | Waiting for token | `tokenCommand` running | `󰅟` | yes | no | "Coolwatch — waiting for token command" |
+| 5 | Token rejected | 401 | `󰧠` | yes | no | "Coolwatch — token rejected" |
+| 6 | API disabled / IP blocked | 403 | `󰧠` | yes | no | "Coolwatch — API disabled on this instance" / "Coolwatch — this IP is not allowed" |
+| 7 | Offline | curl exit 6/7/28/35/60 | `󰅤` F0164 | yes | no | "Coolwatch — offline, retrying" |
+| 8 | Rate limited | 429 | `󰅟` | yes | no | "Coolwatch — rate limited, backing off Ns" |
+| 9 | Starting | no baseline yet | `󰅟` | yes | no | "Coolwatch — starting" |
 | 10 | Failed, unacknowledged | a failure landed while no panel was open | `󰅙` F0159 | no | **yes** | "Deployment failed: api" (+ " +N more") |
 | 11 | Server unreachable | any reachable=false, not disabled | `󰅤` | no | **yes** | "web-1 unreachable" (+ " +N more") |
 | 12 | Deploying | any queued / in_progress | `󰦖` F0996 | no | **yes** | "Deploying api" / "N deployments running" |
@@ -117,10 +117,10 @@ screen is stale, "Showing data from 3m ago." Healthy panels show no callout.
 
 | Kind | Body |
 |---|---|
-| no config | "Create ~/.config/omarify/config.json (chmod 600):" + the three-line sample |
+| no config | "Create ~/.config/coolwatch/config.json (chmod 600):" + the three-line sample |
 | config error | the parse or validation error, plain text |
-| config unsafe | "Anyone on this machine can rewrite it. Run: chmod 600 ~/.config/omarify/config.json" |
-| permissions (warning) | "Anyone on this machine can read your token. Run: chmod 600 ~/.config/omarify/config.json" |
+| config unsafe | "Anyone on this machine can rewrite it. Run: chmod 600 ~/.config/coolwatch/config.json" |
+| permissions (warning) | "Anyone on this machine can read your token. Run: chmod 600 ~/.config/coolwatch/config.json" |
 | plaintext (warning) | "This instance is http://, so the token crosses the network in the clear." |
 | token command failed | "The token command exited N. Its output is never logged; run it yourself to see why." |
 | waiting for token | "Running the token command…" |

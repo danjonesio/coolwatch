@@ -1,6 +1,6 @@
 # Faster topology drain while a panel is open, and an honest "Ungrouped" fold
 
-Repo `/home/danjones/Projects/omarify`, base `master` at `28111f5`, branch `topology-drain`. Dan merges. Small change, no planning panel (two mechanisms, both already in the code; recorded here so `/deej-stack:d-implement` can build it with a Verify gate).
+Repo `/home/danjones/Projects/coolwatch`, base `master` at `28111f5`, branch `topology-drain`. Dan merges. Small change, no planning panel (two mechanisms, both already in the code; recorded here so `/deej-stack:d-implement` can build it with a Verify gate).
 
 ## Context
 
@@ -32,7 +32,7 @@ Rejected: kicking every stage 2 block at once on panel open (a burst of P + S re
 - `snapshot` gains `topologyFetched: root._topologyFetched`.
 - `docs/architecture.md` polling schedule: the topology row gains "one block per 10 s while a panel is open and the topology is incomplete"; `AGENTS.md:66-69` rate-limit lock gains the same clause.
 
-**Verify**: `bin/check` → `ok`. `bin/dev-sync && omarchy restart shell`; within 5 s `omarchy-shell shell summon io.github.danjonesio.omarify`; then `for i in $(seq 12); do omarchy-shell io.github.danjonesio.omarify status | jq -c '{t: now|floor, topologyFetched, topologyQueue, requestsLastMin}'; sleep 10; done` shows `topologyQueue` falling by one per sample after the 65 s kick and `topologyFetched` true within ~130 s of the restart, with `requestsLastMin` never above 30. Then `omarchy-shell shell hide …`, `omarchy restart shell` without summoning: the same loop shows one block per 40 s and `requestsLastMin` ≤ 20 (the Phase 1 closed-panel bar holds).
+**Verify**: `bin/check` → `ok`. `bin/dev-sync && omarchy restart shell`; within 5 s `omarchy-shell shell summon io.github.danjonesio.coolwatch`; then `for i in $(seq 12); do omarchy-shell io.github.danjonesio.coolwatch status | jq -c '{t: now|floor, topologyFetched, topologyQueue, requestsLastMin}'; sleep 10; done` shows `topologyQueue` falling by one per sample after the 65 s kick and `topologyFetched` true within ~130 s of the restart, with `requestsLastMin` never above 30. Then `omarchy-shell shell hide …`, `omarchy restart shell` without summoning: the same loop shows one block per 40 s and `requestsLastMin` ≤ 20 (the Phase 1 closed-panel bar holds).
 
 ### 2. `Model.js` + tests: "Ungrouped · loading" while the topology is incomplete
 
@@ -46,7 +46,7 @@ Rejected: kicking every stage 2 block at once on panel open (a burst of P + S re
 
 ```sh
 bin/check
-omarchy-shell io.github.danjonesio.omarify status | jq '{topologyFetched, topologyQueue, requestsLastMin, openPanels}'
+omarchy-shell io.github.danjonesio.coolwatch status | jq '{topologyFetched, topologyQueue, requestsLastMin, openPanels}'
 ```
 
 Done: after a restart with the panel summoned, every project fold is named within ~2 minutes; with the panel closed the Phase 1 cadence and budget are unchanged; the leftover fold says "loading" only while blocks are still queued.

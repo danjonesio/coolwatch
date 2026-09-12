@@ -761,7 +761,7 @@ function notifyPlan(events, s, ctx) {
 }
 
 // ---- recent state file (Phase 3) -------------------------------------------------------------
-// ~/.local/state/omarify/recent.json is untrusted input (SR18): whitelist, bound, validate,
+// ~/.local/state/coolwatch/recent.json is untrusted input (SR18): whitelist, bound, validate,
 // never throw. branch/appUuid are join products and are recomputed after load.
 
 var RECENT_FILE_VERSION = 1
@@ -832,8 +832,8 @@ function kindWord(k) { return KIND_WORDS[k] || k || "data" }
 
 function heroTitle(s) {
   var i = s && s.instance
-  if (!i) return "Omarify"
-  return i.name || i.id || hostOf(i.url) || "Omarify"
+  if (!i) return "Coolwatch"
+  return i.name || i.id || hostOf(i.url) || "Coolwatch"
 }
 
 function heroDetail(s) {
@@ -870,18 +870,18 @@ function barState(s) {
   var e = s ? s.error : null
   var ek = e ? e.kind : ""
   function dim(glyph, tip) { r.glyph = glyph; r.dimmed = true; r.tooltip = tip; return r }
-  if (!s) return dim(G.cloud, "Omarify — starting")
-  if (ek === "noconfig") return dim(G.cloudOutline, "Omarify — no config at ~/.config/omarify/config.json")
-  if (ek === "configerror") return dim(G.cloudAlert, "Omarify — config error: " + String(e.detail || "").split("\n")[0])
-  if (ek === "unsafe") return dim(G.cloudAlert, "Omarify — config is writable by others")
-  if (ek === "tokencmd") return dim(G.cloudAlert, "Omarify — token command failed (exit " + (e.curlExit || 0) + ")")
-  if (ek === "waitingtoken") return dim(G.cloud, "Omarify — waiting for token command")
-  if (ek === "auth") return dim(G.cloudAlert, "Omarify — token rejected")
-  if (ek === "apidisabled") return dim(G.cloudAlert, "Omarify — API disabled on this instance")
-  if (ek === "ipblocked") return dim(G.cloudAlert, "Omarify — this IP is not allowed")
-  if (ek === "offline") return dim(G.cloudOff, "Omarify — offline, retrying")
-  if (ek === "ratelimited") return dim(G.cloud, "Omarify — rate limited, backing off " + (s.backoffSec || 0) + "s")
-  if (!s.baselineDone && !isPartial(s)) return dim(G.cloud, "Omarify — starting")
+  if (!s) return dim(G.cloud, "Coolwatch — starting")
+  if (ek === "noconfig") return dim(G.cloudOutline, "Coolwatch — no config at ~/.config/coolwatch/config.json")
+  if (ek === "configerror") return dim(G.cloudAlert, "Coolwatch — config error: " + String(e.detail || "").split("\n")[0])
+  if (ek === "unsafe") return dim(G.cloudAlert, "Coolwatch — config is writable by others")
+  if (ek === "tokencmd") return dim(G.cloudAlert, "Coolwatch — token command failed (exit " + (e.curlExit || 0) + ")")
+  if (ek === "waitingtoken") return dim(G.cloud, "Coolwatch — waiting for token command")
+  if (ek === "auth") return dim(G.cloudAlert, "Coolwatch — token rejected")
+  if (ek === "apidisabled") return dim(G.cloudAlert, "Coolwatch — API disabled on this instance")
+  if (ek === "ipblocked") return dim(G.cloudAlert, "Coolwatch — this IP is not allowed")
+  if (ek === "offline") return dim(G.cloudOff, "Coolwatch — offline, retrying")
+  if (ek === "ratelimited") return dim(G.cloud, "Coolwatch — rate limited, backing off " + (s.backoffSec || 0) + "s")
+  if (!s.baselineDone && !isPartial(s)) return dim(G.cloud, "Coolwatch — starting")
   var failed = s.failedUnacked || []
   if (failed.length) {
     var first = failedName(s, failed[0])
@@ -917,9 +917,9 @@ var SAMPLE_CONFIG = '{ "version": 1, "instances": [\n  { "id": "cloud", "name": 
 
 function calloutBody(e, s) {
   switch (e.kind) {
-    case "noconfig": return "Create ~/.config/omarify/config.json (chmod 600):\n" + SAMPLE_CONFIG
+    case "noconfig": return "Create ~/.config/coolwatch/config.json (chmod 600):\n" + SAMPLE_CONFIG
     case "configerror": return e.detail || "Config could not be read."
-    case "unsafe": return "Anyone on this machine can rewrite it. Run: chmod 600 ~/.config/omarify/config.json"
+    case "unsafe": return "Anyone on this machine can rewrite it. Run: chmod 600 ~/.config/coolwatch/config.json"
     case "tokencmd": return "The token command exited " + (e.curlExit || 0) + ". Its output is never logged; run it yourself to see why."
     case "waitingtoken": return "Running the token command…"
     case "auth": return "Create a token in Coolify → Security → API Tokens with the read ability."
@@ -941,7 +941,7 @@ function abilityOf(msg) {
 
 function warningBody(w) {
   if (!w) return ""
-  if (w.kind === "permissions") return "Anyone on this machine can read your token. Run: chmod 600 ~/.config/omarify/config.json"
+  if (w.kind === "permissions") return "Anyone on this machine can read your token. Run: chmod 600 ~/.config/coolwatch/config.json"
   if (w.kind === "plaintext") return "This instance is http://, so the token crosses the network in the clear."
   return w.detail || ""
 }

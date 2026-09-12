@@ -7,7 +7,7 @@ import "Model.js" as Model
 // One instance per monitor. Renders the service's bar state and hosts the panel.
 BarWidget {
   id: root
-  moduleName: "io.github.danjonesio.omarify"
+  moduleName: "io.github.danjonesio.coolwatch"
 
   readonly property var svc: bar && bar.shell && typeof bar.shell.serviceFor === "function"
     ? bar.shell.serviceFor(root.moduleName)
@@ -57,7 +57,7 @@ BarWidget {
     keepSpace: true
     dimmed: root.svc ? root.svc.bar.dimmed : true
     active: root.svc ? root.svc.bar.active : false
-    tooltipText: root.svc ? root.svc.bar.tooltip : "Omarify — starting"
+    tooltipText: root.svc ? root.svc.bar.tooltip : "Coolwatch — starting"
     onPressed: function(b) {
       if (b === Qt.LeftButton) root.toggle()
       // Right click opens the instance itself; the origin is validated by Model (SR9).

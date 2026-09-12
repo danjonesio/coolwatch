@@ -1,4 +1,4 @@
-# Omarify
+# Coolwatch
 
 Coolify in the Omarchy bar. Servers, projects, resources, running and queued
 deployments, and the buttons to deploy, redeploy, restart, stop and cancel, in a native
@@ -6,6 +6,11 @@ deployments, and the buttons to deploy, redeploy, restart, stop and cancel, in a
 through the REST API.
 
 **Status: Phase 3 (notifications and a persisted Recent list) built; Phases 1 (read-only bar icon and panel) and 2 (actions) merged.** See [docs/roadmap.md](docs/roadmap.md).
+
+**Renamed from Omarify on 2026-09-12.** New plugin id `io.github.danjonesio.coolwatch`, config at
+`~/.config/coolwatch/config.json`, state at `~/.local/state/coolwatch/recent.json`. Nothing is read
+from the old paths. If you ran Omarify: `omarchy plugin remove io.github.danjonesio.omarify`, move your
+config file across, then install again.
 
 ## What it will do
 
@@ -26,10 +31,10 @@ disk usage. See [docs/product.md](docs/product.md) for the honest list.
 ## Install (once it exists)
 
 ```sh
-omarchy plugin add https://github.com/danjonesio/omarify.git --enable
+omarchy plugin add https://github.com/danjonesio/coolwatch.git --enable
 ```
 
-Then create `~/.config/omarify/config.json` (mode 0600; the plugin creates the
+Then create `~/.config/coolwatch/config.json` (mode 0600; the plugin creates the
 directory as 0700):
 
 ```json
@@ -57,7 +62,7 @@ one exception: a failed deployment or an unreachable server while DND is on is s
 under the app name `omarchy-action`, the only sender the shell shows through DND, so it
 is listed as that sender in history. Click a toast to open the deployment, resource or
 server in Coolify. Recent terminal deployments are kept in
-`~/.local/state/omarify/recent.json` (a directory the plugin creates as 0700; the file
+`~/.local/state/coolwatch/recent.json` (a directory the plugin creates as 0700; the file
 holds names, branches, commit messages and the instance URL, never the token) so the
 panel's Recent section survives a shell restart; the panel shows the last hour. Create the token in Coolify under
 Security → API Tokens with the `read` and `deploy` permissions (`write` only if you want
@@ -68,7 +73,7 @@ swap it in. Instead of `token` you can give
 sits on disk; note that this keeps it off disk but not away from other plugins loaded
 into the same shell.
 
-From the command line, `omarchy-shell io.github.danjonesio.omarify deploy|restart|stop|start <uuid>`
+From the command line, `omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid>`
 queues the action without a confirmation (typing the verb is the confirmation) and
 prints `queued <verb> <uuid>` or the reason it was refused; `… status | jq .lastAction`
 shows the outcome. Any local process can call these, and any plugin loaded into the

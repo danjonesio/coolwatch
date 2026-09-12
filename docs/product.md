@@ -1,6 +1,6 @@
-# Omarify — product brief
+# Coolwatch — product brief
 
-Omarify is a native Omarchy shell plugin that puts Coolify in the bar. One icon, one
+Coolwatch is a native Omarchy shell plugin that puts Coolify in the bar. One icon, one
 panel: every server, project and resource on your Coolify account, what is deploying
 right now, and the buttons to deploy, restart, stop and cancel without opening a
 browser. It talks to Coolify Cloud (`app.coolify.io`) and self-hosted Coolify through
@@ -30,7 +30,7 @@ the keyboard. Then anyone on Omarchy who runs Coolify.
 The API research (`docs/coolify-api.md`) sets hard limits. The product is designed
 around them rather than pretending they are not there.
 
-| Asked for | API reality | What Omarify does |
+| Asked for | API reality | What Coolwatch does |
 |---|---|---|
 | Servers list + status | `GET /servers` → `is_reachable`, `is_usable`, proxy status. No status string. | Derive **ready / unreachable / disabled / building-only** from those flags. |
 | Projects, environments, resources | `GET /projects`, `GET /projects/{uuid}/{env}` (has resources with status), `GET /servers/{uuid}/resources`, flat `GET /resources`. | Build the tree client-side. Apps carry only integer foreign keys, so the tree is assembled from the environment and server calls. |
@@ -110,8 +110,9 @@ Phases are defined in `docs/roadmap.md`. Every feature below names the API it re
 
 ## Decisions (Dan, 2026-09-06)
 
-1. **Plugin id** is `io.github.danjonesio.omarify`, matching the GitHub handle and the
-   repo `git@github.com:danjonesio/omarify.git`.
+1. **Plugin id** is `io.github.danjonesio.coolwatch`, matching the GitHub handle and the
+   repo `git@github.com:danjonesio/coolwatch.git`. Renamed from `io.github.danjonesio.omarify` / repo `omarify`
+   on 2026-09-12; hard cut, no fallback paths.
 2. **Token storage** supports both forms: `token` inline in the 0600 config file, or
    `tokenCommand` (for example `op read "op://Private/Coolify/credential"`). When both
    are present `tokenCommand` wins.
