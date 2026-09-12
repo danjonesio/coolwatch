@@ -134,8 +134,11 @@ Read `docs/roadmap.md` before writing code.
   2026-09-12 with all of that: 19 closed, 22 open during the first drain, 29 with a build
   running and the log view open. With several instances the gate is **per instance**
   (the 200/min limit is per token): each `status.instances[].requestsLastMin` stays under
-  20 with the panel closed and `requestsTotalLastMin` is reported alongside (measured
-  2026-09-12 with two entries on one account: 17–19 each, 34–38 total).
+  20 with the panel closed once settled, with the same allowances as above (a panel open
+  primes and drains every context at once: ≤ 24 per instance in the window after it
+  opens), and `requestsTotalLastMin` is reported alongside (measured 2026-09-12 with two
+  entries on one account from a quiet start: 17–19 each, 35–38 total; 24 each in the
+  window after a panel opened).
 
 ## Layout
 
