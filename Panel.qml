@@ -385,12 +385,14 @@ Panel {
     if (i < 0) return
     var r = viewModel.get(i)
     if (v.kind === "history") {
-      if (r.rowType === "history") root.openLogsFor({ type: "history", uuid: r.uuid, name: r.name, url: r.url, status: r.status })
+      var hrow = { type: "history", uuid: String(r.uuid || ""), name: String(r.name || ""), url: String(r.url || ""), status: String(r.status || "") }   // copied before any view change
+      if (r.rowType === "history") root.openLogsFor(hrow)
       else if (r.rowType === "more" && root.liveRec && !root.liveRec.loading) svc.fetchHistory(v.uuid, root.liveRec.rows.length, v.name)
     } else if (v.kind === "servicepick" && r.rowType === "pick") {
-      root.viewStack = root.viewStack.slice(0, -1).concat([{ kind: "containerlog", uuid: v.uuid, name: v.name, url: v.url, ckind: "service", sub: r.name }])
+      var sub = String(r.name || "")                 // read before the view swap: it clears the model `r` lives in
+      root.viewStack = root.viewStack.slice(0, -1).concat([{ kind: "containerlog", uuid: v.uuid, name: v.name, url: v.url, ckind: "service", sub: sub }])
       root.following = true; root.viewCursorKey = ""
-      svc.fetchContainerLogSub(v.uuid, r.name, v.name)
+      svc.fetchContainerLogSub(v.uuid, sub, v.name)
       root.syncView(true)
     }
   }
@@ -432,7 +434,7 @@ Panel {
       if (rebuild || !rec || fi !== root.lastFailIndex) { viewModel.clear(); root.consumed = 0; root.seenDropped = 0; root.lastFailIndex = fi }
       if (!rec) return
       if (rec.dropped > root.seenDropped) {                         // the tail cap dropped entries: trim the head by absolute index
-        while (viewModel.count && viewModel.get(0).i !== null && viewModel.get(0).i < rec.dropped) viewModel.remove(0)
+        while (viewModel.count && viewModel.get(0).i >= 0 && viewModel.get(0).i < rec.dropped) viewModel.remove(0)
         root.seenDropped = rec.dropped
         if (root.consumed < rec.dropped) root.consumed = rec.dropped
       }

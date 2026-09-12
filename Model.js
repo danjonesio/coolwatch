@@ -1447,10 +1447,11 @@ var LOG_CTRL_RE = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g
 var TAG_RE = /^[^\s\/?#&=,]{1,64}$/
 // Verbs the panel navigates on; they never reach act() or an IPC handler.
 var NAV_VERBS = { open: true, logs: true, history: true }
-// Every overlay row carries the union of keys with null for the absent ones: a ListModel
-// fixes its roles on the first append.
-var VIEW_KEYS = ["rowType", "type", "key", "uuid", "appUuid", "i", "text", "tone", "hidden", "glyph", "name", "sub",
-                 "createdAt", "updatedAt", "finishedAt", "terminal", "status", "url", "pendingVerb", "shown", "total", "loading", "dim"]
+// Every overlay row carries the union of keys, each with a typed placeholder: a ListModel
+// fixes a role's type on the first append, and a null there would drop every later string.
+var VIEW_DEFAULTS = { rowType: "", type: "", key: "", uuid: "", appUuid: "", i: -1, text: "", tone: "", hidden: false, glyph: "", name: "", sub: "",
+                      createdAt: "", updatedAt: "", finishedAt: "", terminal: false, status: "", url: "", pendingVerb: "", shown: 0, total: 0, loading: false, dim: false }
+var VIEW_KEYS = Object.keys(VIEW_DEFAULTS)
 
 function logText(v, max) {
   var t = String(v === undefined || v === null ? "" : v).replace(LOG_CTRL_RE, "")
@@ -1516,9 +1517,12 @@ function failingEntry(entries, status) {
 
 function viewRow(rowType, fields) {
   var r = {}
-  for (var k = 0; k < VIEW_KEYS.length; k++) r[VIEW_KEYS[k]] = null
+  for (var k = 0; k < VIEW_KEYS.length; k++) r[VIEW_KEYS[k]] = VIEW_DEFAULTS[VIEW_KEYS[k]]
   r.rowType = rowType
-  if (fields) for (var f in fields) if (Object.prototype.hasOwnProperty.call(fields, f)) r[f] = fields[f]
+  if (fields) for (var f in fields) if (Object.prototype.hasOwnProperty.call(fields, f)) {
+    var v = fields[f], d = VIEW_DEFAULTS[f]
+    r[f] = v === undefined || v === null ? (d === undefined ? "" : d) : (typeof d === "string" ? String(v) : v)   // never a null, never a type change
+  }
   return r
 }
 function noteRow(key, text, tone) { return viewRow("note", { key: key, text: text, tone: tone || "dim" }) }
