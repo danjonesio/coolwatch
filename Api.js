@@ -10,6 +10,12 @@
 var RS = "\u001e"
 var US = "\u001f"
 var MAX_FILESIZE = 8388608
+// Log-bearing GETs: with `read:sensitive` every deployment row carries its full build
+// log, so the body is sized by build verbosity, not by row count. 4 MB is the largest
+// cap a 12 s max-time can deliver at the slowest measured throughput to Cloud
+// (0.19 MB/s -> 2.3 MB; 0.35 MB/s -> 4 MB); a larger cap would never fire because the
+// reaper's timeout would fire first (SR30). Descriptors opt in with `maxBytes`.
+var MAX_FILESIZE_LOG = 4194304
 // One trailer per transfer: RS, exitcode, http_code, time_total, size_download,
 // errormsg, newline, header_json (multi-line), US. The RS/US bytes are raw in the
 // emitted text because "\x1e" is not a curl config escape.
@@ -49,7 +55,7 @@ function block(instance, token, req, maxTimeSec) {
     "silent\n" +
     "connect-timeout = \"5\"\n" +
     "max-time = \"" + quote(maxTimeSec) + "\"\n" +
-    "max-filesize = \"" + MAX_FILESIZE + "\"\n" +
+    "max-filesize = \"" + (req.maxBytes || MAX_FILESIZE) + "\"\n" +
     "proto = \"=https,http\"\n" +
     "header = \"Authorization: Bearer " + quote(token) + "\"\n" +
     "header = \"Accept: application/json\"\n" +
@@ -75,8 +81,8 @@ function config(instance, token, reqs, maxTimeSec) {
 
 // Request descriptors: data only, no secrets.
 function reqVersion()             { return { kind: "version", path: "/version", json: false } }
-function reqDeployments()         { return { kind: "deployments", path: "/deployments" } }
-function reqDeployment(uuid)      { return { kind: "deployment", path: "/deployments/" + seg(uuid), arg: uuid } }
+function reqDeployments()         { return { kind: "deployments", path: "/deployments", maxBytes: MAX_FILESIZE_LOG } }
+function reqDeployment(uuid)      { return { kind: "deployment", path: "/deployments/" + seg(uuid), arg: uuid, maxBytes: MAX_FILESIZE_LOG } }
 function reqResources()           { return { kind: "resources", path: "/resources" } }
 function reqServers()             { return { kind: "servers", path: "/servers" } }
 function reqProjects()            { return { kind: "projects", path: "/projects" } }

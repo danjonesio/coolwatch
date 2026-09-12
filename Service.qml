@@ -698,7 +698,7 @@ Item {
     var uuid = q.shift()
     root._terminalQueue = q
     deploymentReq.inflight = { uuid: uuid }
-    root._launch(deploymentReq, Api.reqDeployment(uuid), 6)
+    root._launch(deploymentReq, Api.reqDeployment(uuid), 12)   // log-bearing: 12 s, 4 MB (SR30)
   }
 
   // The one place a terminal fetch's outcome is settled (called from _finish and the reaper
@@ -957,7 +957,7 @@ Item {
   // ---- scheduler -----------------------------------------------------------------------
 
   function _pollVersion() { if (root._backoffUntil("version") <= Date.now()) root._launch(versionReq, Api.reqVersion(), 6) }
-  function _pollDeployments() { if (root._backoffUntil("deployments") <= Date.now()) root._launch(deploymentsReq, Api.reqDeployments(), 6) }
+  function _pollDeployments() { if (root._backoffUntil("deployments") <= Date.now()) root._launch(deploymentsReq, Api.reqDeployments(), 12) }   // log-bearing: 12 s, 4 MB (SR30)
   function _pollResources() { if (root._backoffUntil("resources") <= Date.now()) root._launch(resourcesReq, Api.reqResources(), 10) }
   function _pollServers() { if (root._backoffUntil("servers") <= Date.now()) root._launch(serversReq, Api.reqServers(), 10) }
   // A tick that lands while stage 2 is still draining is skipped: the queue finishes first.
