@@ -21,7 +21,7 @@ if [[ $apipath == /version ]]; then
   printf '%s\n' "$body" > "$root/tests/fixtures/$name.txt"
 else
   printf '%s' "$body" | jq --arg deny "$deny" \
-    'walk(if type == "object" then with_entries(if (.key | test($deny)) then .value = "«scrubbed»" else . end) else . end)' \
+    'walk(if type == "object" then with_entries(if (.key | test($deny)) and .value != null then .value = "«scrubbed»" else . end) else . end)' \
     > "$root/tests/fixtures/$name.json"
 fi
 echo "wrote tests/fixtures/$name.*"

@@ -27,7 +27,8 @@ var G = {
   dotUnknown: "◌",        // ◌
   foldOpen: "▾",          // ▾
   foldClosed: "▸",        // ▸
-  back: "‹"               // ‹ U+2039: the overlay breadcrumb (Phase 4; JetBrains Mono Latin-1/punctuation block)
+  back: "‹",              // ‹ U+2039: the overlay breadcrumb (Phase 4; JetBrains Mono Latin-1/punctuation block)
+  tag: "#"                // a tag row's bullet (Phase 4; ASCII)
 }
 var GLYPHS = Object.keys(G).map(function (k) { return G[k] })
 
@@ -46,7 +47,7 @@ var UI_SEGMENT = { application: "application", service: "service", database: "da
 // panel-closed resources interval (60 s) plus margin; every entry is dropped at 300 s.
 var PENDING_STALE_MS = 150 * 1000
 var PENDING_DROP_MS = 300 * 1000
-var GERUND = { deploy: "deploying", redeploy: "redeploying", rebuild: "rebuilding", restart: "restarting", stop: "stopping", start: "starting", validate: "validating", cancel: "cancelling" }
+var GERUND = { deploy: "deploying", redeploy: "redeploying", rebuild: "rebuilding", restart: "restarting", stop: "stopping", start: "starting", validate: "validating", cancel: "cancelling", deployTag: "deploying" }
 var RUNNING_STATES = { running: true, starting: true, restarting: true, degraded: true }
 var STOPPED_STATES = { exited: true, paused: true }
 
@@ -1410,7 +1411,7 @@ function viewHints(view) {
   if (view.paused) bits.push("paused")
   else if (view.kind === "buildlog" && !view.terminal) bits.push(view.following ? "following" : "held")
   bits.push("j/k scroll")
-  if (view.kind === "buildlog" && !view.terminal) bits.push("b newest")
+  bits.push("b newest")
   if (view.kind === "buildlog") bits.push("H steps")
   if (view.kind === "containerlog") bits.push("r refetch")
   if (view.hasUrl) bits.push("o open")
@@ -1444,6 +1445,8 @@ var LOG_MAX_ENTRIES = 2000     // tail kept; `dropped` counts what fell off the 
 var LOG_MAX_OUTPUT = 4000      // chars per entry output
 var LOG_MAX_COMMAND = 320      // the real failing command is 162 chars; base64 echo blobs are 4 600
 var LOG_MAX_CHARS = 3145728    // a logs string above this is refused, not parsed (the transport cap is 4 MB)
+var LOG_MAX_OUTPUT_LINES = 200 // physical lines kept per entry (tail); real outputs are 2-4 lines
+var LOG_MAX_LINES = 5000       // physical lines kept per log (tail): the ListModel row budget, applied by dropping head entries
 // notifySafe's control-character class minus \t and \n, which a log line keeps.
 var LOG_CTRL_RE = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g
 // One query value: no whitespace, no URL structure, no comma (Coolify's multi-tag separator).
@@ -1487,13 +1490,25 @@ function parseBuildLog(logsString) {
     var e = arr[i]
     if (!e || typeof e !== "object" || Array.isArray(e)) continue
     var ord = typeof e.order === "number" && isFinite(e.order) ? e.order : i + 1
+    var output = logText(e.output, LOG_MAX_OUTPUT)
+    var parts = output.split("\n")
+    if (parts.length > LOG_MAX_OUTPUT_LINES) output = parts.slice(parts.length - LOG_MAX_OUTPUT_LINES).join("\n")
     out.entries.push({
       i: i, seq: ord, hidden: e.hidden === true, stream: e.type === "stderr" ? "stderr" : "stdout",
       command: typeof e.command === "string" && e.command ? elideMiddle(String(e.command).replace(LOG_CTRL_RE, ""), LOG_MAX_COMMAND) : null,
-      output: logText(e.output, LOG_MAX_OUTPUT),
+      output: output,
       at: typeof e.timestamp === "string" ? e.timestamp : null
     })
   }
+  // The row budget: physical lines summed from the tail; head entries beyond it are dropped
+  // like the entry cap, so a newline-heavy log cannot hand the ListModel a million rows.
+  var lines = 0, keep = out.entries.length
+  for (var k = out.entries.length - 1; k >= 0; k--) {
+    var en = out.entries[k]
+    lines += (en.command !== null ? 1 : 0) + (en.output === "" ? 0 : en.output.split("\n").length)
+    if (lines > LOG_MAX_LINES) { keep = out.entries.length - 1 - k; break }
+  }
+  if (keep < out.entries.length) { out.dropped = out.entries[out.entries.length - keep].i; out.entries = out.entries.slice(out.entries.length - keep); out.truncated = true }
   return out
 }
 
@@ -1524,8 +1539,13 @@ function viewRow(rowType, fields) {
   r.rowType = rowType
   r.type = rowType                       // the cursor helpers (SELECTABLE, nextSelectable) key on `type`
   if (fields) for (var f in fields) if (Object.prototype.hasOwnProperty.call(fields, f)) {
+    if (!Object.prototype.hasOwnProperty.call(VIEW_DEFAULTS, f)) continue      // an unknown key would add a role later rows lack
     var v = fields[f], d = VIEW_DEFAULTS[f]
-    r[f] = v === undefined || v === null ? (d === undefined ? "" : d) : (typeof d === "string" ? String(v) : v)   // never a null, never a type change
+    if (v === undefined || v === null) { r[f] = d; continue }
+    // Coerce by the placeholder's type: a ListModel fixes a role's type on the first append.
+    if (typeof d === "string") r[f] = String(v)
+    else if (typeof d === "boolean") r[f] = !!v
+    else { var n = Number(v); r[f] = isFinite(n) ? Math.floor(n) : d }
   }
   return r
 }
@@ -1605,7 +1625,7 @@ function normaliseTags(arr) {
   return out
 }
 function tagRow(t) {
-  return { type: "tag", key: "tag:" + t.uuid, uuid: t.uuid, name: t.name, sub: "", dot: null, glyph: null, tone: "fg", dim: false, url: "", pendingVerb: "" }
+  return { type: "tag", key: "tag:" + t.uuid, uuid: t.uuid, name: t.name, sub: "", dot: G.tag, glyph: null, tone: "dim", dim: false, url: "", pendingVerb: "" }
 }
 
 // Missing read:sensitive is silent (200 with `logs` absent), so it is detected from a

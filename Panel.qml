@@ -56,6 +56,8 @@ Panel {
   property string viewCursorKey: ""         // cursor inside a history/picker view (a key, never an index)
   property int consumed: 0                  // absolute entry index the ListModel has been filled up to
   property int seenDropped: 0
+  property int tailI: -1                    // the last rendered entry and its output length: a poll can grow the last entry in place
+  property int tailLen: -1
   property int lastFailIndex: -1
   property string _prevFocus: "list"
   readonly property var liveRec: root.view && root.svc && root.svc.views
@@ -361,7 +363,8 @@ Panel {
   function openLogsFor(row) {
     if (!row || !svc) return
     if (row.type === "deployment" || row.type === "history") {
-      root.pushView({ kind: "buildlog", uuid: row.uuid, name: row.name || row.uuid, url: row.url || "", status: row.status || "" })
+      root.pushView({ kind: "buildlog", uuid: row.uuid, name: row.name || row.uuid, url: row.url || "", status: row.status || "",
+                      at: row.finishedAt || row.updatedAt || "", createdAt: row.createdAt || "" })
       root._watch()
     } else if (row.type === "resource") {
       if (row.kind === "service") {
@@ -386,7 +389,8 @@ Panel {
     if (i < 0) return
     var r = viewModel.get(i)
     if (v.kind === "history") {
-      var hrow = { type: "history", uuid: String(r.uuid || ""), name: String(r.name || ""), url: String(r.url || ""), status: String(r.status || "") }   // copied before any view change
+      var hrow = { type: "history", uuid: String(r.uuid || ""), name: String(r.name || ""), url: String(r.url || ""), status: String(r.status || ""),
+                   finishedAt: String(r.finishedAt || ""), updatedAt: String(r.updatedAt || ""), createdAt: String(r.createdAt || "") }   // copied before any view change
       if (r.rowType === "history") root.openLogsFor(hrow)
       else if (r.rowType === "more" && root.liveRec && !root.liveRec.loading) svc.fetchHistory(v.uuid, root.liveRec.rows.length, v.name)
     } else if (v.kind === "servicepick" && r.rowType === "pick") {
@@ -432,19 +436,26 @@ Panel {
     if (v.kind === "buildlog") {
       var failing = rec ? Model.failingEntry(rec.entries, rec.status) : null
       var fi = failing ? failing.i : -1
-      if (rebuild || !rec || fi !== root.lastFailIndex) { viewModel.clear(); root.consumed = 0; root.seenDropped = 0; root.lastFailIndex = fi }
+      if (rebuild || !rec || fi !== root.lastFailIndex) { viewModel.clear(); root.consumed = 0; root.seenDropped = 0; root.tailI = -1; root.tailLen = -1; root.lastFailIndex = fi }
       if (!rec) return
       if (rec.dropped > root.seenDropped) {                         // the tail cap dropped entries: trim the head by absolute index
         while (viewModel.count && viewModel.get(0).i >= 0 && viewModel.get(0).i < rec.dropped) viewModel.remove(0)
         root.seenDropped = rec.dropped
         if (root.consumed < rec.dropped) root.consumed = rec.dropped
       }
+      var last = rec.entries.length ? rec.entries[rec.entries.length - 1] : null
+      if (last && last.i === root.tailI && last.output.length !== root.tailLen) {
+        // The last entry grew in place: drop its rows and let the filter re-append it.
+        while (viewModel.count && viewModel.get(viewModel.count - 1).i === last.i) viewModel.remove(viewModel.count - 1)
+        root.consumed = last.i
+      }
       var fresh = rec.entries.filter(function(e) { return e.i >= root.consumed })
       if (fresh.length) {
         var lines = Model.buildLogLines(fresh, { showHidden: root.showHidden, failing: failing, uuid: v.uuid })
-        for (var k = 0; k < lines.length; k++) viewModel.append(lines[k])
-        root.consumed = rec.dropped + rec.entries.length
+        if (lines.length) viewModel.append(lines)               // one batched insert, not one model change per line
+        root.consumed = fresh[fresh.length - 1].i + 1          // from the last index, not the count: the parser may skip a malformed element
       }
+      if (last) { root.tailI = last.i; root.tailLen = last.output.length }
       if (root.following) Qt.callLater(function() { if (root.following) viewList.positionViewAtEnd() })
     } else if (v.kind === "containerlog") {
       viewModel.clear()
@@ -460,6 +471,13 @@ Panel {
       }
       if (root.viewIndex(root.viewCursorKey) < 0 && viewModel.count) root.viewCursorKey = viewModel.get(Math.max(0, Model.nextSelectable(root.viewRows(), -1, 1))).key
     } else if (v.kind === "servicepick") {
+      if (rec && rec.names && rec.names.length === 1) {
+        // One container: the service already fetched its tail; show it instead of a one-row picker.
+        root.viewStack = root.viewStack.slice(0, -1).concat([{ kind: "containerlog", uuid: v.uuid, name: v.name, url: v.url, ckind: "service", sub: rec.names[0] }])
+        root.following = true; root.viewCursorKey = ""
+        root.syncView(true)
+        return
+      }
       viewModel.clear()
       if (rec && rec.names) for (var p = 0; p < rec.names.length; p++) viewModel.append(Model.pickRow(v.uuid, rec.names[p]))
       if (root.viewIndex(root.viewCursorKey) < 0 && viewModel.count) root.viewCursorKey = viewModel.get(0).key
@@ -479,7 +497,7 @@ Panel {
     if (v.kind === "buildlog") {
       if (!rec) return "Loading log…"
       if (rec.message) return rec.message
-      if (rec.refused) return "This build log is larger than 4 MB. Open it in Coolify."
+      if (rec.refused) return "This build log is larger than 3 MB. Open it in Coolify."
       if (rec.entries.length) return ""
       if (rec.status === "queued") return "Queued. Coolify has not started this build yet."
       if (rec.status === "in_progress") return "Starting…"
@@ -508,8 +526,14 @@ Panel {
     var v = root.view, rec = root.liveRec
     if (!v) return ""
     var bits = [v.name]
-    if (v.kind === "buildlog") { var st = rec && rec.status ? rec.status : v.status; if (st) bits.push(st === "in_progress" ? "building" : st === "cancelled-by-user" ? "cancelled" : st); if (rec && rec.fetchedAt) bits.push(Model.age(rec.fetchedAt, root.nowMs)) }
-    else if (v.kind === "containerlog") { bits.push("last 200 lines"); if (v.sub) bits.push(v.sub); if (rec && rec.fetchedAt) bits.push(Model.age(rec.fetchedAt, root.nowMs)) }
+    if (v.kind === "buildlog") {
+      var st = rec && rec.status ? rec.status : v.status
+      if (st) bits.push(st === "in_progress" ? "building" : st === "cancelled-by-user" ? "cancelled" : st)
+      // The deployment's own age (a finished build) or its elapsed time (a running one), never the fetch time.
+      if (rec && rec.terminal || Model.TERMINAL[st]) { if (v.at) bits.push(Model.age(v.at, root.nowMs)) }
+      else if (v.createdAt) bits.push(Model.elapsed(v.createdAt, root.nowMs))
+    }
+    else if (v.kind === "containerlog") { bits.push("last 200 lines"); if (v.sub) bits.push(v.sub); if (rec && rec.fetchedAt) bits.push(Model.elapsed(rec.fetchedAt, root.nowMs) + " ago") }
     else if (v.kind === "history") bits.push(rec && rec.count ? rec.count + " deployments" : "history")
     else bits.push("pick a container")
     return Model.G.back + " " + bits.join(" · ")
@@ -734,7 +758,7 @@ Panel {
         text: Model.footerHints(root.focusSection, root.currentRow,
                                 { expanded: !!root.currentRow && root.expandedKey === root.currentRow.key, actionFocus: root.actionFocus, confirmOpen: root.confirmOpen,
                                   view: root.view ? { kind: root.view.kind, following: root.following, terminal: !!(root.liveRec && root.liveRec.terminal),
-                                                      paused: !!(root.snapshot && root.snapshot.error && root.snapshot.error.kind === "ratelimited"), hasUrl: !!root.view.url } : null })
+                                                      paused: !!(root.snapshot && root.snapshot.paused), hasUrl: !!root.view.url } : null })
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
@@ -742,9 +766,10 @@ Panel {
       }
 
       // ---- Phase 4 overlay: a view over the list, inside the catcher so it anchors to the
-      // header and footer. Paints above the list (z), below the confirm. A full-fill
-      // MouseArea beneath its own list keeps hover, clicks and right-clicks from reaching
-      // the rows underneath; a button-less one above observes the wheel to release the follow.
+      // header and footer. Paints above the list (z), below the confirm; the list itself is
+      // hidden while a view is open. A full-fill MouseArea beneath its own list swallows
+      // pointer input over the head and foot notes; a button-less one above observes the
+      // wheel to release the follow.
       Item {
         id: overlay
         z: 9
@@ -1340,7 +1365,7 @@ Panel {
                 Text {
                   width: Style.space(22)
                   textFormat: Text.PlainText
-                  text: rowDelegate.modelData.dot || Model.G.foldClosed
+                  text: rowDelegate.modelData.dot || ""
                   color: rowDelegate.modelData.pendingVerb ? root.toneColor(rowDelegate.modelData.tone) : root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body

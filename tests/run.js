@@ -1619,8 +1619,8 @@ test("Model.footerHints: view lines for following/held/paused/terminal logs, con
   eq(M.footerHints("view", null, { view: { kind: "buildlog", following: true, terminal: false, hasUrl: true } }), "following · j/k scroll · b newest · H steps · o open · h back")
   eq(M.footerHints("view", null, { view: { kind: "buildlog", following: false, terminal: false, hasUrl: false } }), "held · j/k scroll · b newest · H steps · h back")
   eq(M.footerHints("view", null, { view: { kind: "buildlog", following: true, terminal: false, paused: true, hasUrl: true } }), "paused · j/k scroll · b newest · H steps · o open · h back")
-  eq(M.footerHints("view", null, { view: { kind: "buildlog", following: true, terminal: true, hasUrl: true } }), "j/k scroll · H steps · o open · h back")
-  eq(M.footerHints("view", null, { view: { kind: "containerlog", hasUrl: true } }), "j/k scroll · r refetch · o open · h back")
+  eq(M.footerHints("view", null, { view: { kind: "buildlog", following: true, terminal: true, hasUrl: true } }), "j/k scroll · b newest · H steps · o open · h back")
+  eq(M.footerHints("view", null, { view: { kind: "containerlog", hasUrl: true } }), "j/k scroll · b newest · r refetch · o open · h back")
   eq(M.footerHints("view", null, { view: { kind: "history", hasUrl: true } }), "j/k move · enter log · o open · h back")
   eq(M.footerHints("view", null, { view: { kind: "servicepick" } }), "j/k move · enter logs · h back")
   eq(M.footerHints("list", { type: "tag", uuid: "t", name: "x" }), "enter actions · d deploy")
@@ -1651,6 +1651,36 @@ test("Model.serialiseRecent never emits a logs key, even when a record carries o
   assert(text.indexOf("logs") < 0, "no logs key or text"); assert(text.indexOf("secret build output") < 0); assert(text.indexOf("entries") < 0)
   const back = M.parseRecent(text, "https://app.coolify.io", at)
   eq(back.rejected, false); eq(back.recent.length, 1); assert(!("logs" in back.recent[0]))
+})
+
+// ---- Phase 4 depth: review-panel findings --------------------------------------------------
+
+test("Model.viewRow coerces every field to its placeholder's type and drops unknown keys (review: security-analyst 3)", () => {
+  const r = M.viewRow("line", { i: "7", hidden: "yes", shown: {}, text: 42, loading: 0, extra: { evil: 1 }, tone: null })
+  eq(r.i, 7); eq(r.hidden, true); eq(r.shown, 0); eq(r.text, "42"); eq(r.loading, false); eq(r.tone, "")
+  assert(!("extra" in r), "an unknown key never becomes a role")
+  eq(Object.keys(r).sort().join(","), M.VIEW_KEYS.slice().sort().join(","))
+})
+
+test("Model.parseBuildLog bounds physical lines: 200 per entry, 5000 per log, dropping head entries with `dropped` (review: security-analyst 1)", () => {
+  eq(M.LOG_MAX_OUTPUT_LINES, 200); eq(M.LOG_MAX_LINES, 5000)
+  const one = M.parseBuildLog(JSON.stringify([{ command: null, output: "x\n".repeat(400).slice(0, -1), type: "stdout" }]))
+  eq(one.entries[0].output.split("\n").length, 200, "per-entry tail")
+  const many = []; for (let i = 0; i < 100; i++) many.push({ command: null, output: "l\n".repeat(100).slice(0, -1), type: "stdout" })
+  const r = M.parseBuildLog(JSON.stringify(many))            // 100 entries x 100 lines = 10 000 physical lines
+  const lines = r.entries.reduce((n, e) => n + e.output.split("\n").length, 0)
+  assert(lines <= 5000, "line budget kept: " + lines); assert(r.truncated); assert(r.dropped >= 50, "head entries dropped: " + r.dropped)
+  eq(r.entries[0].i, r.dropped, "dropped is the first kept index")
+  const rows = M.buildLogLines(r.entries, { showHidden: true, failing: null, uuid: "u" })
+  assert(rows.length <= 5000, "the ListModel never receives more rows than the budget")
+})
+
+test("Model.withPending on a tag row reads deploying…, and GERUND covers deployTag (review: ux-api-designer 2)", () => {
+  eq(M.gerund("deployTag"), "deploying")
+  const row = M.withPending(M.tagRow({ uuid: "t1", name: "production-landing" }), { verb: "deployTag", since: 0, stale: false })
+  eq(row.pendingVerb, "deploying…"); eq(row.sub, "deploying…"); eq(row.tone, "accent")
+  eq(M.tagRow({ uuid: "t1", name: "x" }).dot, M.G.tag, "a tag row has its own bullet")
+  assert(M.GLYPHS.indexOf(M.G.tag) >= 0)
 })
 
 console.log(passed + " passed, " + failed + " failed")

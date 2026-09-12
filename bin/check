@@ -19,11 +19,14 @@ matches=$(grep -rEl '[0-9]+\|[A-Za-z0-9]{20,}|BEGIN .*PRIVATE KEY|://[^/]*:[^@/]
 # secret, a Sentinel token, a drain endpoint, a proxy config) may only hold the marker.
 # A real log value is doubly-escaped JSON that no line regex can match, so this walks the
 # parsed JSON. Hand-written log fixtures keep their entries under "entries" and container
-# text under "text", so no fixture ever carries a "logs" value at all.
+# text under "text"; a recorded fixture carries "logs": "«scrubbed»".
+# Non-JSON fixtures (recorded streams, text) keep the literal ban: a raw response stream is
+# exactly the shape that would carry a build log.
+if grep -rlE --exclude='*.json' '"(logs|configuration_snapshot|manual_webhook_secret_[a-z]+|sentinel_token|sentinel_custom_url|logdrain_[a-z_]+|last_saved_proxy_configuration|validation_logs)"' "$root/tests/fixtures"; then fail "SR31: a log or sensitive key in a non-JSON fixture"; fi
 for fx in "$root"/tests/fixtures/*.json; do
   jq -e '[.. | objects | to_entries[] | select(.key == "logs" or .key == "configuration_snapshot") | select(.value != null and .value != "«scrubbed»")] | length == 0' "$fx" >/dev/null \
     || fail "SR31: $fx holds a logs/configuration_snapshot value that is neither null nor «scrubbed»"
-  jq -e '[.. | objects | to_entries[] | select(.key | test("^(manual_webhook_secret_[a-z]+|sentinel_token|sentinel_custom_url|logdrain_[a-z_]*(key|config|url)|last_saved_proxy_configuration|last_applied_settings|last_saved_settings|validation_logs)$")) | select(.value != null and .value != "«scrubbed»")] | length == 0' "$fx" >/dev/null \
+  jq -e '[.. | objects | to_entries[] | select(.key | test("^(manual_webhook_secret_[a-z]+|sentinel_token|sentinel_custom_url|logdrain_[a-z_]+|last_saved_proxy_configuration|last_applied_settings|last_saved_settings|validation_logs)$")) | select(.value != null and .value != "«scrubbed»")] | length == 0' "$fx" >/dev/null \
     || fail "SR31: $fx holds an unscrubbed sensitive key"
 done
 

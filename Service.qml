@@ -142,6 +142,7 @@ Item {
   readonly property var _viewKinds: ({ buildlog: true, containerlog: true, service: true, history: true, tags: true })
   readonly property string sensitiveMessage: "Logs need the read:sensitive ability. Create a new token under Security → API Tokens with read, read:sensitive and deploy, and swap it in."
   readonly property var views: ({ buildLogs: root._buildLogs, containerLogs: root._containerLogs, picks: root._servicePicks, history: root._history })
+  property double _lastViewFetchAt: 0     // the view refetch keys have no auto-repeat filter upstream: one launch per second at most
 
   readonly property int _activeCount: root._deployments.filter(function(d) { return d.status === "queued" || d.status === "in_progress" }).length
   readonly property bool _deploying: root._activeCount > 0
@@ -162,7 +163,7 @@ Item {
     failedUnacked: root._failedUnacked, lastPollAt: root._lastPollAt,
     busy: root._busy, openPanels: root._openPanels, baselineDone: root._baselineDone,
     backoffSec: root._backoffSec, topologyFetched: root._topologyLoaded,   // the latch: "loading" is a startup state, not a per-cycle one
-    tags: root._tags, sensitive: root._sensitive                            // Phase 4: names only; never log text
+    tags: root._tags, sensitive: root._sensitive, paused: root._paused      // Phase 4: names only; never log text; paused feeds the view footer
   })
   readonly property var bar: Model.barState(root.snapshot)
 
@@ -542,7 +543,9 @@ Item {
     }
     if (isView) { root._viewDone(p); root._flushNotify(); return }   // never _succeeded: a user fetch must not lift probe mode
     if (anyOk) root._succeeded(p.kind)
-    // The interval binding reads this; written after the loop so _catchUp cannot re-enter _launch mid-_finish (SR30).
+    // The interval binding reads this; written after the loop so the byte input cannot make
+    // _catchUp re-enter _launch mid-_finish (the other input, _deploying, is guarded by the
+    // _markPoll ordering in the deployments arm) (SR30).
     if (p.kind === "deployments" && results[0]) { var nb = results[0].bytes || 0; Qt.callLater(function() { root._deploymentsBytes = nb }) }
     if (p.kind === "resources" || p.kind === "servers" || p.kind === "topology") root._rejoin()
     else if (p.kind === "deployments") root._joinDeployments()
@@ -629,8 +632,11 @@ Item {
           root._terminalQueue = q
         }
         root._activeUuids = norm.map(function(d) { return d.uuid })
-        root._deployments = norm
+        // _markPoll first: assigning _deployments flips _deploying, which re-evaluates the
+        // deployments interval and runs _catchUp against _lastPollAt synchronously; a stale
+        // stamp there would re-enter _launch on this Req while _finish is still on the stack.
         root._markPoll("deployments", now)
+        root._deployments = norm
         root._queueNotify(diff.events)
         root._drainTerminal()
         break
@@ -771,7 +777,8 @@ Item {
     if (!rec && opportunistic && !root._isLogTarget(uuid) && Object.keys(m).length >= 3) return
     var now = Date.now()
     if (!rec) rec = { uuid: uuid, entries: [], dropped: 0, rev: "", status: "", terminal: false, source: source, truncated: false, refused: false, bytes: -1, fetchedAt: 0, message: null, at: 0 }
-    rec.status = String(status || ""); rec.terminal = !!Model.TERMINAL[rec.status]; rec.source = source; rec.fetchedAt = now; rec.at = now
+    if (status) { rec.status = String(status); rec.terminal = !!Model.TERMINAL[rec.status] }   // a call without a status keeps what is known (a refetch must not erase "failed")
+    rec.source = source; rec.fetchedAt = now; rec.at = now
     if (typeof raw === "string") {
       if (raw.length !== rec.bytes) {
         var p = Model.parseBuildLog(raw)
@@ -864,10 +871,20 @@ Item {
     if (dep) { root._captureLog(uuid, undefined, dep.status, "list", false); return }   // a placeholder until the next poll
     root.refetchBuildLog(uuid)
   }
+  // A held `r` would otherwise fire one request per round trip (PanelKeyCatcher has no
+  // auto-repeat filter) until the token's 429 paused every timer.
+  function _viewThrottled() {
+    var now = Date.now()
+    if (now - root._lastViewFetchAt < 1000) return true
+    root._lastViewFetchAt = now
+    return false
+  }
   function refetchBuildLog(uuid) {
     if (root._activeUuids.indexOf(uuid) >= 0) return       // the list poll owns an active one
+    if (root._viewThrottled()) return
     var rec = root._recent.filter(function(d) { return d.uuid === uuid })[0] || null
-    root._captureLog(uuid, undefined, rec ? rec.status : "", "fetch", false)
+    var known = root._buildLogs[uuid] || null
+    root._captureLog(uuid, undefined, rec ? rec.status : (known ? known.status : ""), "fetch", false)
     if (logReq.running || logReq.stopping) { root._setBuildLogMessage(uuid, "Busy · press r to retry"); return }
     logReq.target = { kind: "buildlog", uuid: uuid, label: "" }
     root._launch(logReq, Api.reqBuildLog(uuid), 12)
@@ -877,6 +894,7 @@ Item {
   function fetchContainerLog(kind, uuid, label) {
     uuid = String(uuid || ""); label = String(label || "")
     if (kind === "service") {
+      if (root._viewThrottled()) return
       root._setPick(uuid, null, null, label)
       if (serviceReq.running || serviceReq.stopping) { root._setPick(uuid, [], "Busy · try again", label); return }
       serviceReq.target = { kind: "service", uuid: uuid, label: label }
@@ -889,6 +907,7 @@ Item {
   function _fetchContainerLogSub(kind, uuid, sub, label) {
     var req = Api.reqContainerLog(kind, uuid, sub)
     if (!req) return
+    if (root._viewThrottled()) return
     root._setContainerLog(uuid, kind, sub, null, null, label)   // lines null: loading
     if (logReq.running || logReq.stopping) { root._setContainerLogMessage(uuid, "Busy · press r to retry"); return }
     logReq.target = { kind: "containerlog", uuid: uuid, label: label, ckind: kind, sub: sub }
@@ -899,6 +918,7 @@ Item {
     appUuid = String(appUuid || ""); skip = Math.max(0, skip | 0)
     var h = root._history, page = h[appUuid] || { appUuid: appUuid, label: String(label || ""), count: 0, rows: [], skip: 0, loading: false, message: null, at: 0 }
     if (label) page.label = String(label)
+    if (root._viewThrottled()) return
     if (historyReq.running || historyReq.stopping) { page.message = "Busy · try again"; h[appUuid] = root._fresh(page); root._history = root._fresh(h); return }
     page.loading = true; page.message = null; page.skip = skip; page.at = Date.now()
     h[appUuid] = root._fresh(page); root._evictLru(h, 3, null); root._history = root._fresh(h)
@@ -910,6 +930,7 @@ Item {
   function fetchTags() {
     if (!root._ready || Date.now() - root._tagsAt < 60000) return
     if (serviceReq.running || serviceReq.stopping) return
+    root._tagsAt = Date.now()                                 // stamped at launch: a failing /tags must not refetch on every panel open
     serviceReq.target = { kind: "tags" }
     root._launch(serviceReq, Api.reqTags(), 12)
   }
@@ -1230,7 +1251,7 @@ Item {
       var gone = e.targetType === "tag" ? false : (e.targetType === "resource" ? !res : (e.targetType === "server" ? !srv : !dep))
       if (gone || now - e.since >= Model.PENDING_DROP_MS) drop = true
       else if (e.verb === "deployTag") {
-        // Phase 4: cleared when any named deployment is listed or finished, or two
+        // Phase 4: cleared when any named deployment is listed or finished, or 10 s of
         // deployments polls have run since the action without listing one.
         var ids = e.deploymentUuids || []
         drop = ids.some(function(id) { return root._activeUuids.indexOf(id) >= 0 || root._recent.some(function(d) { return d.uuid === id }) })
@@ -1336,7 +1357,7 @@ Item {
     onTriggered: { ticks += 1; root._prime("missing") }
   }
   // 401/403: everything stops; one deployments probe a minute until a 2xx or a config change.
-  Timer { id: probeTimer; interval: 60000; repeat: true; running: root._ready && root._probeMode; onTriggered: root._launch(deploymentsReq, Api.reqDeployments(), 6) }
+  Timer { id: probeTimer; interval: 60000; repeat: true; running: root._ready && root._probeMode; onTriggered: root._launch(deploymentsReq, Api.reqDeployments(), 12) }   // log-bearing: 12 s, 4 MB (SR30)
   // 429: everything pauses for Retry-After (clamped) or the ladder.
   Timer { id: pauseTimer; interval: 30000; repeat: false; running: false; onTriggered: { root._paused = false; root._prime("all"); root._drainTerminal() } }
 

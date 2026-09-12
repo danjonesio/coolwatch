@@ -159,10 +159,12 @@ write-out = "\n<RS>%{exitcode} %{http_code} %{time_total} %{size_download} %{err
   topology) so kinds overlap but the same kind never stacks. Each carries a monotonic
   `seq`/`liveSeq`; output from a reaped or superseded request is dropped (the
   `MultiSelect.optionsCommand` pattern). Collectors are `id`'d and read in `onExited`.
-- Per-kind `max-time` (deployments 12, deployment 12, version 6, resources 10, servers 10,
-  topology 8 per block; the two log-bearing kinds carry `maxBytes` 4 MB, the largest cap
-  a 12 s transfer can deliver at the slowest measured throughput, because with
-  `read:sensitive` every deployment row carries its full build log). A `Req`'s deadline is `blocks × max-time + 3` s; one 5 s reaper
+- Per-kind `max-time` (deployments 12, deployment 12, buildlog 12, history 12, containerlog
+  12, service 12, tags 12, version 6, resources 10, servers 10, topology 8 per block; the
+  four log-bearing kinds `deployments`, `deployment`, `buildlog` and `history` carry
+  `maxBytes` 4 MB, the largest cap a 12 s transfer can deliver at the slowest measured
+  throughput, because with `read:sensitive` every deployment row carries its full build
+  log). A `Req`'s deadline is `blocks × max-time + 3` s; one 5 s reaper
   `Timer`, armed once at service start, kills a `Req` past its deadline (bumping `seq`
   first) and counts a reap as a failure.
 - Errors map per transfer: exit 6/7/28/35/60 → offline; exit 63 → response too large;
@@ -222,9 +224,12 @@ and under 60/min with one deployment. Idle is ≈17/min at 3 projects and 3 serv
   panel open at most once a minute. The active build's log is read off the deployments
   poll (every row carries it under `read:sensitive`); the terminal body off the drain.
   With a build running the deployments interval steps up with the last body size
-  (256 KB → 4 s, 1 MB → 8 s, 4 MB → 15 s; `Model.deploymentsInterval`), a dropped tick
-  is counted in `perKind.<kind>.skipped`, and `perKind.<kind>.bytesLastMin` is a
-  bare-number ring. Measured 2026-09-12: 19 closed, 22 open during the first drain, 29
+  (256 KB → 4 s, 1 MB → 8 s, 4 MB → 15 s; `Model.deploymentsInterval`; the 15 s rung sits
+  above the 4 MB transport cap and is reachable only if that cap is raised), a dropped tick
+  is counted in `perKind.<kind>.skipped` (a panel-open prime or `r` colliding with an
+  in-flight poll increments it too, so only `deployments.skipped` during a build is the
+  starvation signal), and `perKind.<kind>.bytesLastMin` is a bare-number ring. The view
+  refetch keys are throttled to one launch per second. Measured 2026-09-12: 19 closed, 22 open during the first drain, 29
   with a build running and the log view open.
 - "Panel open" is a registry keyed by panel id: `panelOpened(id)`, `panelClosed(id)`
   (also from `Component.onDestruction`), and a `panelAlive(id)` ping every second
@@ -249,7 +254,7 @@ views:     { buildLogs, containerLogs, picks, history } // beside snapshot, the 
            containerLogs[uuid]: { uuid, kind, sub, label, lines | null, truncated, fetchedAt, message, at }             // LRU 3
            picks[uuid]:         { uuid, label, names | null, message }
            history[appUuid]:    { appUuid, label, count, rows: [deployment], skip, loading, message, at }               // LRU 3; never merged into recent
-           bounds: 2000 entries (tail, `dropped` counts the head), 4000 chars per output, 320 per command (middle-elided),
+           bounds: 2000 entries and 5000 physical lines (tail, `dropped` counts the head), 200 lines and 4000 chars per output, 320 per command (middle-elided),
                    a logs string above 3 MB is refused unparsed; every slice write assigns a fresh copy (a var property
                    assigned the same object emits no change)
 instance:  { id, name, url, version, plaintext }

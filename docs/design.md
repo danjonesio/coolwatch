@@ -164,8 +164,8 @@ appended by absolute entry index; the head is trimmed when the 2000-entry tail c
 entries. A breadcrumb in the header (`‹ api · failed · 12m ago`; a click pops) and a
 body pinned at `Style.space(480)` so a filling log never resizes under the reader.
 Command steps render as `$ …` in dim; output lines in the foreground; on a `failed`
-build the failing step (the last hidden stderr entry carrying a command before the
-"Deployment failed" summary) is always shown, in urgent, under a `── failure ──` marker,
+build the failing step (the last stderr entry carrying a command before the
+"Deployment failed" summary, hidden or not) is always shown, in urgent, under a `── failure ──` marker,
 with the "Deployment failed" lines urgent too; every other hidden step is off until
 `H`. The view follows the newest line until `k`, the wheel or a drag moves up (footer
 `held`); `b` follows again. An active build's lines arrive from the deployments poll;
@@ -173,23 +173,29 @@ a terminal build's from the drain or one fetch. A full-fill `MouseArea` beneath 
 overlay's list keeps hover and clicks off the rows underneath.
 
 States, as the note under the lines: `Loading log…`, `Queued. Coolify has not started
-this build yet.`, `Starting…`, `The log is empty.`, `This build log is larger than 4 MB.
-Open it in Coolify.`, `… N earlier entries not shown. Open it in Coolify for the full
+this build yet.`, `Starting…`, `The log is empty.`, `This build log is larger than 3 MB.
+Open it in Coolify.` (the parse refusal; the 4 MB transport cap has its own line), `… N earlier entries not shown. Open it in Coolify for the full
 log.` (above the lines), `Coolify no longer has that deployment.`, `Offline · retrying.`,
-`Rate limited · backing off Ns.`, and the `read:sensitive` sentence when the token lacks
-the ability.
+`Rate limited · backing off Ns.`, `Busy · press r to retry` (a refetch refused because
+the request slot is busy), and the `read:sensitive` sentence when the token lacks the
+ability. The breadcrumb age is the deployment's own (`finished_at`, or elapsed time for a
+running build), never the fetch time.
 
 ### Container log and picker (Phase 4)
 
 The same overlay for the last 200 lines of a running application, database or service
 container (`L` on the row, or **Logs** in its strip; a stopped container offers neither).
-Breadcrumb `‹ api · last 200 lines · 12s ago` (plus the container name for a service);
-`r` refetches; the view opens at the newest line and does not follow. A service with
+Breadcrumb `‹ api · last 200 lines · 12s ago` (the fetch age; plus the container name for
+a service); `r` refetches (also in a history view and the picker); the view opens at the
+newest line and does not follow. A service with
 several containers first shows a picker (`‹ wordpress · pick a container`) of
 `applications[].name` and `databases[].name`; Enter on a name fetches its tail; a
-single container skips the picker. States: `Fetching the last 200 lines…`, `The
-container has written nothing.`, `<name> is not running.` (Coolify's 404), `Pick a
-container.`, `This service has no containers.`, `Busy · press r to retry`.
+single container skips the picker (the service fetches it at once and the panel swaps the
+view). States: `Loading containers…`, `Fetching the last 200 lines…`, `The container has
+written nothing.`, `… earlier lines not shown.` (above 2000 lines), `<name> is not
+running.` (Coolify's 404), `Pick a container.`, `This service has no containers.`, `Busy ·
+press r to retry`, `Busy · try again` (the picker or a history page while its request slot
+is busy).
 
 ### History view (Phase 4)
 
@@ -205,7 +211,8 @@ recorded for this application.`, `Coolify no longer has that application.`
 
 A **TAGS** section after RESOURCES, only when `GET /tags` (fetched on panel open, at most
 once a minute) returns names; a fold closed by default; one row per tag. The strip offers
-**Deploy** alone (a tag has no page). `d` or Enter confirms: "Deploy everything tagged
+**Deploy** alone (a tag has no page); the row's bullet is `#`. `d` (or Enter, Enter through
+the strip) confirms: "Deploy everything tagged
 <name>? Coolify decides what that is; the API cannot list it." (Cancel / Deploy). The
 status line then reads `N queued` or `N queued, M refused (queue full)` and the row
 shows `deploying…` until a named deployment is listed or finished.
@@ -300,8 +307,8 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 | active deployment row | `enter actions · x cancel · L logs · o open` |
 | terminal deployment row | `enter actions · L logs · o open` |
 | tag row | `enter actions · d deploy` |
-| build log, following / held / paused | `following · j/k scroll · b newest · H steps · o open · h back` (`held`, `paused`; a terminal log drops `following` and `b`) |
-| container log | `j/k scroll · r refetch · o open · h back` |
+| build log, following / held / paused | `following · j/k scroll · b newest · H steps · o open · h back` (`held`, `paused`; a terminal log drops the first word) |
+| container log | `j/k scroll · b newest · r refetch · o open · h back` |
 | history | `j/k move · enter log · o open · h back` |
 | container picker | `j/k move · enter logs · h back` |
 | row with no action and no page | `j/k move · g group · r refresh · esc close` |
@@ -343,7 +350,8 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 | `r` | container log | refetch (in a build log: refetch a non-active one) |
 | `o` | any view with a page | open it in the browser |
 | `h` | any view | back one view (through the Esc ladder) |
-| `l`, Space, `g`, `x` | any view | nothing |
+| Space | history, picker | as Enter (the catcher fires `activateRequested` for both) |
+| `l`, Space in a log view, `g`, `x` | any view | nothing |
 | Tab / Shift+Tab | anywhere, confirm closed | neighbouring bar panel (pops every view first) |
 | Esc | anywhere | close confirm, else back one view, else collapse row, else close panel; one rung per 250 ms |
 

@@ -81,8 +81,9 @@ chips are the next branch, `phase-4-instances`.** Read `docs/roadmap.md` before 
   `finished`, `failed`, `cancelled-by-user`.
 - Lifecycle endpoints are POST only. Restart of an application is itself a deployment
   (`restart_only: true`) and will appear in the deployments list.
-- Stop, Rebuild-without-cache (`D`, keyboard only) and Cancel confirm (in the panel).
-  Deploy, Redeploy, Restart, Start, Validate do not. CLI verbs never confirm: typing the
+- Stop, Rebuild-without-cache (`D`, keyboard only), Cancel and tag deploy (`d` or Enter on
+  a tag row resolves to `deployTag`, never the per-application deploy) confirm (in the
+  panel). Deploy, Redeploy, Restart, Start, Validate do not. CLI verbs never confirm: typing the
   verb is the confirmation.
 - One deploy button follows the state: Deploy on a stopped application, Redeploy on a
   running one (both `POST /deploy`; `d` and IPC `deploy` resolve the same way). Only
@@ -105,8 +106,12 @@ chips are the next branch, `phase-4-instances`.** Read `docs/roadmap.md` before 
   `/projects` kick is skipped once it has), â36/min
   with a deployment; no 60 s window may reach 20 with the panel closed (â 20 with a panel
   open, â 24 during the first topology drain with a panel open, measured). See the schedule in `docs/architecture.md`.
-  Phase 4 changes no cadence: measured 2026-09-12 at 19 closed, 22 open during the first
-  drain, 29 with a build running and the log view open (the view adds no request).
+  Phase 4: while a build runs the deployments interval is byte-stepped (2 s under 256 KB
+  of body, then 4 / 8 / 15 s at 256 KB / 1 MB / 4 MB; `Model.deploymentsInterval`); the
+  views are user-driven one-shot fetches (`L`, `r`, History pages, the picker), throttled to
+  one launch per second, and `/tags` runs once per panel open at most once a minute. Measured
+  2026-09-12 with all of that: 19 closed, 22 open during the first drain, 29 with a build
+  running and the log view open.
 
 ## Layout
 
