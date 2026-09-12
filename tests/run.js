@@ -1268,6 +1268,8 @@ test("Model.GLYPHS: the pending dot and every glyph a pending row can emit are i
 
 test("Model.footerHints: every cursor position; no o open without a url", () => {
   eq(M.footerHints("hero", null), "enter refresh · j down · r refresh · esc close")
+  eq(M.footerHints("hero", null, { instances: 1 }), "enter refresh · j down · r refresh · esc close")
+  eq(M.footerHints("hero", null, { instances: 2 }), "h/l instance · enter refresh · j down · r refresh · esc close")   // Phase 4 chips
   eq(M.footerHints("list", { type: "fold" }), "j/k move · enter fold · g group · r refresh · esc close")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }), "enter actions · d redeploy · s stop · t restart · L logs · o open")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "exited", url: "u" }), "enter actions · d deploy · s start · o open")

@@ -94,6 +94,12 @@ Panel {
     else svc.panelClosed(panelId)
   }
   Component.onDestruction: if (svc) svc.panelClosed(panelId)
+  // Phase 4: an instance switch (chip, h/l, middle-click, IPC) pops every view and collapses
+  // the row: the rows underneath belong to the new instance now.
+  Connections {
+    target: root.svc
+    function onActiveIdChanged() { root.clearViews(); root.expandedKey = ""; root.actionFocus = "" }
+  }
 
   Timer {
     interval: 1000
@@ -187,7 +193,7 @@ Panel {
   function moveCursor(dx, dy) {
     root.cursorActive = true
     if (dx !== 0) {
-      if (root.focusSection === "hero") return  // h/l on the hero: chips are Phase 4
+      if (root.focusSection === "hero") { if (svc && svc.instances.length > 1) svc.cycleInstance(dx); return }   // Phase 4: h/l on the hero switch instance
       var row = root.currentRow
       if (!row) return
       if (row.type === "fold") { if (dx > 0 ? row.open : !row.open) return; root.toggleFold(row.key); return }   // l unfolds, h folds
@@ -294,7 +300,7 @@ Panel {
 
   function openConfirm(verb, row) {
     var c = Model.confirmCopy(verb, row.name)
-    root.confirmAction = { verb: verb, uuid: row.uuid, name: row.name, type: row.type }
+    root.confirmAction = { verb: verb, uuid: row.uuid, name: row.name, type: row.type, instanceId: svc ? svc.activeId : "" }   // Phase 4: bound to the instance it was opened on (SR38)
     confirm.message = c.message; confirm.cancelText = c.cancelText; confirm.confirmText = c.confirmText
     confirm.selectedIndex = 0
     root.confirmArmed = false
@@ -309,7 +315,7 @@ Panel {
     root.confirmAction = null
     root.confirmOpen = false
     root.confirmArmed = false
-    if (ok && c && svc) svc.act(c.verb, c.uuid, false, c.type)
+    if (ok && c && svc) svc.act(c.verb, c.uuid, false, c.type, c.instanceId)   // the service refuses with "Instance changed; nothing sent" on a mismatch
   }
 
   // Esc ladder: close the confirm, else collapse the row, else close the panel. One
@@ -673,6 +679,34 @@ Panel {
           }
         }
 
+        // Phase 4: instance chips, only with two or more instances. No hasCursor: the hero's
+        // refresh button owns the ring (Risk 3); h/l on the hero, a click here and a
+        // middle-click on the bar icon switch. Hidden under a view.
+        Row {
+          id: chipRow
+          readonly property var chips: svc ? Model.instanceChips(svc.instances, svc.activeId) : []
+          visible: chips.length > 1 && !root.view
+          width: parent.width
+          spacing: Style.spacing.md
+          readonly property real cellWidth: chips.length > 0 ? (width - spacing * (chips.length - 1)) / chips.length : 0
+          Repeater {
+            model: chipRow.chips
+            Button {
+              required property var modelData
+              width: chipRow.cellWidth
+              text: modelData.label + (modelData.trouble ? " ·" : "")
+              selected: modelData.selected
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              verticalPadding: Style.spacing.controlPaddingY
+              tooltipText: modelData.trouble ? "Needs attention" : ""
+              onClicked: if (svc) svc.selectInstance(modelData.id)
+            }
+          }
+        }
+
         // Phase 4: the breadcrumb of the open view; a click pops it. Lives in the header so it
         // never scrolls away under the overlay's own list.
         Item {
@@ -763,6 +797,7 @@ Panel {
         textFormat: Text.PlainText
         text: Model.footerHints(root.focusSection, root.currentRow,
                                 { expanded: !!root.currentRow && root.expandedKey === root.currentRow.key, actionFocus: root.actionFocus, confirmOpen: root.confirmOpen,
+                                  instances: svc ? svc.instances.length : 0,
                                   view: root.view ? { kind: root.view.kind, following: root.following, terminal: !!(root.liveRec && root.liveRec.terminal),
                                                       paused: !!(root.snapshot && root.snapshot.paused), hasUrl: !!root.view.url } : null })
         color: root.dim

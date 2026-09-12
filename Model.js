@@ -1485,7 +1485,7 @@ function footerHints(focusSection, row, ui) {
   ui = ui || {}
   if (ui.confirmOpen) return "h/l pick · enter confirm · esc cancel"
   if (ui.view) return viewHints(ui.view)
-  if (focusSection === "hero") return "enter refresh · j down · r refresh · esc close"
+  if (focusSection === "hero") return (ui.instances > 1 ? "h/l instance · " : "") + "enter refresh · j down · r refresh · esc close"
   if (row && row.type === "fold") return "j/k move · enter fold · g group · r refresh · esc close"
   if (ui.expanded && ui.actionFocus) return "h/l pick · enter run · esc collapse"
   if (ui.expanded) return "l pick · enter collapse · esc collapse"
