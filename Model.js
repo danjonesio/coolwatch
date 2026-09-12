@@ -26,7 +26,8 @@ var G = {
   dotOff: "○",            // ○
   dotUnknown: "◌",        // ◌
   foldOpen: "▾",          // ▾
-  foldClosed: "▸"         // ▸
+  foldClosed: "▸",        // ▸
+  back: "‹"               // ‹ U+2039: the overlay breadcrumb (Phase 4; JetBrains Mono Latin-1/punctuation block)
 }
 var GLYPHS = Object.keys(G).map(function (k) { return G[k] })
 
@@ -1114,11 +1115,19 @@ function actionsFor(row) {
       }
       if (running) { out.push(act("restart", "Restart")); out.push(act("stop", "Stop", true, true)) }
       else out.push(act("start", "Start"))
+      // Phase 4: the container tail needs a running container (a stopped one is 404).
+      if (running) out.push(act("logs", "Logs"))
     }
+    if (row.kind === "application") out.push(act("history", "History"))
   } else if (row.type === "server") {
     out.push(act("validate", "Validate"))
   } else if (row.type === "deployment") {
+    // Phase 4: Logs first, on every deployment row, so Enter, Enter reaches the build log.
+    out.push(act("logs", "Logs"))
     if (ACTIVE[row.status]) out.push(act("cancel", "Cancel", true, true))
+  } else if (row.type === "tag") {
+    // Phase 4: a fan-out the API cannot enumerate, so it always confirms (SR35).
+    out.push(act("deployTag", "Deploy", false, true))
   } else return []
   if (row.url) out.push(OPEN)
   return out
@@ -1130,18 +1139,20 @@ function actionFor(row, verb) {
   var list = actionsFor(row)
   var running = !!RUNNING_STATES[row && row.state]
   var want = verb === "s" ? (running ? "stop" : "start")
-           : (verb === "d" || verb === "deploy") ? (running ? "redeploy" : "deploy")
-           : (verb === "D" ? "rebuild" : verb)
+           : (verb === "d" || verb === "deploy") ? (row && row.type === "tag" ? "deployTag" : (running ? "redeploy" : "deploy"))
+           : (verb === "D" ? "rebuild" : (verb === "L" ? "logs" : verb))
   for (var i = 0; i < list.length; i++) if (list[i].id === want) return list[i]
   return null
 }
 
-function targetTypeOf(row) { return row.type === "resource" ? "resource" : (row.type === "server" ? "server" : (row.type === "deployment" ? "deployment" : "")) }
+var TARGET_TYPE = { resource: "resource", server: "server", deployment: "deployment", tag: "tag" }
+function targetTypeOf(row) { return (row && TARGET_TYPE[row.type]) || "" }
 
 // The single gate for panel and IPC: is this uuid in the store, and does this verb apply?
 // Returns no Api descriptor (Model never imports Api); the service builds it from `kind`.
 function actionRequest(s, verb, uuid) {
   uuid = String(uuid === undefined || uuid === null ? "" : uuid)
+  if (NAV_VERBS[verb]) return { ok: false, why: "nav" }
   if (!UUID_RE.test(uuid)) return { ok: false, why: "invalid" }
   s = s || {}
   var o = origin(s.instance && s.instance.url)
@@ -1149,8 +1160,11 @@ function actionRequest(s, verb, uuid) {
   ;(s.resources || []).forEach(function (r) { if (!row && r.uuid === uuid) { obj = r; row = resourceRow(r, 0, o) } })
   ;(s.deployments || []).forEach(function (d) { if (!row && d.uuid === uuid) { obj = d; row = deploymentRow(d, o) } })
   ;(s.servers || []).forEach(function (x) { if (!row && x.uuid === uuid) { obj = x; row = serverRow(x, o) } })
+  // Phase 4: a tag is keyed by its Coolify uuid; the name (TAG_RE-validated at normalise)
+  // is what reaches the query string (SR28, SR35).
+  ;(s.tags || []).forEach(function (t) { if (!row && t.uuid === uuid) { obj = t; row = tagRow(t) } })
   if (!row) return { ok: false, why: "unknown" }
-  var a = verb === "open" ? null : actionFor(row, verb)
+  var a = actionFor(row, verb)
   if (!a) return { ok: false, why: "notapplicable" }
   return { ok: true, verb: a.id, uuid: uuid, name: row.name, targetType: targetTypeOf(row),
            kind: row.type === "resource" ? row.kind : null, confirm: a.confirm, destructive: a.destructive,
@@ -1171,11 +1185,12 @@ function confirmCopy(verb, name) {
     case "stop": return { message: "Stop " + n + "?", cancelText: "Cancel", confirmText: "Stop" }
     case "rebuild": return { message: "Rebuild " + n + " without cache?", cancelText: "Cancel", confirmText: "Rebuild" }
     case "cancel": return { message: "Cancel the deployment of " + n + "?", cancelText: "Keep it", confirmText: "Cancel it" }
+    case "deployTag": return { message: "Deploy everything tagged " + n + "? Coolify decides what that is; the API cannot list it.", cancelText: "Cancel", confirmText: "Deploy" }
     default: return { message: gerund(verb) + " " + n + "?", cancelText: "Cancel", confirmText: "Confirm" }
   }
 }
 
-var TARGET_WORD = { resource: "resource", deployment: "deployment", server: "server" }
+var TARGET_WORD = { resource: "resource", deployment: "deployment", server: "server", tag: "tag" }
 var OK_TEXT = { deploy: "Deployment queued", redeploy: "Redeploy queued", rebuild: "Rebuild queued", stop: "Stop requested", start: "Start requested",
                 cancel: "Deployment cancelled", validate: "Validation started" }
 
@@ -1204,10 +1219,25 @@ function errorText(e, rec, targetType) {
 function actionOutcome(verb, targetType, rec) {
   if (!rec || typeof rec !== "object" || rec.code === undefined) rec = { exit: 1, code: 0, body: "", errmsg: "", headers: null }
   var e = errorFor({ curlExit: rec.exit, httpCode: rec.code, body: rec.body, errmsg: rec.errmsg, request: "action" })
-  var out = { ok: false, text: "", tone: "urgent", deploymentUuid: null, error: e }
+  var out = { ok: false, text: "", tone: "urgent", deploymentUuid: null, deploymentUuids: [], queued: 0, refused: 0, error: e }
   if (e) { out.text = errorText(e, rec, targetType); return out }
   var body = parseJson(rec.body)
   var v = body.ok && body.value && typeof body.value === "object" ? body.value : {}
+  if (verb === "deployTag") {
+    // Phase 4: one entry per tagged resource; a full queue is a per-item refusal inside the
+    // 200, reported as a count, never as a bare success (SR35).
+    var items = Array.isArray(v.deployments) ? v.deployments : []
+    items.forEach(function (it) {
+      if (!it || typeof it !== "object") return
+      if (Number(it.status) === 429 || /queue_full/i.test(String(it.message || ""))) { out.refused += 1; return }
+      out.queued += 1
+      if (typeof it.deployment_uuid === "string" && UUID_RE.test(it.deployment_uuid)) out.deploymentUuids.push(it.deployment_uuid)
+    })
+    out.ok = true; out.error = null; out.tone = out.refused ? "urgent" : "dim"
+    out.deploymentUuid = out.deploymentUuids[0] || null
+    out.text = out.queued + " queued" + (out.refused ? ", " + out.refused + " refused (queue full)" : "")
+    return out
+  }
   var item = Array.isArray(v.deployments) && v.deployments.length ? (v.deployments[0] || {}) : null
   if (item && (Number(item.status) === 429 || /queue_full/i.test(String(item.message || "")))) {
     out.error = makeError("http", String(item.message || "queue_full"), { httpCode: 429, request: "action" })
@@ -1274,10 +1304,21 @@ function panelRows(s, ui) {
   if (!servers.length) rows.push({ type: "note", key: "note:servers", text: noteFor(s, "servers") })
   servers.forEach(function (x) { rows.push(pend(serverRow(x, o))) })
   rows.push({ type: "separator", key: "sep:" + (++sep) })
+  // TAGS (Phase 4): only when the account has tags; a fold, closed by default, after the
+  // resources. Placed here so both returns below carry it.
+  function tagsSection() {
+    var tags = s.tags || []
+    if (!tags.length) return
+    rows.push({ type: "separator", key: "sep:" + (++sep) })
+    rows.push({ type: "section", key: "sec:tags", title: "TAGS", control: null })
+    var open = folded["fold:tags"] === false
+    rows.push({ type: "fold", key: "fold:tags", title: "Tags", open: open, count: tags.length, indent: 0 })
+    if (open) tags.forEach(function (t) { rows.push(pend(tagRow(t))) })
+  }
   // RESOURCES
   rows.push({ type: "section", key: "sec:resources", title: "RESOURCES", control: "groupBy" })
   var resources = s.resources || []
-  if (!resources.length) { rows.push({ type: "note", key: "note:resources", text: noteFor(s, "resources") }); return spliceActions(rows, ui) }
+  if (!resources.length) { rows.push({ type: "note", key: "note:resources", text: noteFor(s, "resources") }); tagsSection(); return spliceActions(rows, ui) }
   var byUuid = {}
   resources.forEach(function (r) { byUuid[r.uuid] = r })
   function fold(key, title, uuids, indent) {
@@ -1307,10 +1348,12 @@ function panelRows(s, ui) {
     var left = resources.filter(function (r) { return !placed[r.uuid] }).map(function (r) { return r.uuid })
     if (left.length) fold("fold:s:unassigned", "Unassigned", left, 0)
   }
+  tagsSection()
   return spliceActions(rows, ui)
 }
 
-var SELECTABLE = { fold: true, deployment: true, server: true, resource: true }
+// history/more/pick are overlay row types; the cursor helpers are pure over any row array.
+var SELECTABLE = { fold: true, deployment: true, server: true, resource: true, tag: true, history: true, more: true, pick: true }
 
 function rowRev(r) {
   return [r.type, r.glyph || r.dot || "", r.tone || "", r.name || r.title || r.text || "", r.sub || r.statusWords || "",
@@ -1352,12 +1395,30 @@ function firstSelectableInSection(rows, title) {
   return -1
 }
 
-var HINT_KEY = { deploy: "d deploy", redeploy: "d redeploy", stop: "s stop", start: "s start", restart: "t restart", validate: "v validate", cancel: "x cancel", open: "o open" }
-var HINT_ORDER = ["deploy", "redeploy", "stop", "start", "restart", "validate", "cancel", "open"]
+var HINT_KEY = { deployTag: "d deploy", deploy: "d deploy", redeploy: "d redeploy", stop: "s stop", start: "s start", restart: "t restart", validate: "v validate", cancel: "x cancel", logs: "L logs", open: "o open" }
+var HINT_ORDER = ["deployTag", "deploy", "redeploy", "stop", "start", "restart", "validate", "cancel", "logs", "open"]
+
+// Phase 4: the footer while an overlay view is open. `o open` only when the view has a page.
+function viewHints(view) {
+  var back = "h back"
+  if (view.kind === "history") return ["j/k move", "enter log"].concat(view.hasUrl ? ["o open"] : []).concat([back]).join(" · ")
+  if (view.kind === "servicepick") return ["j/k move", "enter logs", back].join(" · ")
+  var bits = []
+  if (view.paused) bits.push("paused")
+  else if (view.kind === "buildlog" && !view.terminal) bits.push(view.following ? "following" : "held")
+  bits.push("j/k scroll")
+  if (view.kind === "buildlog" && !view.terminal) bits.push("b newest")
+  if (view.kind === "buildlog") bits.push("H steps")
+  if (view.kind === "containerlog") bits.push("r refetch")
+  if (view.hasUrl) bits.push("o open")
+  bits.push(back)
+  return bits.join(" · ")
+}
 
 function footerHints(focusSection, row, ui) {
   ui = ui || {}
   if (ui.confirmOpen) return "h/l pick · enter confirm · esc cancel"
+  if (ui.view) return viewHints(ui.view)
   if (focusSection === "hero") return "enter refresh · j down · r refresh · esc close"
   if (row && row.type === "fold") return "j/k move · enter fold · g group · r refresh · esc close"
   if (ui.expanded && ui.actionFocus) return "h/l pick · enter run · esc collapse"
