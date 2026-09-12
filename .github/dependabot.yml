@@ -1,0 +1,45 @@
+# Dependabot config for danjonesio/coolwatch. Written by /d-github on 2026-09-12.
+#
+# Deploy on merge: no, because this is an Omarchy shell plugin installed by hand
+# (`bin/dev-sync` / `omarchy plugin enable`): no workflow, no host config in the tree
+# (fly.toml, vercel.json, netlify.toml, render.yaml, app.yaml, Procfile, railway.json,
+# wrangler.toml all absent), no deploy words in README.md or docs/ beyond Coolify as the
+# product, and `gh api repos/danjonesio/coolwatch/deployments` = 0,
+# `.../environments` total_count = 0.
+#
+# github-actions (/): version lane. No workflow exists yet (`ls .github/workflows` is
+# empty; 0 of 0 actions pinned), so this entry is dormant; it is here so that the day a
+# CI workflow lands (`bin/check --no-shell` is the documented CI-able subset) its
+# SHA-pinned actions are watched from the first merge rather than never. Nothing
+# deploys when a workflow file merges. No `commit-message.prefix`: `git log --oneline
+# -30` uses no conventional prefixes (`phase-4-… step N:`, `docs:`).
+#
+# Not covered, on purpose:
+#   - Model.js / Api.js / tests/run.js: plain JavaScript run by `node` and Quickshell's
+#     QML engine with no package manager; `git ls-files` finds no package.json or
+#     lockfile of any ecosystem in the verified table, so there is nothing for
+#     Dependabot to move.
+#   - The runtime dependencies (omarchy-shell, Quickshell, Qt, curl, jq) come from the
+#     Arch package manager on the machine, not from this repo.
+#
+# Repository settings seen at write time (no change made): Dependabot alerts on
+# (`vulnerability-alerts` → 204), automated security fixes enabled and not paused,
+# no branch protection on master (404) and no rulesets, so open Dependabot PRs never
+# need a rebase after a merge.
+#
+# This file's own path is not a deploy trigger.
+version: 2
+updates:
+  # Version lane: nothing deploys when a workflow file merges; SHA pins never move on their own.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 5
+    groups:
+      actions-versions:
+        applies-to: version-updates
+        patterns: ["*"]
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
