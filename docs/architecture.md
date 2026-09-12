@@ -227,7 +227,8 @@ and under 60/min with one deployment. Idle is ≈17/min at 3 projects and 3 serv
   (256 KB → 4 s, 1 MB → 8 s, 4 MB → 15 s; `Model.deploymentsInterval`; the 15 s rung sits
   above the 4 MB transport cap and is reachable only if that cap is raised), a dropped tick
   is counted in `perKind.<kind>.skipped` (a panel-open prime or `r` colliding with an
-  in-flight poll increments it too, so only `deployments.skipped` during a build is the
+  in-flight poll increments it too, and it is cumulative since the service started, not
+  cleared by `_resetStore`, so only `deployments.skipped` rising during a build is the
   starvation signal), and `perKind.<kind>.bytesLastMin` is a bare-number ring. The view
   refetch keys are throttled to one launch per second. Measured 2026-09-12: 19 closed, 22 open during the first drain, 29
   with a build running and the log view open.

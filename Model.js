@@ -1681,7 +1681,7 @@ function logViewStatus(view, rec) {
 function pad2(n) { return (n < 10 ? "0" : "") + n }
 
 function elapsed(iso, nowMs) {
-  var t = Date.parse(iso)
+  var t = typeof iso === "number" ? iso : Date.parse(iso)   // fetchedAt is a number; age() takes both too
   if (isNaN(t)) return ""
   var sec = Math.max(0, Math.floor(((nowMs || Date.now()) - t) / 1000))
   if (sec < 60) return sec + "s"

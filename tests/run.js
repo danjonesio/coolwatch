@@ -1683,5 +1683,15 @@ test("Model.withPending on a tag row reads deploying…, and GERUND covers deplo
   assert(M.GLYPHS.indexOf(M.G.tag) >= 0)
 })
 
+// review re-check (ux 4): the container breadcrumb passes fetchedAt as a number
+test("elapsed and age accept a numeric timestamp as well as ISO", () => {
+  const now = 1789205833000
+  eq(M.elapsed(now - 12000, now), "12s")
+  eq(M.elapsed(new Date(now - 12000).toISOString(), now), "12s")
+  eq(M.elapsed(now - 90000, now), "1m 30s")
+  eq(M.elapsed("not a date", now), "")
+  eq(M.age(now - 12000, now), "Just now")
+})
+
 console.log(passed + " passed, " + failed + " failed")
 process.exit(failed ? 1 : 0)

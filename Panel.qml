@@ -439,15 +439,21 @@ Panel {
       if (rebuild || !rec || fi !== root.lastFailIndex) { viewModel.clear(); root.consumed = 0; root.seenDropped = 0; root.tailI = -1; root.tailLen = -1; root.lastFailIndex = fi }
       if (!rec) return
       if (rec.dropped > root.seenDropped) {                         // the tail cap dropped entries: trim the head by absolute index
-        while (viewModel.count && viewModel.get(0).i >= 0 && viewModel.get(0).i < rec.dropped) viewModel.remove(0)
+        var k = 0
+        while (k < viewModel.count && viewModel.get(k).i >= 0 && viewModel.get(k).i < rec.dropped) k++
+        if (k) viewModel.remove(0, k)
         root.seenDropped = rec.dropped
         if (root.consumed < rec.dropped) root.consumed = rec.dropped
       }
       var last = rec.entries.length ? rec.entries[rec.entries.length - 1] : null
-      if (last && last.i === root.tailI && last.output.length !== root.tailLen) {
-        // The last entry grew in place: drop its rows and let the filter re-append it.
-        while (viewModel.count && viewModel.get(viewModel.count - 1).i === last.i) viewModel.remove(viewModel.count - 1)
-        root.consumed = last.i
+      var tail = root.tailI >= rec.dropped ? rec.entries.filter(function(e) { return e.i === root.tailI })[0] : null
+      if (tail && tail.output.length !== root.tailLen) {
+        // The entry that was newest last sync grew in place (whether or not a newer one landed in the
+        // same poll): drop its rows and everything after, then let the filter re-append from it.
+        var n = 0
+        while (n < viewModel.count && viewModel.get(viewModel.count - 1 - n).i >= tail.i) n++
+        if (n) viewModel.remove(viewModel.count - n, n)
+        root.consumed = tail.i
       }
       var fresh = rec.entries.filter(function(e) { return e.i >= root.consumed })
       if (fresh.length) {

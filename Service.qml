@@ -710,7 +710,7 @@ Item {
           if (c && typeof c === "object" && typeof c.name === "string" && c.name && Model.TAG_RE.test(c.name)) names.push(c.name)
         })
         var st = serviceReq.target || {}
-        if (names.length === 1) { root._setPick(req.arg, names, null, st.label || ""); root._fetchContainerLogSub("service", req.arg, names[0], st.label || "") }
+        if (names.length === 1) { root._setPick(req.arg, names, null, st.label || ""); root._fetchContainerLogSub("service", req.arg, names[0], st.label || "", true) }
         else root._setPick(req.arg, names, names.length ? null : "This service has no containers.", st.label || "")
         break
       }
@@ -769,8 +769,8 @@ Item {
     }
   }
 
-  // status/terminal/source/fetchedAt always update; the parse runs only when the raw
-  // length changed. `opportunistic` (the list poll) never grows the map past the cap.
+  // source/fetchedAt always update, status/terminal only when a status is supplied; the
+  // parse runs only when the raw length changed. `opportunistic` (the list poll) never grows the map past the cap.
   function _captureLog(uuid, raw, status, source, opportunistic) {
     if (!uuid) return
     var m = root._buildLogs, rec = m[uuid] || null
@@ -872,16 +872,18 @@ Item {
     root.refetchBuildLog(uuid)
   }
   // A held `r` would otherwise fire one request per round trip (PanelKeyCatcher has no
-  // auto-repeat filter) until the token's 429 paused every timer.
-  function _viewThrottled() {
+  // auto-repeat filter) until the token's 429 paused every timer. A view's first fetch
+  // (`first`: no record yet for that target) is never dropped: dropping it would leave the
+  // view on its loading note with nothing to refetch.
+  function _viewThrottled(first) {
     var now = Date.now()
-    if (now - root._lastViewFetchAt < 1000) return true
+    if (!first && now - root._lastViewFetchAt < 1000) return true
     root._lastViewFetchAt = now
     return false
   }
   function refetchBuildLog(uuid) {
     if (root._activeUuids.indexOf(uuid) >= 0) return       // the list poll owns an active one
-    if (root._viewThrottled()) return
+    if (root._viewThrottled(!root._buildLogs[uuid])) return
     var rec = root._recent.filter(function(d) { return d.uuid === uuid })[0] || null
     var known = root._buildLogs[uuid] || null
     root._captureLog(uuid, undefined, rec ? rec.status : (known ? known.status : ""), "fetch", false)
@@ -894,7 +896,7 @@ Item {
   function fetchContainerLog(kind, uuid, label) {
     uuid = String(uuid || ""); label = String(label || "")
     if (kind === "service") {
-      if (root._viewThrottled()) return
+      if (root._viewThrottled(!root._servicePicks[uuid])) return
       root._setPick(uuid, null, null, label)
       if (serviceReq.running || serviceReq.stopping) { root._setPick(uuid, [], "Busy · try again", label); return }
       serviceReq.target = { kind: "service", uuid: uuid, label: label }
@@ -904,10 +906,11 @@ Item {
     root._fetchContainerLogSub(kind, uuid, null, label)
   }
   function fetchContainerLogSub(uuid, sub, label) { root._fetchContainerLogSub("service", String(uuid || ""), String(sub || ""), String(label || "")) }
-  function _fetchContainerLogSub(kind, uuid, sub, label) {
+  function _fetchContainerLogSub(kind, uuid, sub, label, internal) {
     var req = Api.reqContainerLog(kind, uuid, sub)
     if (!req) return
-    if (root._viewThrottled()) return
+    var known = root._containerLogs[uuid] || null
+    if (!internal && root._viewThrottled(!known || known.sub !== sub)) return   // internal: the service arm's own continuation, not a key press
     root._setContainerLog(uuid, kind, sub, null, null, label)   // lines null: loading
     if (logReq.running || logReq.stopping) { root._setContainerLogMessage(uuid, "Busy · press r to retry"); return }
     logReq.target = { kind: "containerlog", uuid: uuid, label: label, ckind: kind, sub: sub }
@@ -918,7 +921,7 @@ Item {
     appUuid = String(appUuid || ""); skip = Math.max(0, skip | 0)
     var h = root._history, page = h[appUuid] || { appUuid: appUuid, label: String(label || ""), count: 0, rows: [], skip: 0, loading: false, message: null, at: 0 }
     if (label) page.label = String(label)
-    if (root._viewThrottled()) return
+    if (root._viewThrottled(!h[appUuid] || skip !== page.skip)) return   // a first page or a new page is never dropped
     if (historyReq.running || historyReq.stopping) { page.message = "Busy · try again"; h[appUuid] = root._fresh(page); root._history = root._fresh(h); return }
     page.loading = true; page.message = null; page.skip = skip; page.at = Date.now()
     h[appUuid] = root._fresh(page); root._evictLru(h, 3, null); root._history = root._fresh(h)
