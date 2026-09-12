@@ -365,11 +365,12 @@ test("Model.configSansNotify: equal when only notify/warning differ, unequal on 
   assert(JSON.stringify(M.configSansNotify(a)) !== JSON.stringify(M.configSansNotify(c)), "poll differs")
 })
 
-test("Model.origin / openUrl reject userinfo; normaliseConfig still accepts the url (SR19)", () => {
+test("Model.origin / openUrl reject userinfo; normaliseConfig rejects the url too since Phase 4 (SR19, SR33)", () => {
   eq(M.origin("https://u:p@host"), ""); eq(M.origin("https://u@host/x"), "")
   eq(M.openUrl("deployment", { url: "/x" }, "https://u:p@host"), "")
   eq(M.origin("https://app.coolify.io/"), "https://app.coolify.io")
-  eq(M.normaliseConfig({ instances: [{ url: "https://u:p@host", token: "t" }] }).ok, true)
+  const c = M.normaliseConfig({ instances: [{ url: "https://u:p@host", token: "t" }] })
+  eq(c.ok, false); assert(/credentials/.test(c.error), c.error)
 })
 
 // ---- Model.js: normalise ----------------------------------------------------------------
@@ -805,7 +806,7 @@ test("Model.normaliseDeployment / terminalEvent on the recorded cancelled fixtur
 
 // ---- Model.js: bar, hero, callout --------------------------------------------------------------
 
-test("Model.barState: all 14 rows (glyph, dimmed, active, tooltip)", () => {
+test("Model.barState: all 15 rows (glyph, dimmed, active, tooltip)", () => {
   const G = M.G
   function st(o) { return M.barState(snap(o)) }
   let b = st({ error: M.makeError("noconfig") }); eq(b.glyph, G.cloudOutline); eq(b.dimmed, true); eq(b.active, false); assert(/no config at/.test(b.tooltip))
@@ -817,6 +818,7 @@ test("Model.barState: all 14 rows (glyph, dimmed, active, tooltip)", () => {
   b = st({ error: M.makeError("apidisabled") }); eq(b.glyph, G.cloudAlert); assert(/API disabled/.test(b.tooltip))
   b = st({ error: M.makeError("ipblocked") }); eq(b.glyph, G.cloudAlert); assert(/IP/.test(b.tooltip))
   b = st({ error: M.makeError("offline") }); eq(b.glyph, G.cloudOff); eq(b.dimmed, true); assert(/offline/.test(b.tooltip))
+  b = st({ error: M.makeError("tls") }); eq(b.glyph, G.cloudAlert); eq(b.dimmed, true); assert(/certificate/.test(b.tooltip))   // SR36
   b = st({ error: M.makeError("ratelimited"), backoffSec: 30 }); eq(b.glyph, G.cloud); eq(b.tooltip, "Coolwatch — rate limited, backing off 30s")
   b = st({ baselineDone: false }); eq(b.glyph, G.cloud); eq(b.dimmed, true); eq(b.tooltip, "Coolwatch — starting")
   b = st({ failedUnacked: ["f1", "f2"], recent: [{ uuid: "f1", appName: "api", status: "failed" }] }); eq(b.glyph, G.failed); eq(b.active, true); eq(b.dimmed, false); eq(b.tooltip, "Deployment failed: api +1 more")
@@ -852,7 +854,7 @@ test("Model.heroMeta: every condition string; no 0 deploying; empty account; pre
 
 test("Model.callout: every error and warning kind has a body; healthy is null; staleness appended", () => {
   eq(M.callout(snap({})), null)
-  const kinds = ["noconfig", "configerror", "unsafe", "tokencmd", "waitingtoken", "auth", "apidisabled", "ipblocked", "ability", "ratelimited", "offline", "toolarge", "http"]
+  const kinds = ["noconfig", "configerror", "unsafe", "tokencmd", "waitingtoken", "auth", "apidisabled", "ipblocked", "ability", "ratelimited", "offline", "tls", "toolarge", "http"]
   kinds.forEach(k => {
     const c = M.callout(snap({ error: M.makeError(k, "detail text", { curlExit: 3, httpCode: 500 }) }), NOW)
     assert(c && c.body.length > 0, k + " has a body"); assert(c.title.length > 0, k + " has a title")
@@ -1691,6 +1693,107 @@ test("elapsed and age accept a numeric timestamp as well as ISO", () => {
   eq(M.elapsed(now - 90000, now), "1m 30s")
   eq(M.elapsed("not a date", now), "")
   eq(M.age(now - 12000, now), "Just now")
+})
+
+// ---- Phase 4 instances ---------------------------------------------------------------------
+
+test("normaliseConfig: two instances from the fixture; a single-entry file is unchanged (SR32)", () => {
+  const two = M.normaliseConfig(fixture("config-two-instances.json"))
+  eq(two.ok, true); eq(two.instances.length, 2); eq(two.instances[0].id, "cloud"); eq(two.instances[1].id, "homelab")
+  eq(two.instances[1].plaintext, true); eq(JSON.stringify(two.instances[1].tokenCommand), JSON.stringify(["op", "read", "op://Private/Coolify Homelab/credential"]))
+  eq(two.instancesWarning, ""); eq(two.warning, "")
+  const one = M.normaliseConfig({ version: 1, instances: [{ id: "cloud", name: "Coolify Cloud", url: "https://app.coolify.io", token: "67|x" }] })
+  eq(one.ok, true); eq(one.instances.length, 1); eq(one.instances[0].id, "cloud"); eq(one.instancesWarning, "")
+  const noId = M.normaliseConfig({ instances: [{ url: "https://x", token: "t" }, { url: "https://y", token: "t" }] })
+  eq(noId.ok, true); eq(noId.instances[0].id, "instance0"); eq(noId.instances[1].id, "instance1")
+})
+
+test("normaliseConfig: duplicate id, a path-shaped id, a long id and a dotted id are config errors (SR32)", () => {
+  const dup = M.normaliseConfig({ instances: [{ id: "a", url: "https://x", token: "t" }, { id: "a", url: "https://y", token: "t" }] })
+  eq(dup.ok, false); assert(/instances\[1\]\.id "a" is already used by instances\[0\]/.test(dup.error), dup.error)
+  for (const bad of ["../x", "a/b", "a.b", "a b", "x".repeat(33), "é", "a\n"]) {
+    const c = M.normaliseConfig({ instances: [{ id: bad, url: "https://x", token: "t" }] })
+    eq(c.ok, false, JSON.stringify(bad) + " must be rejected"); assert(/\.id must be/.test(c.error), c.error)
+  }
+  for (const good of ["a", "home-lab_2", "x".repeat(32), "0"]) eq(M.normaliseConfig({ instances: [{ id: good, url: "https://x", token: "t" }] }).ok, true, good)
+})
+
+test("normaliseConfig: the same origin twice is a warning, not an error; configSansNotify drops it", () => {
+  const c = M.normaliseConfig({ instances: [{ id: "a", url: "https://app.coolify.io", token: "t" }, { id: "b", url: "https://app.coolify.io/", token: "u" }] })
+  eq(c.ok, true); eq(c.instances.length, 2)
+  assert(/instances\[1\] and instances\[0\] are the same Coolify \(app\.coolify\.io\)/.test(c.instancesWarning), c.instancesWarning)
+  assert(/twice/.test(c.instancesWarning))
+  eq(c.warning, "", "the notify warning slot is untouched")
+  const d = M.normaliseConfig({ instances: [{ id: "a", url: "https://app.coolify.io", token: "t" }, { id: "b", url: "https://other.example", token: "u" }] })
+  eq(d.instancesWarning, "")
+  const sans = M.configSansNotify(c)
+  assert(!("instancesWarning" in sans) && !("warning" in sans) && !("notify" in sans), "sans drops the live-applied parts")
+  assert("instances" in sans && "poll" in sans)
+})
+
+test("errorFor: curl exit 60 is tls, named at every site; other transport exits stay offline (SR36)", () => {
+  const e = M.errorFor({ curlExit: 60, errmsg: "SSL certificate problem: self-signed certificate", request: "servers" })
+  eq(e.kind, "tls"); eq(e.title, "Certificate rejected"); assert(/self-signed/.test(e.detail)); eq(e.request, "servers")
+  eq(M.errorFor({ curlExit: 60 }).detail, "certificate verification failed")
+  for (const x of [6, 7, 28, 35]) eq(M.errorFor({ curlExit: x }).kind, "offline", "exit " + x)
+  eq(M.OFFLINE_EXITS[60], undefined, "60 left the offline table")
+  const b = M.barState(snap({ error: e })); eq(b.glyph, M.G.cloudAlert); eq(b.dimmed, true); assert(/certificate rejected/.test(b.tooltip))
+  const c = M.callout(snap({ error: e }), NOW); eq(c.title, "Certificate rejected"); assert(/nothing was sent/.test(c.body)); assert(/Retrying/.test(c.body))
+})
+
+test("instanceChips: none for one instance; label, selected and trouble for two or more", () => {
+  eq(M.instanceChips([{ id: "a", name: "A" }], "a").length, 0)
+  eq(M.instanceChips([], "a").length, 0); eq(M.instanceChips(null, "a").length, 0)
+  const chips = M.instanceChips([{ id: "cloud", name: "Coolify Cloud", error: "", failed: 0, down: 0 }, { id: "home", name: "Homelab", error: "auth", failed: 0, down: 0 }, { id: "x", name: "x".repeat(60), error: "", failed: 2, down: 0 }], "home")
+  eq(chips.length, 3)
+  eq(chips[0].id, "cloud"); eq(chips[0].label, "Coolify Cloud"); eq(chips[0].selected, false); eq(chips[0].trouble, false)
+  eq(chips[1].id, "home"); eq(chips[1].selected, true); eq(chips[1].trouble, true)
+  eq(chips[2].trouble, true); assert(chips[2].label.length <= 24, "chip labels are bounded")
+  for (const c of chips) eq(JSON.stringify(Object.keys(c)), JSON.stringify(["id", "label", "selected", "trouble"]))
+})
+
+test("instanceTrouble: names the first non-active instance in trouble, never the active one; empty when healthy", () => {
+  const list = [{ id: "cloud", name: "Coolify Cloud", error: "auth", failed: 0, down: 0 }, { id: "home", name: "Homelab", error: "", failed: 1, down: 0 }, { id: "lab2", name: "Lab 2", error: "", failed: 0, down: 2 }]
+  eq(M.instanceTrouble(list, "cloud"), "Homelab: 1 failed build")
+  eq(M.instanceTrouble(list, "home"), "Coolify Cloud: token rejected")
+  eq(M.instanceTrouble(list, "lab2"), "Coolify Cloud: token rejected")
+  eq(M.instanceTrouble([list[0]], "cloud"), "", "the active instance's own trouble is the bar icon's job")
+  eq(M.instanceTrouble([{ id: "a", name: "A" }, { id: "b", name: "B", error: "", failed: 0, down: 0 }], "a"), "")
+  eq(M.instanceTrouble([{ id: "a" }, { id: "b", name: "B", error: "offline" }], "a"), "B: offline")
+  eq(M.instanceTrouble([{ id: "a" }, { id: "b", name: "B", error: "tls" }], "a"), "B: certificate rejected")
+  eq(M.instanceTrouble([{ id: "a" }, { id: "b", name: "B", down: 1 }], "a"), "B: 1 server unreachable")
+  eq(M.instanceTrouble([{ id: "a" }, { id: "b", name: "x".repeat(80), error: "http" }], "a").length < 50, true)
+})
+
+test("parseRecent / serialiseRecent with an instance id: a v1 file without id is accepted, an id mismatch is rejected, the id is emitted, no logs key (SR26)", () => {
+  const KEY = "https://app.coolify.io"
+  const v1 = M.parseRecent(fixture("state-recent.json"), KEY, NOW, "cloud")
+  eq(v1.loaded, true); eq(v1.rejected, false); eq(v1.recent.length, 2, "a Phase 3 file (no id) loads for any id")
+  const rt = M.serialiseRecent(v1.recent, KEY, NOW, "cloud")
+  const parsed = JSON.parse(rt.text); eq(parsed.id, "cloud"); eq(parsed.instance, KEY); eq(parsed.version, 1)
+  eq(JSON.stringify(Object.keys(parsed)), JSON.stringify(["version", "instance", "id", "savedAt", "recent"]))
+  assert(rt.text.indexOf('"logs"') < 0 && rt.key.indexOf('"logs"') < 0)
+  eq(M.parseRecent(rt.text, KEY, NOW, "cloud").rejected, false)
+  eq(M.parseRecent(rt.text, KEY, NOW, "homelab").rejected, true, "another instance's file")
+  eq(M.parseRecent(rt.text, KEY, NOW).rejected, true, "a file with an id needs a caller id")
+  eq(M.parseRecent(rt.text, KEY, NOW, "").rejected, true)
+  const noId = M.serialiseRecent(v1.recent, KEY, NOW)
+  assert(JSON.parse(noId.text).id === undefined, "no id → no id key (Phase 3 shape)")
+  assert(noId.key !== rt.key, "the key carries the id")
+  eq(M.serialiseRecent(v1.recent, KEY, NOW + 5000, "cloud").key, rt.key, "key ignores savedAt")
+})
+
+test("notifyCopy: the body names the instance when ctx.instanceLabel is set, escaped, bounded; headline untouched", () => {
+  const s = snap({ recent: [{ uuid: "d1", appUuid: "a1", appName: "api", status: "failed", createdAt: "2026-09-06T21:00:00Z", finishedAt: "2026-09-06T21:00:30Z", branch: "main", url: "/x" }] })
+  const ev = [{ kind: "deployment", event: "failed", uuid: "d1" }]
+  const base = M.notifyPlan(ev, s, { notify: M.notifyDefaults(), origin: "https://app.coolify.io", now: NOW, pluginId: "p" })
+  const named = M.notifyPlan(ev, s, { notify: M.notifyDefaults(), origin: "https://app.coolify.io", now: NOW, pluginId: "p", instanceLabel: "Homelab <1> & co" })
+  eq(base.argvs.length, 1); eq(named.argvs.length, 1)
+  eq(named.argvs[0][7], base.argvs[0][7], "headline unchanged")
+  assert(named.argvs[0][8].endsWith(" · Homelab &lt;1> &amp; co"), named.argvs[0][8])   // notifyBody escapes & and < (the shell's StyledText); > is left alone
+  assert(base.argvs[0][8].indexOf("Homelab") < 0)
+  const c = M.notifyPlan([{ kind: "deployment", event: "cancelled", uuid: "d1" }], snap({ recent: [{ uuid: "d1", appName: "api", status: "cancelled-by-user" }] }), { notify: M.notifyDefaults(), origin: "", now: NOW, pluginId: "p", instanceLabel: "Homelab" })
+  eq(c.argvs[0][8], "Homelab", "an otherwise empty body is just the instance")
 })
 
 console.log(passed + " passed, " + failed + " failed")
