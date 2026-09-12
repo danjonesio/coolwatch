@@ -125,7 +125,8 @@ Read `docs/roadmap.md` before writing code.
   with a deployment; no 60 s window may reach 20 with the panel closed once the service
   has settled (the first minute after a shell restart holds the startup burst of four
   kinds at token-ready plus the 65 s `/projects` kick and reached 20 once, measured
-  2026-09-12; â 20 with a panel
+  2026-09-12; the closed-panel ceiling applies once no panel has been open for 60 s, and timer
+  jitter can put a sixteenth deployments poll into a window, so a lone 20 is not a defect; â 20 with a panel
   open, â 24 during the first topology drain with a panel open, measured). See the schedule in `docs/architecture.md`.
   Phase 4: while a build runs the deployments interval is byte-stepped (2 s under 256 KB
   of body, then 4 / 8 / 15 s at 256 KB / 1 MB / 4 MB; `Model.deploymentsInterval`); the
