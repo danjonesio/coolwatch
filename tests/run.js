@@ -1743,6 +1743,17 @@ test("errorFor: curl exit 60 is tls, named at every site; other transport exits 
   const c = M.callout(snap({ error: e }), NOW); eq(c.title, "Certificate rejected"); assert(/nothing was sent/.test(c.body)); assert(/Retrying/.test(c.body))
 })
 
+test("instanceKey / tokenFingerprint: the store key never holds the token, changes on any entry, poll or token change (SR34; review: security 3)", () => {
+  const e = { id: "a", name: "A", url: "https://x", token: "67|secretsecretsecret", tokenCommand: null, plaintext: false }
+  const k = M.instanceKey(e, { deploymentsSec: 4 })
+  assert(k.indexOf("secret") < 0 && k.indexOf("67|") < 0, "no token in the key")
+  eq(k, M.instanceKey(Object.assign({}, e), { deploymentsSec: 4 }), "stable")
+  assert(k !== M.instanceKey(Object.assign({}, e, { token: "67|secretsecretsecreT" }), { deploymentsSec: 4 }), "a one-char token change resets")
+  assert(k !== M.instanceKey(Object.assign({}, e, { name: "B" }), { deploymentsSec: 4 }), "a name change resets")
+  assert(k !== M.instanceKey(e, { deploymentsSec: 2 }), "a poll change resets")
+  eq(M.tokenFingerprint(""), "0:1505"); assert(/^21:[0-9a-f]+$/.test(M.tokenFingerprint(e.token)))
+})
+
 test("instanceChips: none for one instance; label, selected and trouble for two or more", () => {
   eq(M.instanceChips([{ id: "a", name: "A" }], "a").length, 0)
   eq(M.instanceChips([], "a").length, 0); eq(M.instanceChips(null, "a").length, 0)

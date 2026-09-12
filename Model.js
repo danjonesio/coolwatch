@@ -949,6 +949,21 @@ function instanceTroubleOf(x) {
   return ""
 }
 
+// What a context's store was built from: the entry with its token replaced by a
+// fingerprint (length and a djb2 sum), so a token change still resets the context and
+// the key holds no copy of the token (SR34).
+function tokenFingerprint(token) {
+  var s = String(token === undefined || token === null ? "" : token), h = 5381
+  for (var i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0
+  return s.length + ":" + h.toString(16)
+}
+function instanceKey(entry, poll) {
+  var e = {}
+  for (var k in entry) if (k !== "token") e[k] = entry[k]
+  e.tokenFp = tokenFingerprint(entry ? entry.token : "")
+  return JSON.stringify({ e: e, poll: poll || null })
+}
+
 // Chips exist only with two or more instances; one instance shows none.
 function instanceChips(list, activeId) {
   list = list || []

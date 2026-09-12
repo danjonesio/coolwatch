@@ -253,6 +253,7 @@ Item {
   // tear down every context just to build identical ones, agents/Main.qml): a vanished id
   // is removed, a new id inserted, an existing one left alone (a reorder moves its row).
   function _setInstanceIds(ids) {
+    if (JSON.stringify(ids) !== JSON.stringify(root._instanceIds)) root._instanceIds = ids   // first: a context created below reads its index at once
     for (var i = idModel.count - 1; i >= 0; i--) if (ids.indexOf(idModel.get(i).instId) < 0) idModel.remove(i)
     for (var j = 0; j < ids.length; j++) {
       var cur = -1
@@ -260,7 +261,6 @@ Item {
       if (cur < 0) idModel.insert(j, { instId: ids[j] })
       else if (cur !== j) idModel.move(cur, j, 1)
     }
-    if (JSON.stringify(ids) !== JSON.stringify(root._instanceIds)) root._instanceIds = ids
     if (ids.indexOf(root._activeId) < 0) root._activeId = ids.length ? ids[0] : ""
   }
 
@@ -435,7 +435,8 @@ Item {
     readonly property var _entry: root._cfg && root._cfg.instances ? (root._cfg.instances.filter(function(i) { return i.id === ctx.instId })[0] || null) : null
     property string _instKey: ""       // JSON of the entry and poll this context's store was built from
     // instances[0] keeps recent.json (Phase 3's file); every further instance gets recent-<id>.json.
-    readonly property string recentPath: root.stateDirPath + (root._instanceIds.indexOf(ctx.instId) <= 0 ? "/recent.json" : "/recent-" + ctx.instId + ".json")
+    readonly property int _index: root._instanceIds.indexOf(ctx.instId)   // -1 while the id is not (yet, or no longer) configured
+    readonly property string recentPath: ctx._index < 0 ? "" : root.stateDirPath + (ctx._index === 0 ? "/recent.json" : "/recent-" + ctx.instId + ".json")
     readonly property string sensitiveMessage: root.sensitiveMessage
     // Chips and the tooltip suffix read this (Model.instanceChips / instanceTrouble).
     readonly property var summary: ({ id: ctx.instId, name: ctx._instance ? ctx._instance.name : ctx.instId,
@@ -590,7 +591,7 @@ Item {
       function _configApplied() {
         var e = ctx._entry
         if (!e) return
-        var key = JSON.stringify({ e: e, poll: root._cfg.poll })
+        var key = Model.instanceKey(e, root._cfg.poll)   // the entry with a token fingerprint, never the token (SR34; review: security 3)
         if (key !== ctx._instKey) {
           var first = ctx._instKey === ""
           ctx._instKey = key
@@ -607,7 +608,8 @@ Item {
       function _applyConfig() {
         var i = ctx._entry
         if (!i) return
-        if (Model.configLoose(root._configMode) && !i.tokenCommand) ctx._warning = { kind: "permissions", title: "Config is readable by others", detail: "" }
+        // The mode is the one shared file's; an inline token in ANY entry makes it every context's warning (review: security 1).
+        if (Model.configLoose(root._configMode) && root._cfg.instances.some(function(x) { return !x.tokenCommand })) ctx._warning = { kind: "permissions", title: "Config is readable by others", detail: "" }
         else if (i.plaintext) ctx._warning = { kind: "plaintext", title: "Plaintext instance", detail: "" }
         else if (root._cfg.warning) ctx._warning = { kind: "notify", title: "Notify setting ignored", detail: root._cfg.warning + "; using the default" }
         else if (root._cfg.instancesWarning) ctx._warning = { kind: "instances", title: "Same Coolify twice", detail: root._cfg.instancesWarning }
@@ -638,7 +640,7 @@ Item {
     // Called from _configApplied (after _instance is set) and from mkdirProc.onExited; needs both.
     // Do not hoist the path assignment to Component.onCompleted: the directory must exist first.
     function _armRecent() {
-      if (!root._stateDirReady || !ctx._instance) return
+      if (!root._stateDirReady || !ctx._instance || !ctx.recentPath) return   // an unknown id has no file (review: security 2)
       var key = Model.origin(ctx._instance.url)
       if (key === ctx._recentKey && recentFile.path === ctx.recentPath) return
       ctx._recentKey = key; ctx._recentLoaded = false
