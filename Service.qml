@@ -633,8 +633,15 @@ Item {
       function _suspend() {
         ctx._ready = false
         ctx._needToken = true
+        // A killed Req never reaches _finish (the liveSeq guard), so settle what it carried
+        // (the _resetStore shape; review: code re-check 2): an in-flight action is interrupted,
+        // a drain in flight is re-queued so its toast and recent row survive the repair.
+        var interrupted = ctx._inflightAction !== null
+        ctx._inflightAction = null
         for (var i = 0; i < ctx._reqs.length; i++) ctx._reqs[i].kill()
+        if (deploymentReq.inflight) ctx._drainDone(false, false)
         ctx._syncBusy()
+        if (interrupted) ctx._say("Action interrupted by a config change", "urgent")
       }
       // The context is being released (the shell is going down): stop everything, keep nothing.
       function _halt() {
