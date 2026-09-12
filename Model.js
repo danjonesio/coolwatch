@@ -97,9 +97,10 @@ function normaliseConfig(text) {
     ids[inst.id] = i
     var org = origin(inst.url)
     // the same Coolify twice is allowed (a read-only second token is the acceptance setup) but
-    // every toast and drain runs twice; the callout says so
-    if (Object.prototype.hasOwnProperty.call(origins, org)) { if (!out.instancesWarning) out.instancesWarning = "instances[" + i + "] and instances[" + origins[org] + "] are the same Coolify (" + hostOf(url) + "): notifications arrive twice" }
-    else origins[org] = i
+    // every toast and drain runs twice; the callout says so. A URL origin() cannot key (a query
+    // or fragment) is never "the same" as another (review: data 4).
+    if (org && Object.prototype.hasOwnProperty.call(origins, org)) { if (!out.instancesWarning) out.instancesWarning = "instances[" + i + "] and instances[" + origins[org] + "] are the same Coolify (" + hostOf(url) + "): notifications arrive twice" }
+    else if (org) origins[org] = i
     out.instances.push(inst)
   }
   if (c.poll && typeof c.poll === "object") {
@@ -803,8 +804,9 @@ function recentEntry(d) {
 }
 
 // `id` (Phase 4): the instance id that owns the file. A file that carries an `id` must match;
-// a Phase 3 file carries none and is accepted (instances[0] keeps recent.json).
-function parseRecent(text, instanceKey, nowMs, id) {
+// a Phase 3 file carries none and is accepted only by the first instance (`first`), which is
+// the one that keeps recent.json; any other instance rejects it (review: data 2).
+function parseRecent(text, instanceKey, nowMs, id, first) {
   var out = { recent: [], loaded: false, rejected: false }
   if (text === undefined || text === null || text === "") return out
   if (!instanceKey || typeof text !== "string" || text.length > RECENT_FILE_MAX_CHARS) { out.rejected = true; return out }
@@ -812,7 +814,8 @@ function parseRecent(text, instanceKey, nowMs, id) {
   if (!v || typeof v !== "object" || Array.isArray(v) || v.version !== RECENT_FILE_VERSION || v.instance !== instanceKey || !Array.isArray(v.recent)) {
     out.rejected = true; return out
   }
-  if (v.id !== undefined && v.id !== null && (!id || v.id !== id)) { out.rejected = true; return out }
+  if (v.id !== undefined && v.id !== null) { if (!id || v.id !== id) { out.rejected = true; return out } }
+  else if (id && !first) { out.rejected = true; return out }
   var now = nowMs || Date.now(), seen = bare()
   for (var i = 0; i < v.recent.length && out.recent.length < RECENT_CAP; i++) {
     var d = v.recent[i]

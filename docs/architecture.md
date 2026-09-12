@@ -307,8 +307,9 @@ byServer:  { serverUuid: [resourceUuid…] }
   `~/.local/state/coolwatch/recent.json` (`$XDG_STATE_HOME` honoured; Phase 4: `instances[0]`
   keeps that name, every further instance writes `recent-<id>.json`, and every file written
   carries `id`; `parseRecent` rejects a file whose `id` is another instance's and accepts a
-  Phase 3 file without one, so a rollback reads a Phase 4 file and a reorder of `instances[]`
-  moves which file the first entry reads, never which rows an instance accepts):
+  Phase 3 file without one only for the first instance, so a rollback reads a Phase 4 file, an
+  upgrade keeps `instances[0]`'s history, and a reorder of `instances[]` moves which file the
+  first entry reads; a file without `id` read by any later instance is rejected):
   `{ version: 1, instance: <Model.origin(url)>, id, savedAt, recent: [ { uuid, status, appId,
   appName, serverName, commit, commitMessage, createdAt, updatedAt, finishedAt, url,
   restartOnly, force, isApi, isWebhook } ] }`. Written only from the `deployment` arm of

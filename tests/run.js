@@ -1728,6 +1728,8 @@ test("normaliseConfig: the same origin twice is a warning, not an error; configS
   eq(c.warning, "", "the notify warning slot is untouched")
   const d = M.normaliseConfig({ instances: [{ id: "a", url: "https://app.coolify.io", token: "t" }, { id: "b", url: "https://other.example", token: "u" }] })
   eq(d.instancesWarning, "")
+  const q = M.normaliseConfig({ instances: [{ id: "a", url: "https://one.example/?x=1", token: "t" }, { id: "b", url: "https://two.example/#y", token: "u" }] })
+  eq(q.ok, true); eq(q.instancesWarning, "", "two hosts whose origin() is empty are never the same Coolify (review: data 4)")
   const sans = M.configSansNotify(c)
   assert(!("instancesWarning" in sans) && !("warning" in sans) && !("notify" in sans), "sans drops the live-applied parts")
   assert("instances" in sans && "poll" in sans)
@@ -1780,13 +1782,15 @@ test("instanceTrouble: names the first non-active instance in trouble, never the
 
 test("parseRecent / serialiseRecent with an instance id: a v1 file without id is accepted, an id mismatch is rejected, the id is emitted, no logs key (SR26)", () => {
   const KEY = "https://app.coolify.io"
-  const v1 = M.parseRecent(fixture("state-recent.json"), KEY, NOW, "cloud")
-  eq(v1.loaded, true); eq(v1.rejected, false); eq(v1.recent.length, 2, "a Phase 3 file (no id) loads for any id")
+  const v1 = M.parseRecent(fixture("state-recent.json"), KEY, NOW, "cloud", true)
+  eq(v1.loaded, true); eq(v1.rejected, false); eq(v1.recent.length, 2, "a Phase 3 file (no id) loads for the first instance")
+  eq(M.parseRecent(fixture("state-recent.json"), KEY, NOW, "homelab", false).rejected, true, "and for no other instance (review: data 2)")
+  eq(M.parseRecent(fixture("state-recent.json"), KEY, NOW).rejected, false, "the Phase 3 call shape (no id) still loads it")
   const rt = M.serialiseRecent(v1.recent, KEY, NOW, "cloud")
   const parsed = JSON.parse(rt.text); eq(parsed.id, "cloud"); eq(parsed.instance, KEY); eq(parsed.version, 1)
   eq(JSON.stringify(Object.keys(parsed)), JSON.stringify(["version", "instance", "id", "savedAt", "recent"]))
   assert(rt.text.indexOf('"logs"') < 0 && rt.key.indexOf('"logs"') < 0)
-  eq(M.parseRecent(rt.text, KEY, NOW, "cloud").rejected, false)
+  eq(M.parseRecent(rt.text, KEY, NOW, "cloud").rejected, false); eq(M.parseRecent(rt.text, KEY, NOW, "cloud", true).rejected, false)
   eq(M.parseRecent(rt.text, KEY, NOW, "homelab").rejected, true, "another instance's file")
   eq(M.parseRecent(rt.text, KEY, NOW).rejected, true, "a file with an id needs a caller id")
   eq(M.parseRecent(rt.text, KEY, NOW, "").rejected, true)

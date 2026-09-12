@@ -262,6 +262,7 @@ Item {
       else if (cur !== j) idModel.move(cur, j, 1)
     }
     if (ids.indexOf(root._activeId) < 0) root._activeId = ids.length ? ids[0] : ""
+    root._rebuildCtxs()                                       // a move adds and removes nothing, so the handlers stay silent (review: data 5)
   }
 
   function _applyStat(text) {
@@ -385,13 +386,21 @@ Item {
     s.bar = { glyph: "U+" + root.bar.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: root.bar.dimmed, active: root.bar.active, tooltip: root.bar.tooltip }   // the shell-wide bar: with the trouble suffix
     return s
   }
+  // The same key set as a context's _status(), so the documented jq lines keep their shape
+  // while nothing is configured (review: data 3).
   function _emptyStatus() {
     return { configState: root._configError ? root._configError.kind : "unconfigured", configMode: root._configMode || null, tokenSource: null,
              instance: null, counts: { servers: 0, resources: 0, deployments: 0, recent: 0 }, perKind: {}, requestsLastMin: 0,
              rateLimitRemaining: null, backoffUntil: 0, paused: false, probeMode: false, openPanels: root._openPanels, baselineDone: false,
+             topologyFetched: false, topologyLoaded: false, terminalQueue: 0, drainRetries: 0, recentPersisted: 0, recentRejected: false,
              error: root._configError ? { kind: root._configError.kind, request: "", httpCode: 0, curlExit: 0 } : null, warning: null,
              bar: { glyph: "U+" + root.bar.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: root.bar.dimmed, active: root.bar.active },
-             lastAction: null, pending: 0, logView: null, history: null, tags: { count: 0, fetchedAt: 0 }, sensitive: "unknown" }
+             topologyQueue: 0, lastAction: null, pending: 0, pendingStale: 0, actionsLastMin: 0, inflightAction: false,
+             baseline: { deployments: false, resources: false, servers: false, version: false },
+             logView: null, buildLogsHeld: 0, history: null, tags: { count: 0, fetchedAt: 0 }, sensitive: "unknown",
+             notify: { enabled: root._cfg ? root._cfg.notify : Model.notifyDefaults(), warning: root._cfg && root._cfg.warning ? root._cfg.warning : null,
+                       sentLastMin: root._notifiedLastMin(), suppressed: Model.suppressedZero(), queued: 0, lastEvent: null,
+                       dnd: (function() { var d = root._dnd(); return d === null ? null : (d ? "on" : "off") })() } }
   }
 
   // CLI verbs never confirm: typing the verb is the confirmation. The result is the
@@ -647,7 +656,7 @@ Item {
       if (recentFile.path === ctx.recentPath) recentFile.reload(); else recentFile.path = ctx.recentPath
     }
     function _loadRecent(text) {         // idempotent: onLoaded may fire more than once
-      var r = Model.parseRecent(text, ctx._recentKey, Date.now(), ctx.instId)
+      var r = Model.parseRecent(text, ctx._recentKey, Date.now(), ctx.instId, ctx._index === 0)   // an id-less (pre-Phase-4) file is the first instance's
       ctx._recent = Model.joinBranch(Model.mergeRecent(ctx._recent, r.recent), ctx._resources)
       ctx._recentPersisted = r.recent.length; ctx._recentRejected = r.rejected; ctx._recentLoaded = true
       console.log(r.rejected ? "coolwatch recent rejected" : "coolwatch recent loaded " + r.recent.length)
