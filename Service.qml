@@ -394,7 +394,7 @@ Item {
   // while nothing is configured (review: data 3).
   function _emptyStatus() {
     return { configState: root._configError ? root._configError.kind : "unconfigured", configMode: root._configMode || null, tokenSource: null,
-             instance: null, counts: { servers: 0, resources: 0, deployments: 0, recent: 0 }, perKind: {}, requestsLastMin: 0,
+             instance: null, id: null, counts: { servers: 0, resources: 0, deployments: 0, recent: 0 }, perKind: {}, requestsLastMin: 0,
              rateLimitRemaining: null, backoffUntil: 0, paused: false, probeMode: false, openPanels: root._openPanels, baselineDone: false,
              topologyFetched: false, topologyLoaded: false, terminalQueue: 0, drainRetries: 0, recentPersisted: 0, recentRejected: false,
              error: root._configError ? { kind: root._configError.kind, request: "", httpCode: 0, curlExit: 0 } : null, warning: null,
