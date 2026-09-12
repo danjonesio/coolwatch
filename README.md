@@ -5,7 +5,7 @@ deployments, and the buttons to deploy, redeploy, restart, stop and cancel, in a
 [Omarchy](https://omarchy.org/) panel. Works with Coolify Cloud and self-hosted Coolify
 through the REST API.
 
-**Status: Phase 4 built on `phase-4-depth` (build logs, container logs, deployment history, tag deploy) and `phase-4-instances` (several Coolify instances, chips); Phases 1 (read-only bar icon and panel), 2 (actions) and 3 (notifications) merged.** See [docs/roadmap.md](docs/roadmap.md).
+**Status: Phases 1 (read-only bar icon and panel), 2 (actions), 3 (notifications) and 4 (build logs, container logs, deployment history, tag deploy, several Coolify instances) merged.** See [docs/roadmap.md](docs/roadmap.md).
 
 **Renamed from Omarify on 2026-09-12.** New plugin id `io.github.danjonesio.coolwatch`, config at
 `~/.config/coolwatch/config.json`, state at `~/.local/state/coolwatch/recent.json`. Nothing is read

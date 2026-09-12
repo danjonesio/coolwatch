@@ -8,9 +8,9 @@ deployments, and the actions to deploy, redeploy, restart, stop, start and cance
 Notifications when deployments queue, build, finish or fail. It is a Quickshell plugin
 that runs inside `omarchy-shell`; there is no daemon and no second process.
 
-Status: **Phase 4 built on two branches: `phase-4-depth` (build logs, container logs,
-history, tag deploy) and `phase-4-instances` (one `InstanceCtx` per configured Coolify,
-chips, per-instance state files); Phases 1 ("see"), 2 ("act") and 3 ("notify") merged.**
+Status: **Phases 1 ("see"), 2 ("act"), 3 ("notify") and 4 (depth: build logs, container
+logs, history, tag deploy; instances: one `InstanceCtx` per configured Coolify, chips,
+per-instance state files) all merged (PRs #6–#8 on 2026-09-12); manifest 0.6.0.**
 Read `docs/roadmap.md` before writing code.
 
 ## Product locks
