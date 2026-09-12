@@ -195,13 +195,13 @@ omarchy-shell io.github.danjonesio.coolwatch status
 omarchy-shell io.github.danjonesio.coolwatch status | jq '{baseline, notify, recentPersisted, recentRejected, terminalQueue, drainRetries}'   # Phase 3 fields
 omarchy-shell io.github.danjonesio.coolwatch status | jq '{logView, buildLogsHeld, history, tags, sensitive, dep: (.perKind.deployments | {lastBytes, bytesLastMin, skipped})}'   # Phase 4 fields, counts only
 quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch (notify|recent|drain|logview) '   # unanchored: the log prefixes "DEBUG qml:"
-quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [A-Za-z0-9_-]+/(buildlog|containerlog|service|history|tags) '   # the view fetches ("<instance id>/<kind>" since Phase 4); a failure logs "<kind> view failed: <kind> http=<n>"
+quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [A-Za-z0-9_-]+/(buildlog|containerlog|service|history|tags) '   # the view fetches ("<instance id>/<kind>" since Phase 4); a failure logs "<id>/<kind> view failed: <kind> http=<n>"
 omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`; resolves against the active instance only
 omarchy-shell io.github.danjonesio.coolwatch instances                          # -> "cloud (active), homelab"
 omarchy-shell io.github.danjonesio.coolwatch instance homelab                   # -> "active homelab" | "unknown instance homelab"
 omarchy-shell io.github.danjonesio.coolwatch status | jq '{activeInstance, requestsTotalLastMin, instances: [.instances[]|{id, configState, requestsLastMin, sensitive, paused, error}]}'   # Phase 4 instances; top-level keys mirror the active one
 omarchy-shell io.github.danjonesio.coolwatch status | jq '[.instances[]|{id, requestsLastMin}]'   # the rate gate, per token
-quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [A-Za-z0-9_-]+/(deployments|resources|servers) '   # per-request lines carry "<instance id>/<kind>" since Phase 4 (ids may hold capitals)
+quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [A-Za-z0-9_-]+/(deployments|resources|servers) '   # per-request, failure and reaper lines carry "<instance id>/<kind>" since Phase 4 (ids may hold capitals); "coolwatch notify|recent|drain|logview|action " lines do not
 
 # rollback of a Phase 4 instances build to the depth build (a second instances[] entry is validated and ignored by the depth build;
 # recent-<id>.json files are ignored; recent.json's optional id field is ignored by the older parseRecent)

@@ -284,7 +284,7 @@ Item {
     if (!root._configMode) return      // stat failed: the file watch owns the "not configured" state
     if (Model.configUnsafe(root._configMode, root._configOwner, root.me)) {
       root._configError = Model.makeError("unsafe")
-      root._ctxs.forEach(function(c) { c._halt() })
+      root._ctxs.forEach(function(c) { c._suspend() })
       return
     }
     if (root._configError && root._configError.kind === "unsafe") root._configError = null
@@ -380,11 +380,12 @@ Item {
   // ---- IPC ---------------------------------------------------------------------------
   // Top-level keys mirror the active context; `instances[]` carries every context's status.
   function _status() {
-    var a = root._active
-    var s = a ? a._status() : root._emptyStatus()
+    var a = root._active, all = root._ctxs.map(function(c) { return c._status() })   // each context once (review: perf 3)
+    var s = a ? all[root._ctxs.indexOf(a)] : root._emptyStatus()
+    s = JSON.parse(JSON.stringify(s))                       // the top level is a copy: the instances[] entry stays as it was
     s.activeInstance = root._activeId || null
-    s.instances = root._ctxs.map(function(c) { return c._status() })
-    var total = 0; root._ctxs.forEach(function(c) { total += c._requestsLastMin() })
+    s.instances = all
+    var total = 0; all.forEach(function(x) { total += x.requestsLastMin || 0 })
     s.requestsTotalLastMin = total
     s.bar = { glyph: "U+" + root.bar.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: root.bar.dimmed, active: root.bar.active, tooltip: root.bar.tooltip }   // the shell-wide bar: with the trouble suffix
     return s
@@ -583,7 +584,6 @@ Item {
       backoffSec: ctx._backoffSec, topologyFetched: ctx._topologyLoaded,   // the latch: "loading" is a startup state, not a per-cycle one
       tags: ctx._tags, sensitive: ctx._sensitive, paused: ctx._paused      // Phase 4: names only; never log text; paused feeds the view footer
     })
-    readonly property var bar: Model.barState(ctx.snapshot)
 
       // ---- the panel-facing surface (called through the root) --------------------------------
 
@@ -628,10 +628,17 @@ Item {
         else ctx._warning = null
         if (ctx._needToken || !ctx._ready) { ctx._needToken = false; ctx._resolveToken() }
       }
-      // The config went unsafe, or the context is being released: stop everything, keep nothing.
-      function _halt() {
+      // The config went unsafe: stop polling, keep the store behind the callout, resolve the
+      // token again once the mode is repaired (the pre-Phase-4 unsafe arm; review: code 2).
+      function _suspend() {
         ctx._ready = false
         ctx._needToken = true
+        for (var i = 0; i < ctx._reqs.length; i++) ctx._reqs[i].kill()
+        ctx._syncBusy()
+      }
+      // The context is being released (the shell is going down): stop everything, keep nothing.
+      function _halt() {
+        ctx._suspend()
         ctx._resetStore()
         ctx._token = ""
       }
@@ -656,7 +663,8 @@ Item {
       var key = Model.origin(ctx._instance.url)
       if (key === ctx._recentKey && recentFile.path === ctx.recentPath) return
       ctx._recentKey = key; ctx._recentLoaded = false
-      if (recentFile.path === ctx.recentPath) recentFile.reload(); else recentFile.path = ctx.recentPath
+      if (recentFile.path === ctx.recentPath) recentFile.reload()
+      else { ctx._lastRecentKey = ""; recentFile.path = ctx.recentPath }   // a new file has never seen this list: the unchanged-write guard must not skip it (review: code 1)
     }
     function _loadRecent(text) {         // idempotent: onLoaded may fire more than once
       var r = Model.parseRecent(text, ctx._recentKey, Date.now(), ctx.instId, ctx._index === 0)   // an id-less (pre-Phase-4) file is the first instance's
@@ -1118,7 +1126,7 @@ Item {
         case "tags": break                                   // the fold simply stays as it was
       }
       if (o && o.error && o.error.kind === "ratelimited") ctx._pauseFor(r ? r.headers : null)
-      console.warn("coolwatch " + p.kind + " view failed: " + (o && o.error ? o.error.kind + " http=" + o.error.httpCode + " exit=" + o.error.curlExit : "empty"))
+      console.warn("coolwatch " + ctx.instId + "/" + p.kind + " view failed: " + (o && o.error ? o.error.kind + " http=" + o.error.httpCode + " exit=" + o.error.curlExit : "empty"))
     }
     function _viewDone(p) { p.target = null }
 
@@ -1340,7 +1348,7 @@ Item {
         var bo = ctx._backoff; var a = ((bo[kind] && bo[kind].attempt) || 0) + 1
         bo[kind] = { until: Date.now() + (a <= 1 ? 30 : 60) * 1000, attempt: a }; ctx._backoff = bo
       }
-      console.warn("coolwatch " + kind + " failed: " + e.kind + " http=" + e.httpCode + " exit=" + e.curlExit + " " + e.detail)
+      console.warn("coolwatch " + ctx.instId + "/" + kind + " failed: " + e.kind + " http=" + e.httpCode + " exit=" + e.curlExit + " " + e.detail)
     }
 
     // 429 is instance-wide: pause every timer for Retry-After (clamped) or the ladder.
@@ -1388,7 +1396,7 @@ Item {
     function act(verb, uuid, fromIpc, targetHint, instanceId) {
       // instanceId: the instance the confirm was opened on; a switch in between refuses (SR38).
       if (instanceId !== undefined && instanceId !== null && String(instanceId) !== ctx.instId) return ctx._refuse("wronginstance", verb, uuid)
-      if (!ctx._ready) return ctx._refuse(ctx._error && ctx._error.kind === "unsafe" ? "unsafe" : "notconfigured", verb, uuid)
+      if (!ctx._ready) return ctx._refuse(root._configError && root._configError.kind === "unsafe" ? "unsafe" : "notconfigured", verb, uuid)   // the unsafe mode is the root's error
       if (ctx._probeMode) return ctx._refuse("probe", verb, uuid)
       if (ctx._paused) return ctx._refuse("ratelimited", verb, uuid)
       if (ctx._requestsLastMin() >= 120) return ctx._refuse("toomany", verb, uuid)
@@ -1449,7 +1457,8 @@ Item {
         case "ipcability": ctx._say("Token lacks the " + (ctx._lastAbility || "required") + " permission", "urgent"); token = "refused: token lacks the " + (ctx._lastAbility || "required") + " permission"; break
         default: ctx._say("Nothing to " + verb, "dim")
       }
-      ctx._lastAction = { verb: String(verb || ""), uuid8: u8, code: 0, curlExit: 0, ms: 0, at: Date.now(), result: "refused", instance: ctx.instId }
+      if (why !== "wronginstance")   // a confirm from another instance leaves lastAction as it was (plan step 12; review: skeptic 1)
+        ctx._lastAction = { verb: String(verb || ""), uuid8: u8, code: 0, curlExit: 0, ms: 0, at: Date.now(), result: "refused", instance: ctx.instId }
       console.log("coolwatch action refuse " + why + " " + String(verb || "").slice(0, 16) + " " + u8)
       return token
     }
@@ -1648,7 +1657,7 @@ Item {
               var ia = ctx._inflightAction; ctx._inflightAction = null
               ctx._say("Sent, but Coolify did not answer", "urgent")
               ctx._lastAction = { verb: ia ? ia.verb : "", uuid8: ia ? ia.uuid.slice(0, 8) : "", code: 0, curlExit: 0, ms: 0, at: now, result: "reaped", instance: ctx.instId }
-              console.warn("coolwatch reaped action")
+              console.warn("coolwatch " + ctx.instId + "/action reaped")
               continue
             }
             if (ctx._isViewKind(p.kind)) {
@@ -1656,14 +1665,14 @@ Item {
               ctx._perKind = ctx._perKind
               ctx._viewFail(p, { exit: 28, code: 0, body: "", errmsg: "no answer in time", headers: null })
               ctx._viewDone(p)
-              console.warn("coolwatch reaped " + p.kind)
+              console.warn("coolwatch " + ctx.instId + "/" + p.kind + " reaped")
               continue
             }
             pk.consecutiveFailures += 1
             ctx._perKind = ctx._perKind
             var bo = ctx._backoff; var a = ((bo[p.kind] && bo[p.kind].attempt) || 0) + 1
             bo[p.kind] = { until: now + (a <= 1 ? 30 : 60) * 1000, attempt: a }; ctx._backoff = bo
-            console.warn("coolwatch reaped " + p.kind)
+            console.warn("coolwatch " + ctx.instId + "/" + p.kind + " reaped")
             if (p.kind === "deployment") { ctx._drainDone(false, false); ctx._drainTerminal() }
           }
         }
@@ -1718,7 +1727,7 @@ Item {
         error: ctx._error ? { kind: ctx._error.kind, request: ctx._error.request, httpCode: ctx._error.httpCode, curlExit: ctx._error.curlExit } : null,
         id: ctx.instId,
         warning: ctx._warning ? ctx._warning.kind : null,
-        bar: { glyph: "U+" + ctx.bar.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: ctx.bar.dimmed, active: ctx.bar.active },
+        bar: (function() { var b = Model.barState(ctx.snapshot); return { glyph: "U+" + b.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: b.dimmed, active: b.active } })(),   // computed on demand, not a standing binding (review: perf 6)
         topologyQueue: ctx._topologyQueue.length,
         lastAction: ctx._lastAction,
         pending: Object.keys(ctx._pending).length,
