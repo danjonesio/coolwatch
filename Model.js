@@ -99,7 +99,7 @@ function normaliseConfig(text) {
     // the same Coolify twice is allowed (a read-only second token is the acceptance setup) but
     // every toast and drain runs twice; the callout says so. A URL origin() cannot key (a query
     // or fragment) is never "the same" as another (review: data 4).
-    if (org && Object.prototype.hasOwnProperty.call(origins, org)) { if (!out.instancesWarning) out.instancesWarning = "instances[" + i + "] and instances[" + origins[org] + "] are the same Coolify (" + hostOf(url) + "): notifications arrive twice" }
+    if (org && Object.prototype.hasOwnProperty.call(origins, org)) { if (!out.instancesWarning) out.instancesWarning = "\"" + inst.id + "\" and \"" + out.instances[origins[org]].id + "\" are the same Coolify (" + hostOf(url) + "): notifications arrive twice" }
     else if (org) origins[org] = i
     out.instances.push(inst)
   }
@@ -946,6 +946,7 @@ function barState(s) {
 
 function instanceTroubleOf(x) {
   if (!x) return ""
+  if (x.error === "ability") return "token lacks an ability"          // META.ability is empty by design (the callout composes it)
   if (x.error) return META[x.error] ? META[x.error].replace(/ · .*$/, "").toLowerCase() : "error"
   if (x.failed > 0) return plural(x.failed, "failed build")
   if (x.down > 0) return plural(x.down, "server") + " unreachable"

@@ -54,6 +54,9 @@ Item {
   property var _ctxs: []
   property string _activeId: ""
   readonly property var _active: root._ctxs.filter(function(c) { return c.instId === root._activeId })[0] || root._ctxs[0] || null
+  // A switch while a panel is open is that panel opening on the new instance: its failures
+  // are seen, its tags and topology kicked (review: ux 1).
+  on_ActiveIdChanged: if (root._panelOpen && root._active) { root._active.acknowledgeFailures(); root._active._panelOpened() }
 
   // ---- public: the active context, mirrored -------------------------------------------
 

@@ -40,7 +40,9 @@ No daemon, no second Quickshell, no Python collector. The shell is the runtime.
   returns `queued <verb> <uuid>` or a refusal token (`unknown uuid <uuid>`,
   `not applicable <verb> <uuid>`, `already pending <uuid>`, `busy`, `not configured`,
   `config unsafe`, `rate limited`, `token rejected`, `refused: token lacks the
-  <ability> permission` after three consecutive ability failures from the CLI); the
+  <ability> permission` after three consecutive ability failures from the CLI); Phase 4
+  adds `instances` (`cloud (active), homelab`) and `instance <id>` (`active <id>` or
+  `unknown instance <id>`), and the action verbs resolve against the active instance; the
   outcome is `status.lastAction`. CLI verbs never confirm. The uuid echoed back is
   bounded to 64 characters and one line; the log carries 8.
 - Hot reload: saving under `~/.config/omarchy/plugins/` reloads the plugin. `bin/dev-sync`
@@ -246,8 +248,13 @@ and under 60/min with one deployment. Idle is ≈17/min at 3 projects and 3 serv
   while open, which also re-registers a panel after a service reload once two pings
   arrive within 2.5 s; entries older than 5 s expire, so a destroyed panel or a
   hot-reloaded service cannot pin the fast cadence.
-- A ring of request timestamps backs `status.requestsLastMin`, the number the
-  acceptance test reads.
+- A ring of request timestamps per instance context backs `status.requestsLastMin`
+  (the active instance's) and `status.instances[].requestsLastMin`, the number the
+  acceptance test reads per token; `status.requestsTotalLastMin` sums every context.
+  Every schedule above runs once per configured instance (its own timers, startup ramp,
+  65 s kick and topology fan-out), so N instances cost N times the idle rate on N
+  tokens; the panel-open cadences apply to every context at once because the panel
+  registry is the root's.
 
 ## State model
 
@@ -468,7 +475,7 @@ and dim refusals, 6 s for failures), never the callout, never `_error`, `_backof
 `_probeMode` or `consecutiveFailures`. The one escalation is a 429, which enters the
 instance-wide pause through `_pauseFor` (extracted from `_fail`). A reaped action says
 "Sent, but Coolify did not answer", keeps its pending entry, and is never retried.
-`status` gains `lastAction { verb, uuid8, code, curlExit, ms, at, result }`, `pending`,
+`status` gains `lastAction { verb, uuid8, code, curlExit, ms, at, result, instance }` (`instance` since Phase 4), `pending`,
 `pendingStale`, `actionsLastMin` and `inflightAction`; the log line is
 `coolwatch action <verb> <code> exit=<n> <ms>ms <uuid8>`.
 

@@ -1723,7 +1723,7 @@ test("normaliseConfig: duplicate id, a path-shaped id, a long id and a dotted id
 test("normaliseConfig: the same origin twice is a warning, not an error; configSansNotify drops it", () => {
   const c = M.normaliseConfig({ instances: [{ id: "a", url: "https://app.coolify.io", token: "t" }, { id: "b", url: "https://app.coolify.io/", token: "u" }] })
   eq(c.ok, true); eq(c.instances.length, 2)
-  assert(/instances\[1\] and instances\[0\] are the same Coolify \(app\.coolify\.io\)/.test(c.instancesWarning), c.instancesWarning)
+  assert(/^"b" and "a" are the same Coolify \(app\.coolify\.io\)/.test(c.instancesWarning), c.instancesWarning)   // ids, not positions (review: ux)
   assert(/twice/.test(c.instancesWarning))
   eq(c.warning, "", "the notify warning slot is untouched")
   const d = M.normaliseConfig({ instances: [{ id: "a", url: "https://app.coolify.io", token: "t" }, { id: "b", url: "https://other.example", token: "u" }] })
@@ -1776,6 +1776,7 @@ test("instanceTrouble: names the first non-active instance in trouble, never the
   eq(M.instanceTrouble([{ id: "a", name: "A" }, { id: "b", name: "B", error: "", failed: 0, down: 0 }], "a"), "")
   eq(M.instanceTrouble([{ id: "a" }, { id: "b", name: "B", error: "offline" }], "a"), "B: offline")
   eq(M.instanceTrouble([{ id: "a" }, { id: "b", name: "B", error: "tls" }], "a"), "B: certificate rejected")
+  eq(M.instanceTrouble([{ id: "a" }, { id: "b", name: "B", error: "ability" }], "a"), "B: token lacks an ability")   // review: ux 3
   eq(M.instanceTrouble([{ id: "a" }, { id: "b", name: "B", down: 1 }], "a"), "B: 1 server unreachable")
   eq(M.instanceTrouble([{ id: "a" }, { id: "b", name: "x".repeat(80), error: "http" }], "a").length < 50, true)
 })

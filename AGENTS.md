@@ -122,7 +122,10 @@ Read `docs/roadmap.md` before writing code.
   resources 60 s, servers 120 s, topology one block per 40 s from a â¥600 s cycle, or one
   per 10 s while a panel is open and the first drain has not completed; the 65 s
   `/projects` kick is skipped once it has), â36/min
-  with a deployment; no 60 s window may reach 20 with the panel closed (â 20 with a panel
+  with a deployment; no 60 s window may reach 20 with the panel closed once the service
+  has settled (the first minute after a shell restart holds the startup burst of four
+  kinds at token-ready plus the 65 s `/projects` kick and reached 20 once, measured
+  2026-09-12; â 20 with a panel
   open, â 24 during the first topology drain with a panel open, measured). See the schedule in `docs/architecture.md`.
   Phase 4: while a build runs the deployments interval is byte-stepped (2 s under 256 KB
   of body, then 4 / 8 / 15 s at 256 KB / 1 MB / 4 MB; `Model.deploymentsInterval`); the
@@ -192,13 +195,13 @@ omarchy-shell io.github.danjonesio.coolwatch status
 omarchy-shell io.github.danjonesio.coolwatch status | jq '{baseline, notify, recentPersisted, recentRejected, terminalQueue, drainRetries}'   # Phase 3 fields
 omarchy-shell io.github.danjonesio.coolwatch status | jq '{logView, buildLogsHeld, history, tags, sensitive, dep: (.perKind.deployments | {lastBytes, bytesLastMin, skipped})}'   # Phase 4 fields, counts only
 quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch (notify|recent|drain|logview) '   # unanchored: the log prefixes "DEBUG qml:"
-quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch (buildlog|containerlog|service|history|tags) '   # the view fetches; a failure logs "<kind> view failed: <kind> http=<n>"
+quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [A-Za-z0-9_-]+/(buildlog|containerlog|service|history|tags) '   # the view fetches ("<instance id>/<kind>" since Phase 4); a failure logs "<kind> view failed: <kind> http=<n>"
 omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`; resolves against the active instance only
 omarchy-shell io.github.danjonesio.coolwatch instances                          # -> "cloud (active), homelab"
 omarchy-shell io.github.danjonesio.coolwatch instance homelab                   # -> "active homelab" | "unknown instance homelab"
 omarchy-shell io.github.danjonesio.coolwatch status | jq '{activeInstance, requestsTotalLastMin, instances: [.instances[]|{id, configState, requestsLastMin, sensitive, paused, error}]}'   # Phase 4 instances; top-level keys mirror the active one
 omarchy-shell io.github.danjonesio.coolwatch status | jq '[.instances[]|{id, requestsLastMin}]'   # the rate gate, per token
-quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [a-z0-9_-]+/(deployments|resources|servers) '   # per-request lines carry "<instance id>/<kind>" since Phase 4
+quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [A-Za-z0-9_-]+/(deployments|resources|servers) '   # per-request lines carry "<instance id>/<kind>" since Phase 4 (ids may hold capitals)
 
 # rollback of a Phase 4 instances build to the depth build (a second instances[] entry is validated and ignored by the depth build;
 # recent-<id>.json files are ignored; recent.json's optional id field is ignored by the older parseRecent)
