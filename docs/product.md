@@ -111,7 +111,8 @@ Phases are defined in `docs/roadmap.md`. Every feature below names the API it re
 ## Decisions (Dan, 2026-09-06)
 
 1. **Plugin id** is `io.github.danjonesio.coolwatch`, matching the GitHub handle and the
-   repo `git@github.com:danjonesio/coolwatch.git`.
+   repo `git@github.com:danjonesio/coolwatch.git`. Renamed from `io.github.danjonesio.omarify` / repo `omarify`
+   on 2026-09-12; hard cut, no fallback paths.
 2. **Token storage** supports both forms: `token` inline in the 0600 config file, or
    `tokenCommand` (for example `op read "op://Private/Coolify/credential"`). When both
    are present `tokenCommand` wins.

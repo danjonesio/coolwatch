@@ -7,6 +7,11 @@ through the REST API.
 
 **Status: Phase 3 (notifications and a persisted Recent list) built; Phases 1 (read-only bar icon and panel) and 2 (actions) merged.** See [docs/roadmap.md](docs/roadmap.md).
 
+**Renamed from Omarify on 2026-09-12.** New plugin id `io.github.danjonesio.coolwatch`, config at
+`~/.config/coolwatch/config.json`, state at `~/.local/state/coolwatch/recent.json`. Nothing is read
+from the old paths. If you ran Omarify: `omarchy plugin remove io.github.danjonesio.omarify`, move your
+config file across, then install again.
+
 ## What it will do
 
 - Bar icon that goes active while something is deploying and stays lit after a failure

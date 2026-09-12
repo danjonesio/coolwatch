@@ -14,7 +14,10 @@ Status: **Phase 3 ("notify") built on branch `phase-3-notify`; Phases 1 ("see") 
 ## Product locks
 
 - Plugin id: `io.github.danjonesio.coolwatch`. Repo: `git@github.com:danjonesio/coolwatch.git`.
-  (The older omasnitch id used `danjones`; the GitHub handle is `danjonesio`.)
+  (Was `io.github.danjonesio.omarify` in the `omarify` repo until 2026-09-12. The rename is
+  a **hard cut**: nothing reads `~/.config/omarify/` or `~/.local/state/omarify/`, and the old
+  plugin dir must be removed by hand. The older omasnitch id used `danjones`; the GitHub
+  handle is `danjonesio`.)
 - API first, SSH last. Anything the REST API can answer comes from the REST API. SSH
   is only for Sentinel metrics, Phase 5, opt-in per server.
 - Token abilities are per phase. **Phase 2: `read` + `deploy`.** Coolify's UI has no
@@ -48,8 +51,8 @@ Status: **Phase 3 ("notify") built on branch `phase-3-notify`; Phases 1 ("see") 
 - Every toast is built by `Model.notifyPlan` from the joined snapshot at the end of
   `_finish`: toggles, the eight per-event drops (self-cancel 300 s, pending, action
   window 180 s, active deployment, post-deploy grace 120 s, server down, cooldown 300 s
-  per kind:uuid:event), critical-first ordering, ≤ 3 resource toasts per flush plus one
-  summary, ≤ 12 non-critical per minute; critical is never capped. A `notify`-only
+  per kind:uuid:event), critical-first ordering, â¤ 3 resource toasts per flush plus one
+  summary, â¤ 12 non-critical per minute; critical is never capped. A `notify`-only
   config edit applies live with no store reset; a malformed toggle warns and keeps its
   default. `recent.json` is written from the deployment arm only, never from a property
   change or `_resetStore`; the state dir is created and chmod'ed 0700 before the first write.
@@ -73,7 +76,7 @@ Status: **Phase 3 ("notify") built on branch `phase-3-notify`; Phases 1 ("see") 
   running one (both `POST /deploy`; `d` and IPC `deploy` resolve the same way). Only
   applications get it (`POST /deploy` accepts services and databases but that is Start
   under another name). A left click on a row opens its strip; the buttons are clickable. Open targets the resource's
-  Coolify page, built from the instance origin; never `fqdn`. No page → no Open button.
+  Coolify page, built from the instance origin; never `fqdn`. No page â no Open button.
 - No compensating polls after an action. Pending is a service-owned map applied at
   render time and cleared per verb (deploy/redeploy/restart: the created deployment
   appears, or two deployments polls pass without it; stop/start: the status *state*
@@ -84,18 +87,18 @@ Status: **Phase 3 ("notify") built on branch `phase-3-notify`; Phases 1 ("see") 
 - Look native or do not ship: only `qs.Ui` + `qs.Commons`, no hardcoded colours, sizes,
   radii or font families. `docs/design.md` is the spec, `docs/omarchy-shell-reference.md`
   the component reference.
-- Rate limit is 200 req/min per token. Idle polling is ≈17/min (deployments 4 s,
-  resources 60 s, servers 120 s, topology one block per 40 s from a ≥600 s cycle, or one
+- Rate limit is 200 req/min per token. Idle polling is â17/min (deployments 4 s,
+  resources 60 s, servers 120 s, topology one block per 40 s from a â¥600 s cycle, or one
   per 10 s while a panel is open and the first drain has not completed; the 65 s
-  `/projects` kick is skipped once it has), ≈36/min
-  with a deployment; no 60 s window may reach 20 with the panel closed (≈ 20 with a panel
-  open, ≈ 24 during the first topology drain with a panel open, measured). See the schedule in `docs/architecture.md`.
+  `/projects` kick is skipped once it has), â36/min
+  with a deployment; no 60 s window may reach 20 with the panel closed (â 20 with a panel
+  open, â 24 during the first topology drain with a panel open, measured). See the schedule in `docs/architecture.md`.
 
 ## Layout
 
 ```
 manifest.json      plugin manifest (service + bar-widget)
-Service.qml        polling, state store, actions, diff → notifications, config watch, IPC
+Service.qml        polling, state store, actions, diff â notifications, config watch, IPC
 BarWidget.qml      bar icon states + Panel loader (serviceFor lookup)
 Panel.qml          KeyboardPanel: hero, chips, deployments, servers, resources, actions
 Model.js           pure: parse/normalise/diff/group/label/format (.pragma library)
@@ -149,6 +152,7 @@ quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch (noti
 omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`
 
 # rollback of a Phase 3 build (placement in shell.json survives; a notify{} block and recent.json are ignored by Phase 2; tests/run.js goes back too so bin/check stays green)
+# every commit at or below d194b86 predates the coolwatch rename: files restored from there carry the old id, config/state paths and `omarify …` log prefixes, and bin/dev-sync refuses the target; re-run the rename sweep on anything checked out from before dac3dff
 git checkout b38379c -- manifest.json Service.qml BarWidget.qml Panel.qml Model.js Api.js tests/run.js && bin/dev-sync && omarchy restart shell
 
 # logs
@@ -197,7 +201,7 @@ bin/record-fixture deployments-active /deployments
 - Coolify refreshes stored statuses about once a minute. After an action, show
   "pending" and wait; do not poll the resource faster to compensate.
 - Cloud (`https://app.coolify.io`) has the API always on and no IP allowlist.
-  Self-hosted must enable it in Settings → Advanced.
+  Self-hosted must enable it in Settings â Advanced.
 - No pagination anywhere except app deployment history (`skip`, `take`).
 
 ## Omarchy facts that bite
@@ -223,7 +227,7 @@ bin/record-fixture deployments-active /deployments
   The toast body is `StyledText` (escape `&` and `<`); the summary is PlainText.
   Critical toasts never expire and the notifications plugin replays an open one after a
   shell restart; history keeps the newest 10 across all apps, at 0644, with the argv.
-  `Util.execArgv` is a login shell: ≈ 115 ms per toast.
+  `Util.execArgv` is a login shell: â 115 ms per toast.
 - `FileView` has no mode API and its atomic write is a rename, so the directory is the
   permission control; `mkdir -m` is create-only, so an existing directory needs `chmod`.
   `onLoaded` can fire twice at start; without an `onLoadFailed` branch a missing file
@@ -234,7 +238,7 @@ bin/record-fixture deployments-active /deployments
   rings of bare timestamps.
 - `Util.execArgv` for anything containing data; `bar.run` only for literal strings.
 - `PanelKeyCatcher` owns keys: `x` reaches the panel as `deleteRequested`, Esc as
-  `closeRequested`, `h`/`l` as `moveRequested(±1, 0)`; Return fires both
+  `closeRequested`, `h`/`l` as `moveRequested(Â±1, 0)`; Return fires both
   `returnRequested` and `activateRequested`. Never add a `Keys.onPressed`.
 - `bar.barForeground` for anything painted in the bar strip, `bar.foreground` in panels.
 - `ConfirmDialog` is driven from `PanelKeyCatcher` signals (`handleKey` needs a raw
@@ -271,10 +275,10 @@ bin/record-fixture deployments-active /deployments
 
 ## Docs
 
-- `docs/product.md` — what, for whom, feature map, what the API cannot do, open questions
-- `docs/architecture.md` — runtime contract, config, HTTP client, polling, state, notifications, actions, security
-- `docs/design.md` — bar icon states, panel anatomy, keyboard map, states, notification copy
-- `docs/roadmap.md` — phases with acceptance criteria
-- `docs/coolify-api.md` — API reference distilled from docs + openapi + source (2026-09-06)
-- `docs/omarchy-shell-reference.md` — plugin runtime and `qs.Ui` component catalogue (Omarchy 4.0.0.alpha)
-- `docs/reference/coolify-openapi-v4.3.17.yaml` — the authoritative endpoint list
+- `docs/product.md` â what, for whom, feature map, what the API cannot do, open questions
+- `docs/architecture.md` â runtime contract, config, HTTP client, polling, state, notifications, actions, security
+- `docs/design.md` â bar icon states, panel anatomy, keyboard map, states, notification copy
+- `docs/roadmap.md` â phases with acceptance criteria
+- `docs/coolify-api.md` â API reference distilled from docs + openapi + source (2026-09-06)
+- `docs/omarchy-shell-reference.md` â plugin runtime and `qs.Ui` component catalogue (Omarchy 4.0.0.alpha)
+- `docs/reference/coolify-openapi-v4.3.17.yaml` â the authoritative endpoint list
