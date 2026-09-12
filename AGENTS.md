@@ -175,7 +175,7 @@ BarWidget.qml Panel.qml Model.js Api.js` (+ `Mark.qml`, `preview.png` when they 
 # tests and static checks
 node tests/run.js
 bin/check                        # tests, fixture-secret and PlainText gates, validate of a staged copy, qmllint
-bin/check --no-shell             # the CI-able subset (no omarchy, no Qt)
+bin/check --no-shell             # the CI-able subset (no omarchy, no Qt); GitHub Actions runs it on every push to master and every PR (.github/workflows/check.yml)
 # qmllint only resolves `import qs.Ui` from an import root that contains qs/; bin/check
 # builds one in a temp dir (qs -> /usr/share/omarchy/shell). `-I /usr/share/omarchy/shell`
 # alone resolves nothing and exits 0.

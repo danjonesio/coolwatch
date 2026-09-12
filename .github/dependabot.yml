@@ -7,11 +7,10 @@
 # product, and `gh api repos/danjonesio/coolwatch/deployments` = 0,
 # `.../environments` total_count = 0.
 #
-# github-actions (/): version lane. No workflow exists yet (`ls .github/workflows` is
-# empty; 0 of 0 actions pinned), so this entry is dormant; it is here so that the day a
-# CI workflow lands (`bin/check --no-shell` is the documented CI-able subset) its
-# SHA-pinned actions are watched from the first merge rather than never. Nothing
-# deploys when a workflow file merges. No `commit-message.prefix`: `git log --oneline
+# github-actions (/): version lane. One workflow, .github/workflows/check.yml (added the
+# same day; `bin/check --no-shell`, the documented CI-able subset), with 1 of 1 actions
+# SHA-pinned (actions/checkout v7.0.1): a pin never moves unless this lane watches it.
+# Nothing deploys when a workflow file merges. No `commit-message.prefix`: `git log --oneline
 # -30` uses no conventional prefixes (`phase-4-… step N:`, `docs:`).
 #
 # Not covered, on purpose:
