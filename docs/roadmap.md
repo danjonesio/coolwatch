@@ -34,7 +34,7 @@ Acceptance
   finished within 5 s of Coolify finishing.
 - Idle request rate measured under 20 per minute with the panel closed, and
   separately under 60 with one deployment running, both read from
-  `omarchy-shell io.github.danjonesio.omarify status`'s `requestsLastMin`.
+  `omarchy-shell io.github.danjonesio.coolwatch status`'s `requestsLastMin`.
 - Deleting the config file while running switches the icon to "not configured" without
   a shell restart; restoring it recovers.
 - Revoking the token shows "TOKEN REJECTED"; no token string appears in
@@ -69,7 +69,7 @@ Deliverables
 - Diff-based change detection with baseline-on-start (per poll kind).
 - Notifications for deployment transitions, unexpected resource stops (and recovery),
   server reachability, with per-event toggles, click-to-open, and bounded volume.
-- Recent deployments persisted to `~/.local/state/omarify/recent.json`.
+- Recent deployments persisted to `~/.local/state/coolwatch/recent.json`.
 
 Acceptance
 

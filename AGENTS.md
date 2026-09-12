@@ -2,7 +2,7 @@
 
 Operating notes for anyone (human or agent) working in this repo.
 
-Omarify is a native Omarchy shell plugin for **Coolify** (Cloud and self-hosted). One
+Coolwatch is a native Omarchy shell plugin for **Coolify** (Cloud and self-hosted). One
 bar icon, one panel: servers, projects, resources and their status, running and queued
 deployments, and the actions to deploy, redeploy, restart, stop, start and cancel.
 Notifications when deployments queue, build, finish or fail. It is a Quickshell plugin
@@ -13,7 +13,7 @@ Status: **Phase 3 ("notify") built on branch `phase-3-notify`; Phases 1 ("see") 
 
 ## Product locks
 
-- Plugin id: `io.github.danjonesio.omarify`. Repo: `git@github.com:danjonesio/omarify.git`.
+- Plugin id: `io.github.danjonesio.coolwatch`. Repo: `git@github.com:danjonesio/coolwatch.git`.
   (The older omasnitch id used `danjones`; the GitHub handle is `danjonesio`.)
 - API first, SSH last. Anything the REST API can answer comes from the REST API. SSH
   is only for Sentinel metrics, Phase 5, opt-in per server.
@@ -59,7 +59,7 @@ Status: **Phase 3 ("notify") built on branch `phase-3-notify`; Phases 1 ("see") 
   block because curl resets them at each `next`. stdin is closed with
   `stdinEnabled = false` right after the write, which is what makes curl start. The
   token never goes in argv, never in logs, never in state files.
-- Config lives in `~/.config/omarify/config.json` (0600), not in `shell.json`.
+- Config lives in `~/.config/coolwatch/config.json` (0600), not in `shell.json`.
   `token` or `tokenCommand`. Watched live.
 - Status strings have colons (`running:healthy`). Prefix-match the state; treat bare
   `exited` and `exited:unhealthy` as the same. Deployment terminal states are
@@ -110,9 +110,9 @@ bin/record-fixture curl one endpoint into tests/fixtures/ with secret values scr
 docs/              product, architecture, design, roadmap, API + shell references
 ```
 
-Installed plugin: `~/.config/omarchy/plugins/io.github.danjonesio.omarify/`
-Config: `~/.config/omarify/config.json`
-State: `~/.local/state/omarify/recent.json`
+Installed plugin: `~/.config/omarchy/plugins/io.github.danjonesio.coolwatch/`
+Config: `~/.config/coolwatch/config.json`
+State: `~/.local/state/coolwatch/recent.json`
 Shell source (read only, never edit): `/usr/share/omarchy/shell`
 
 Files that ship into the plugin dir: `manifest.json LICENSE README.md Service.qml
@@ -134,19 +134,19 @@ bin/record-fixture servers /servers   # record a scrubbed GET fixture (POST bodi
 # dev loop (validator refuses symlinks, so copy)
 bin/dev-sync                     # Panel/Bar QML hot-reload sometimes; Service.qml and Panel.qml changes need `omarchy restart shell`
 bin/dev-watch                    # keep syncing on save
-omarchy plugin enable io.github.danjonesio.omarify right   # first time
+omarchy plugin enable io.github.danjonesio.coolwatch right   # first time
 omarchy-shell shell rescanPlugins                          # if not picked up
-omarchy plugin enable io.github.danjonesio.omarify --before omarchy.tray   # re-enable keeping placement
-omarchy plugin remove io.github.danjonesio.omarify         # safe rollback: moves the dir to .<id>.bak.<ts>
+omarchy plugin enable io.github.danjonesio.coolwatch --before omarchy.tray   # re-enable keeping placement
+omarchy plugin remove io.github.danjonesio.coolwatch         # safe rollback: moves the dir to .<id>.bak.<ts>
 # never `omarchy refresh shell`: it resets shell.json to defaults and drops every third-party widget
 
 # drive it
-omarchy-shell shell toggle io.github.danjonesio.omarify
-omarchy-shell io.github.danjonesio.omarify refresh
-omarchy-shell io.github.danjonesio.omarify status
-omarchy-shell io.github.danjonesio.omarify status | jq '{baseline, notify, recentPersisted, recentRejected, terminalQueue, drainRetries}'   # Phase 3 fields
-quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'omarify (notify|recent|drain) '   # unanchored: the log prefixes "DEBUG qml:"
-omarchy-shell io.github.danjonesio.omarify deploy|restart|stop|start <uuid>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`
+omarchy-shell shell toggle io.github.danjonesio.coolwatch
+omarchy-shell io.github.danjonesio.coolwatch refresh
+omarchy-shell io.github.danjonesio.coolwatch status
+omarchy-shell io.github.danjonesio.coolwatch status | jq '{baseline, notify, recentPersisted, recentRejected, terminalQueue, drainRetries}'   # Phase 3 fields
+quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch (notify|recent|drain) '   # unanchored: the log prefixes "DEBUG qml:"
+omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`
 
 # rollback of a Phase 3 build (placement in shell.json survives; a notify{} block and recent.json are ignored by Phase 2; tests/run.js goes back too so bin/check stays green)
 git checkout b38379c -- manifest.json Service.qml BarWidget.qml Panel.qml Model.js Api.js tests/run.js && bin/dev-sync && omarchy restart shell
@@ -165,7 +165,7 @@ Poking the API by hand (token from the config file, never pasted into a shell hi
 
 ```sh
 # token via the shell builtin printf on stdin: never in argv, never in a temp file
-tok=$(jq -r '.instances[0].token' ~/.config/omarify/config.json)
+tok=$(jq -r '.instances[0].token' ~/.config/coolwatch/config.json)
 printf 'url = "%s"\nsilent\nheader = "Authorization: Bearer %s"\nheader = "Accept: application/json"\n' \
   https://app.coolify.io/api/v1/deployments "$tok" | curl -q -S -K - | jq .
 # or, scrubbed straight into a fixture:
@@ -229,7 +229,7 @@ bin/record-fixture deployments-active /deployments
   `onLoaded` can fire twice at start; without an `onLoadFailed` branch a missing file
   is never created. `Req.arg` is the Api descriptor list `_finish`/`_dispatch` index;
   per-request bookkeeping goes on its own property (`deploymentReq.inflight`).
-- The quickshell log prefixes every line with `DEBUG qml:`; grep `omarify notify `
+- The quickshell log prefixes every line with `DEBUG qml:`; grep `coolwatch notify `
   unanchored. `_notifyLog`, `_actionLog` and `_requestLog` are filter-push-reassign
   rings of bare timestamps.
 - `Util.execArgv` for anything containing data; `bar.run` only for literal strings.
@@ -267,7 +267,7 @@ bin/record-fixture deployments-active /deployments
 - Don't route an action result through `_fail` (not even its 429 arm), and don't store
   objects in `_requestLog` (both filters subtract bare timestamps).
 - Don't let the panel or a reviewer run `bin/dev-sync` or any `--delete` tool against a
-  real path; staging is `OMARIFY_DEST=$(mktemp -d)/plugin`.
+  real path; staging is `COOLWATCH_DEST=$(mktemp -d)/plugin`.
 
 ## Docs
 

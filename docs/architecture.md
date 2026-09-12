@@ -7,7 +7,7 @@ Coolify Cloud / self-hosted        REST, Bearer token, 200 req/min
         ▼
 Service.qml        one instance for the whole shell; owns polling, state, actions,
   │                change detection, notifications, config file watch
-  │  bar.shell.serviceFor("io.github.danjonesio.omarify")
+  │  bar.shell.serviceFor("io.github.danjonesio.coolwatch")
   ├── BarWidget.qml   one per monitor; icon + tooltip; loads Panel.qml
   └── Panel.qml       KeyboardPanel anchored to the icon; reads service state,
                       calls service actions; all rendering from qs.Ui + qs.Commons
@@ -30,10 +30,10 @@ No daemon, no second Quickshell, no Python collector. The shell is the runtime.
 - The widget finds the service with `bar.shell.serviceFor(moduleName)` (the media
   widget and omasnitch do exactly this). The panel gets the same object handed down by
   `injectPanel()` and falls back to the lookup.
-- `omarchy-shell shell summon|hide|toggle io.github.danjonesio.omarify` is routed to
+- `omarchy-shell shell summon|hide|toggle io.github.danjonesio.coolwatch` is routed to
   the bar widget's `open()`, `close()`, `opened` because the plugin has no panel kind.
   The payload is dropped on that path, so no feature depends on it.
-- The service registers `IpcHandler { target: "io.github.danjonesio.omarify" }` with
+- The service registers `IpcHandler { target: "io.github.danjonesio.coolwatch" }` with
   `refresh` and `status` (Phase 1; `status` returns fixed-shape JSON with counts,
   per-kind timings and the rolling request count, never a secret, body or URL).
   Phase 2 adds `deploy <uuid>`, `restart <uuid>`, `stop <uuid>`, `start <uuid>`: each
@@ -51,7 +51,7 @@ No daemon, no second Quickshell, no Python collector. The shell is the runtime.
 Secrets and behaviour live in one file the plugin owns, not in `shell.json`, because
 `shell.json` is a layout file that tools like omardan print, diff and rewrite.
 
-`~/.config/omarify/config.json`, mode `0600` in a `0700` directory the service creates, watched with two `FileView`s (file and directory):
+`~/.config/coolwatch/config.json`, mode `0600` in a `0700` directory the service creates, watched with two `FileView`s (file and directory):
 
 ```json
 {
@@ -257,7 +257,7 @@ byServer:  { serverUuid: [resourceUuid…] }
   `git_branch`, else the first seven characters of the commit.
 - `recent` keeps the last 20 terminal deployments in memory (the panel renders the
   newest 5 under an hour old). Phase 3 persists them to
-  `~/.local/state/omarify/recent.json` (`$XDG_STATE_HOME` honoured):
+  `~/.local/state/coolwatch/recent.json` (`$XDG_STATE_HOME` honoured):
   `{ version: 1, instance: <Model.origin(url)>, savedAt, recent: [ { uuid, status, appId,
   appName, serverName, commit, commitMessage, createdAt, updatedAt, finishedAt, url,
   restartOnly, force, isApi, isWebhook } ] }`. Written only from the `deployment` arm of
@@ -315,7 +315,7 @@ prevents a replay.
 indexes); `_drainDone`, called from `_finish` and the reaper before the next drain,
 re-queues the uuid at the back on any outcome but a dispatched record or a 404 (empty stream, 5xx, 429, reap, a 200 whose body is not JSON or carries no `deployment_uuid`),
 at most twice per uuid (`_drainTries`), honouring the existing `deployment` backoff and
-pause; a 404 drops it (`omarify drain 404`). A failed drain therefore stalls the queue for
+pause; a 404 drops it (`coolwatch drain 404`). A failed drain therefore stalls the queue for
 the existing 30/60 s backoff and a Deployed toast can arrive up to ~90 s late; the retry
 adds ≤ 2 requests per uuid and cannot burst. `status.drainRetries` counts them.
 
@@ -361,7 +361,7 @@ the only sender the shell shows through DND (`NotificationLogic.js:118-122`; the
 archives it to history as that sender). DND is read from
 `shell.serviceFor("omarchy.notifications").doNotDisturb`; `null` (service unreachable)
 counts as off and `status.notify.dnd` reports it. The copy table is in `docs/design.md`.
-Log lines are `omarify notify <event> <uuid8>` at intent (a detached process cannot
+Log lines are `coolwatch notify <event> <uuid8>` at intent (a detached process cannot
 report success), never a name, message or URL. Names, branches, commit messages and the
 instance URL appear in the notifier's argv and in the shell's 0644 history files by
 design; the token never does. Resource-stop latency is 0–120 s with the panel closed
@@ -415,7 +415,7 @@ instance-wide pause through `_pauseFor` (extracted from `_fail`). A reaped actio
 "Sent, but Coolify did not answer", keeps its pending entry, and is never retried.
 `status` gains `lastAction { verb, uuid8, code, curlExit, ms, at, result }`, `pending`,
 `pendingStale`, `actionsLastMin` and `inflightAction`; the log line is
-`omarify action <verb> <code> exit=<n> <ms>ms <uuid8>`.
+`coolwatch action <verb> <code> exit=<n> <ms>ms <uuid8>`.
 
 Ability errors are surfaced as text, not swallowed: "Token lacks the deploy
 permission" tells the user exactly what to add in Coolify. IPC-originated actions are
@@ -494,7 +494,7 @@ refused after three consecutive ability failures until a 2xx or a config change.
     `notify`-only edit never resets the store.
 25. (plan SR23) DND honesty: `omarchy-action` only when `urgency === "critical"` and the
     service read `doNotDisturb === true` from the shell; `null` means the plugin id.
-26. (plan SR24) Verification hygiene: staging only via `OMARIFY_DEST`, no `--delete` tool
+26. (plan SR24) Verification hygiene: staging only via `COOLWATCH_DEST`, no `--delete` tool
     against a real path, the token needle check fails loudly when the needle is empty.
 
 ## Testing
@@ -525,7 +525,7 @@ refused after three consecutive ability failures until a 2xx or a config change.
 
 | Path | Purpose |
 |---|---|
-| `~/.config/omarify/config.json` | instances, tokens, poll and notify settings (0600 in a 0700 directory) |
-| `~/.local/state/omarify/recent.json` | recent terminal deployments, survives restarts; the directory is created and chmod'ed 0700 by the service (`mkdir -m` is create-only), the file is umask-mode |
-| `~/.config/omarchy/plugins/io.github.danjonesio.omarify/` | installed plugin files |
+| `~/.config/coolwatch/config.json` | instances, tokens, poll and notify settings (0600 in a 0700 directory) |
+| `~/.local/state/coolwatch/recent.json` | recent terminal deployments, survives restarts; the directory is created and chmod'ed 0700 by the service (`mkdir -m` is create-only), the file is umask-mode |
+| `~/.config/omarchy/plugins/io.github.danjonesio.coolwatch/` | installed plugin files |
 | `~/.config/omarchy/shell.json` | bar placement and display-only widget settings |

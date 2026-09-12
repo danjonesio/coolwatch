@@ -566,7 +566,7 @@ test("Model.appLabel / uuid8: Coolify suffix stripped, plain names kept, empty -
 const NAPP = "h0wxyg40kc0lz727dom9l03i"          // joined: project + environment + server
 const NSRV = "qo4go8kswocog0gg0ckk8kk8"          // hetzner-1
 function nctx(o) {
-  return Object.assign({ notify: M.notifyDefaults(), origin: "https://app.coolify.io", dnd: false, pending: {}, actionAt: {}, lastNotified: {}, sentLastMin: 0, now: NOW, pluginId: "io.github.danjonesio.omarify" }, o || {})
+  return Object.assign({ notify: M.notifyDefaults(), origin: "https://app.coolify.io", dnd: false, pending: {}, actionAt: {}, lastNotified: {}, sentLastMin: 0, now: NOW, pluginId: "io.github.danjonesio.coolwatch" }, o || {})
 }
 function nsnap(o) {
   const s = loadedSnap({ deployments: [], recent: [] })
@@ -660,11 +660,11 @@ test("Model.notifyPlan: argv shape, argv[0], --exec last, body omitted, app-name
   }
   const byHead = {}; p.argvs.forEach(a => { byHead[a[7]] = a })
   eq(byHead["Deployment failed: storefront"][2], "omarchy-action", "critical under DND"); eq(byHead["hetzner-1 unreachable"][2], "omarchy-action")
-  eq(byHead["Deployed storefront"][2], "io.github.danjonesio.omarify", "non-critical keeps the plugin id under DND"); eq(byHead["hetzner-1 reachable"][2], "io.github.danjonesio.omarify")
+  eq(byHead["Deployed storefront"][2], "io.github.danjonesio.coolwatch", "non-critical keeps the plugin id under DND"); eq(byHead["hetzner-1 reachable"][2], "io.github.danjonesio.coolwatch")
   eq(byHead["hetzner-1 reachable"].length, 11, "empty body omitted: 8 + exec triple")
   for (const d of [false, null]) {
     const q = M.notifyPlan(evs, s, nctx({ dnd: d }))
-    assert(q.argvs.every(a => a[2] === "io.github.danjonesio.omarify"), "plugin id when dnd=" + d)
+    assert(q.argvs.every(a => a[2] === "io.github.danjonesio.coolwatch"), "plugin id when dnd=" + d)
   }
   const noUrl = M.notifyPlan([{ kind: "deployment", event: "finished", uuid: "u1", obj: dep({ uuid: "u1", status: "finished", url: null }) }], s, nctx())
   eq(noUrl.argvs[0].indexOf("--exec"), -1); eq(noUrl.argvs[0][7], "Deployed api")
@@ -745,8 +745,8 @@ test("Model.notifyPlan: critical-first ordering, resource cap + summary, minute 
 
 test("Model.notifyPlan: log lines are event + uuid8 only; a hostile uuid cannot forge a line (SR15)", () => {
   const s = nsnap()
-  const p = M.notifyPlan([stopEv(NAPP), stopEv("ab\nomarify notify forged aaaaaaaa")], s, nctx())
-  eq(p.log.length, 2); eq(p.log[0], "stopped h0wxyg40"); eq(p.log[1].indexOf("\n"), -1); eq(p.log[1], "stopped abomarif")
+  const p = M.notifyPlan([stopEv(NAPP), stopEv("ab\ncoolwatch notify forged aaaaaaaa")], s, nctx())
+  eq(p.log.length, 2); eq(p.log[0], "stopped h0wxyg40"); eq(p.log[1].indexOf("\n"), -1); eq(p.log[1], "stopped abcoolwa")
   for (const l of p.log) assert(l.indexOf("refresh") < 0 && l.indexOf("hetzner") < 0, "no names")
 })
 
@@ -800,16 +800,16 @@ test("Model.barState: all 14 rows (glyph, dimmed, active, tooltip)", () => {
   const G = M.G
   function st(o) { return M.barState(snap(o)) }
   let b = st({ error: M.makeError("noconfig") }); eq(b.glyph, G.cloudOutline); eq(b.dimmed, true); eq(b.active, false); assert(/no config at/.test(b.tooltip))
-  b = st({ error: M.makeError("configerror", "bad\nmore") }); eq(b.glyph, G.cloudAlert); eq(b.tooltip, "Omarify — config error: bad more")
+  b = st({ error: M.makeError("configerror", "bad\nmore") }); eq(b.glyph, G.cloudAlert); eq(b.tooltip, "Coolwatch — config error: bad more")
   b = st({ error: M.makeError("unsafe") }); eq(b.glyph, G.cloudAlert); assert(/writable/.test(b.tooltip))
-  b = st({ error: M.makeError("tokencmd", "", { curlExit: 1 }) }); eq(b.glyph, G.cloudAlert); eq(b.tooltip, "Omarify — token command failed (exit 1)")
+  b = st({ error: M.makeError("tokencmd", "", { curlExit: 1 }) }); eq(b.glyph, G.cloudAlert); eq(b.tooltip, "Coolwatch — token command failed (exit 1)")
   b = st({ error: M.makeError("waitingtoken") }); eq(b.glyph, G.cloud); eq(b.dimmed, true); assert(/waiting/.test(b.tooltip))
-  b = st({ error: M.makeError("auth") }); eq(b.glyph, G.cloudAlert); eq(b.tooltip, "Omarify — token rejected")
+  b = st({ error: M.makeError("auth") }); eq(b.glyph, G.cloudAlert); eq(b.tooltip, "Coolwatch — token rejected")
   b = st({ error: M.makeError("apidisabled") }); eq(b.glyph, G.cloudAlert); assert(/API disabled/.test(b.tooltip))
   b = st({ error: M.makeError("ipblocked") }); eq(b.glyph, G.cloudAlert); assert(/IP/.test(b.tooltip))
   b = st({ error: M.makeError("offline") }); eq(b.glyph, G.cloudOff); eq(b.dimmed, true); assert(/offline/.test(b.tooltip))
-  b = st({ error: M.makeError("ratelimited"), backoffSec: 30 }); eq(b.glyph, G.cloud); eq(b.tooltip, "Omarify — rate limited, backing off 30s")
-  b = st({ baselineDone: false }); eq(b.glyph, G.cloud); eq(b.dimmed, true); eq(b.tooltip, "Omarify — starting")
+  b = st({ error: M.makeError("ratelimited"), backoffSec: 30 }); eq(b.glyph, G.cloud); eq(b.tooltip, "Coolwatch — rate limited, backing off 30s")
+  b = st({ baselineDone: false }); eq(b.glyph, G.cloud); eq(b.dimmed, true); eq(b.tooltip, "Coolwatch — starting")
   b = st({ failedUnacked: ["f1", "f2"], recent: [{ uuid: "f1", appName: "api", status: "failed" }] }); eq(b.glyph, G.failed); eq(b.active, true); eq(b.dimmed, false); eq(b.tooltip, "Deployment failed: api +1 more")
   b = st({ servers: [{ uuid: "s", name: "web-1", reachable: false, disabled: false }, { uuid: "t", name: "web-2", reachable: false, disabled: false }] }); eq(b.glyph, G.cloudOff); eq(b.active, true); eq(b.tooltip, "web-1 unreachable +1 more")
   b = st({ deployments: [{ uuid: "d", appName: "api", status: "in_progress" }] }); eq(b.glyph, G.progress); eq(b.active, true); eq(b.tooltip, "Deploying api")

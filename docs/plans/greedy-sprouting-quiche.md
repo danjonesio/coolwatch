@@ -1,14 +1,14 @@
-# Omarify Phase 1 — "see" (read-only bar icon + panel)
+# Coolwatch Phase 1 — "see" (read-only bar icon + panel)
 
-Repo `/home/danjones/Projects/omarify`, branch `master`, 0 commits. Dan merges. Build with `/deej-stack:d-implement`.
+Repo `/home/danjones/Projects/coolwatch`, branch `master`, 0 commits. Dan merges. Build with `/deej-stack:d-implement`.
 
 ## Context
 
-Omarify is a Quickshell plugin for the Omarchy shell that shows Coolify state in the bar. The repo holds only docs (`AGENTS.md`, `docs/*.md`, `README.md`, `LICENSE`, `.gitignore`); every shipping file is unwritten. `docs/roadmap.md:13-38` defines Phase 1: config loading, a curl-over-stdin client, polling, a bar icon, a read-only panel, node tests, and dev scripts.
+Coolwatch is a Quickshell plugin for the Omarchy shell that shows Coolify state in the bar. The repo holds only docs (`AGENTS.md`, `docs/*.md`, `README.md`, `LICENSE`, `.gitignore`); every shipping file is unwritten. `docs/roadmap.md:13-38` defines Phase 1: config loading, a curl-over-stdin client, polling, a bar icon, a read-only panel, node tests, and dev scripts.
 
 The planning panel found that the docs, taken literally, would ship a plugin that fails its own acceptance list: the documented polling schedule exceeds both request budgets (21.2/min idle, 70.6/min with one deployment against `docs/roadmap.md:33`'s < 20 and < 60), `curl -K -` blocks until stdin EOF and the documented client never closes stdin, the curl config text is injectable from API-supplied strings, the documented `qmllint` line resolves nothing and exits 0, and several panel fields have no data source in the scheduled endpoints. A second pass found that curl's per-transfer options (write-out, timeouts, size cap, protocol allowlist) reset at every `--next`, so a batched request must carry them inside every config block. This plan fixes each with evidence and reconciles the docs so they stay the spec.
 
-**Outcome.** After `bin/dev-sync` and `omarchy plugin enable io.github.danjonesio.omarify right`, a cloud icon sits in the bar on every monitor. Within 10 s it reflects Dan's Coolify Cloud account: dimmed cloud-outline when unconfigured, dimmed alert-cloud when the token is rejected, urgent progress-clock while something deploys, urgent close-circle after a failure until a panel is opened. Clicking opens a native panel: hero (instance name, version, counts), DEPLOYMENTS, SERVERS, RESOURCES grouped by project or by server, refresh, keyboard cursor, footer hints. Nothing acts on Coolify and nothing notifies. `bin/check` is green and each of its gates has been seen to fail.
+**Outcome.** After `bin/dev-sync` and `omarchy plugin enable io.github.danjonesio.coolwatch right`, a cloud icon sits in the bar on every monitor. Within 10 s it reflects Dan's Coolify Cloud account: dimmed cloud-outline when unconfigured, dimmed alert-cloud when the token is rejected, urgent progress-clock while something deploys, urgent close-circle after a failure until a panel is opened. Clicking opens a native panel: hero (instance name, version, counts), DEPLOYMENTS, SERVERS, RESOURCES grouped by project or by server, refresh, keyboard cursor, footer hints. Nothing acts on Coolify and nothing notifies. `bin/check` is green and each of its gates has been seen to fail.
 
 ## Brief
 
@@ -26,7 +26,7 @@ The planning panel found that the docs, taken literally, would ship a plugin tha
 
 Runtime (verified by the panel against `/usr/share/omarchy/shell`, Quickshell 0.3.1 qmltypes and the `quickshell` binary):
 
-- `shell.qml:302-307` injects only `omarchyPath, shell, manifest, barWidgetRegistry, pluginRegistry` into a service. No `settings`, no `bar`. Poll intervals come from `~/.config/omarify/config.json`. `setting()` exists only on `Ui/BarWidget.qml:41` and `Ui/Panel.qml:39`.
+- `shell.qml:302-307` injects only `omarchyPath, shell, manifest, barWidgetRegistry, pluginRegistry` into a service. No `settings`, no `bar`. Poll intervals come from `~/.config/coolwatch/config.json`. `setting()` exists only on `Ui/BarWidget.qml:41` and `Ui/Panel.qml:39`.
 - `shell.qml:275` `serviceFor(pluginId)` returns the service to any caller with no check. `shell.qml:337-343` destroys the service and reassigns `_services` on disable or reload, so `serviceFor` can return null while a bar widget on another monitor is alive. `Component.onDestruction` must stop timers and processes.
 - `Quickshell.Io.Process` exposes `write(QString)`, `signal(int)`, `stdinEnabled`, `environment`, and no `closeStdin()` (`/usr/lib/qt6/qml/Quickshell/Io/quickshell-io.qmltypes:95-183`). **Disassembly of `/usr/bin/quickshell` shows the `stdinEnabled` property setter calls `QProcess::closeWriteChannel()` when set to false on a live process**, and `startProcessIfReady` re-honours the flag on the next start. So `write(cfg); stdinEnabled = false` delivers EOF. `curl -K -` does block until EOF (measured: exit 124 under `timeout 2`).
 - `StdioCollector` and `Process` have no `parent` property (they are not `Item`s). `parent.x` inside them resolves to the service root's parent. Every first-party handler writes to an `id` (`plugins/panels/dropbox/Service.qml:220-232` reads `statusStdout.text` in `onExited`).
@@ -46,7 +46,7 @@ Runtime (verified by the panel against `/usr/share/omarchy/shell`, Quickshell 0.
 - curl 8.21.0: global options are only `--fail-early --libcurl --parallel* --progress-bar --rate --show-error --stderr --styled-output --trace* --verbose`; everything else (`-w`, `-s`, `--max-time`, `--connect-timeout`, `--max-filesize`, `--proto`, headers) resets at each `next` and must be repeated per config block. `-w` in argv after `-K -` emits one trailer for the whole batch. A `write-out = "…"` line per block emits one trailer per transfer, including failed ones; `%{exitcode}` and `%{errormsg}` are available per transfer. `%{header_json}` is multi-line and includes `set-cookie`. Raw 0x1E/0x1F bytes inside a quoted config value survive verbatim (`\x1e` is not a config escape). Config double-quote escapes are `\\ \" \t \n \r \v`. `-q` must be argv[1] to skip `~/.curlrc`. `--expand-header` and `--variable` exist (undocumented in `--help all`).
 - `nmcli` exists, so `nmcli networking off` would drop the machine's SSH and browser sessions; curl exit 7 is reachable with `url: https://127.0.0.1:9`.
 - Fonts: `◐` U+25D0 is absent from JetBrainsMono Nerd Font (falls back to Liberation Sans). `U+F015F` `md-cloud` (filled), `U+F0163` `md-cloud_outline`, `U+F0164` `md-cloud_off_outline`, `U+F09E0` `md-cloud_alert`, `U+F0159` `md-close_circle`, `U+F0996` `md-progress_clock`, `U+F1396` `md-circle_half_full`, `U+F0765/F0766/F09DF` circles; all present at advance 600.
-- Machine: 3 monitors, node v26.8.1 via mise (not on a non-interactive PATH), jq/inotifywait/rsync/flock at `/usr/bin`, Omarchy `4.0.0.alpha`, `~/.config/omarchy/shell.toml` exists with Dan's `[font] base-size = 11`. `~/.config/omarify/` and the plugin dir do not exist. `/run/user/1000/op-daemon.sock` exists (1Password).
+- Machine: 3 monitors, node v26.8.1 via mise (not on a non-interactive PATH), jq/inotifywait/rsync/flock at `/usr/bin`, Omarchy `4.0.0.alpha`, `~/.config/omarchy/shell.toml` exists with Dan's `[font] base-size = 11`. `~/.config/coolwatch/` and the plugin dir do not exist. `/run/user/1000/op-daemon.sock` exists (1Password).
 
 Coolify API (`docs/coolify-api.md` cross-checked with `docs/reference/coolify-openapi-v4.3.17.yaml`):
 
@@ -71,7 +71,7 @@ BarIconButton {
   keepSpace: true
   dimmed: svc ? svc.bar.dimmed : true
   active: svc ? svc.bar.active : false
-  tooltipText: svc ? svc.bar.tooltip : "Omarify — starting"
+  tooltipText: svc ? svc.bar.tooltip : "Coolwatch — starting"
   onPressed: function(b) { if (b === Qt.LeftButton) root.toggle() }
 }
 ```
@@ -95,13 +95,13 @@ function refresh()
 ```
 
 ```sh
-omarchy-shell io.github.danjonesio.omarify refresh
-omarchy-shell io.github.danjonesio.omarify status | jq '{requestsLastMin, openPanels, error}'
+omarchy-shell io.github.danjonesio.coolwatch refresh
+omarchy-shell io.github.danjonesio.coolwatch status | jq '{requestsLastMin, openPanels, error}'
 ```
 
 ### Data shapes
 
-`~/.config/omarify/config.json` (0600 in a 0700 directory). `Model.normaliseConfig(json) -> {ok, error, instances[], poll{}}`:
+`~/.config/coolwatch/config.json` (0600 in a 0700 directory). `Model.normaliseConfig(json) -> {ok, error, instances[], poll{}}`:
 
 ```json
 { "version": 1,
@@ -151,15 +151,15 @@ Bar state (`Model.barState(snapshot) -> {glyph, dimmed, active, tooltip}`), firs
 
 | # | state | selector | glyph | dimmed | active | tooltip |
 |---|---|---|---|---|---|---|
-| 1 | not configured | `error.kind === "noconfig"` | `󰅜` F0163 | yes | no | `Omarify — no config at ~/.config/omarify/config.json` |
-| 2 | config error / unsafe | `configerror`, `unsafe` | `󰦠` F09E0 | yes | no | `Omarify — config error: <first line>` / `Omarify — config is writable by others` |
-| 3 | token unavailable | `tokencmd` | `󰦠` | yes | no | `Omarify — token command failed (exit N)` |
-| 4 | waiting for token | `waitingtoken` | `󰅟` F015F | yes | no | `Omarify — waiting for token command` |
-| 5 | token rejected | `auth` | `󰦠` | yes | no | `Omarify — token rejected` |
-| 6 | API disabled / IP blocked | `apidisabled`, `ipblocked` | `󰦠` | yes | no | `Omarify — API disabled on this instance` / `Omarify — this IP is not allowed` |
-| 7 | offline | `offline` | `󰅤` F0164 | yes | no | `Omarify — offline, retrying` |
-| 8 | rate limited | `ratelimited` | `󰅟` | yes | no | `Omarify — rate limited, backing off Ns` |
-| 9 | starting | `!baselineDone && !error` | `󰅟` | yes | no | `Omarify — starting` |
+| 1 | not configured | `error.kind === "noconfig"` | `󰅜` F0163 | yes | no | `Coolwatch — no config at ~/.config/coolwatch/config.json` |
+| 2 | config error / unsafe | `configerror`, `unsafe` | `󰦠` F09E0 | yes | no | `Coolwatch — config error: <first line>` / `Coolwatch — config is writable by others` |
+| 3 | token unavailable | `tokencmd` | `󰦠` | yes | no | `Coolwatch — token command failed (exit N)` |
+| 4 | waiting for token | `waitingtoken` | `󰅟` F015F | yes | no | `Coolwatch — waiting for token command` |
+| 5 | token rejected | `auth` | `󰦠` | yes | no | `Coolwatch — token rejected` |
+| 6 | API disabled / IP blocked | `apidisabled`, `ipblocked` | `󰦠` | yes | no | `Coolwatch — API disabled on this instance` / `Coolwatch — this IP is not allowed` |
+| 7 | offline | `offline` | `󰅤` F0164 | yes | no | `Coolwatch — offline, retrying` |
+| 8 | rate limited | `ratelimited` | `󰅟` | yes | no | `Coolwatch — rate limited, backing off Ns` |
+| 9 | starting | `!baselineDone && !error` | `󰅟` | yes | no | `Coolwatch — starting` |
 | 10 | failed, unacknowledged | `failedUnacked.length > 0` | `󰅙` F0159 | no | **yes** | `Deployment failed: <app>` (+ ` +N more`) |
 | 11 | server unreachable | any `!reachable && !disabled` | `󰅤` | no | **yes** | `<server> unreachable` (+ ` +N more`) |
 | 12 | deploying | any deployment `queued`/`in_progress` | `󰦖` F0996 | no | **yes** | `Deploying <app>` / `N deployments running` |
@@ -172,10 +172,10 @@ Callout copy (`Model.callout(snapshot) -> null | { title, body }`; null when hea
 
 | kind | body |
 |---|---|
-| `noconfig` | `Create ~/.config/omarify/config.json (chmod 600):` + the three-line sample from `docs/design.md:173` |
+| `noconfig` | `Create ~/.config/coolwatch/config.json (chmod 600):` + the three-line sample from `docs/design.md:173` |
 | `configerror` | the parse or validation error, plain text |
-| `unsafe` | `Anyone on this machine can rewrite it. Run: chmod 600 ~/.config/omarify/config.json` |
-| `permissions` (warning) | `Anyone on this machine can read your token. Run: chmod 600 ~/.config/omarify/config.json` |
+| `unsafe` | `Anyone on this machine can rewrite it. Run: chmod 600 ~/.config/coolwatch/config.json` |
+| `permissions` (warning) | `Anyone on this machine can read your token. Run: chmod 600 ~/.config/coolwatch/config.json` |
 | `plaintext` (warning) | `This instance is http://, so the token crosses the network in the clear.` |
 | `tokencmd` | `The token command exited <n>. Its output is never logged; run it yourself to see why.` |
 | `waitingtoken` | `Running the token command…` |
@@ -294,7 +294,7 @@ readonly property var snapshot
 readonly property var bar                    // Model.barState(snapshot)
 function refresh()
 function panelOpened(id) / panelClosed(id) / panelAlive(id)   // registry; entries expire after 5 s without alive
-IpcHandler { target: "io.github.danjonesio.omarify"
+IpcHandler { target: "io.github.danjonesio.coolwatch"
   function refresh(): string                 // "ok"
   function status(): string }                // JSON, fixed keys, no secrets, no bodies, no URLs
 ```
@@ -480,7 +480,7 @@ Not reused, with reason: `plugins/panels/weather/Panel.qml:641-673` spinner (`Bu
 9. **IPC surface**: only `refresh` and `status`; `status` is the fixed JSON above. Step 7.
 10. **Rich-text injection**: every `Text` in `Panel.qml` and `BarWidget.qml` sets `textFormat: Text.PlainText`; `bin/check` counts occurrences of `Text {` and `textFormat: Text.PlainText` per file, requires both > 0 and equal (advisory smoke gate; the real guarantee is review in step 9). Step 1, 9.
 11. **Fixtures**: recorded via `bin/record-fixture`, which pipes the config through the shell builtin `printf` into `curl -q -S -K -` and replaces (never deletes) values of denylisted keys with `«scrubbed»`: `internal_db_url external_db_url docker_compose docker_compose_raw dockerfile git_full_url private_key sentinel_token value custom_labels configuration_snapshot configuration_diff logs` plus `_token$|_password$|_secret$|_key$`. `bin/check` fails closed if the fixtures dir is missing, on any match of `[0-9]+\|[A-Za-z0-9]{20,}`, `BEGIN .*PRIVATE KEY`, `://[^/]*:[^@/]*@`, or the literal keys `"configuration_snapshot"`, `"logs"`. Step 1, 5.
-12. **Dev sync**: explicit allowlist; refuses a target containing `.git`, a `manifest.json` with a different id, or a path outside `~/.config/omarchy/plugins/` and `$TMPDIR`; `flock` around the sync; never touches `~/.config/omarify/`. Step 1.
+12. **Dev sync**: explicit allowlist; refuses a target containing `.git`, a `manifest.json` with a different id, or a path outside `~/.config/omarchy/plugins/` and `$TMPDIR`; `flock` around the sync; never touches `~/.config/coolwatch/`. Step 1.
 13. **Verification hygiene**: the token prefix never appears in argv or shell history; greps read the needle via process substitution (`grep -cFf <(jq -r '.instances[0].token // empty' … | cut -c1-12)`). Steps 3, 7, Verification.
 
 ## Changes
@@ -491,9 +491,9 @@ Files: `bin/check`, `bin/dev-sync`, `bin/dev-watch`, `bin/record-fixture`, `test
 
 `bin/dev-sync` (bash, `set -euo pipefail`):
 ```sh
-id=io.github.danjonesio.omarify
+id=io.github.danjonesio.coolwatch
 root=$(cd "$(dirname "$0")/.." && pwd)
-dest=${OMARIFY_DEST:-$HOME/.config/omarchy/plugins/$id}
+dest=${COOLWATCH_DEST:-$HOME/.config/omarchy/plugins/$id}
 fail() { echo "dev-sync: $*" >&2; exit 1; }
 case $dest in "$HOME/.config/omarchy/plugins/"*|"${TMPDIR:-/tmp}"/*) ;; *) fail "refusing target outside plugins dir or TMPDIR: $dest";; esac
 [[ -d $dest/.git ]] && fail "$dest is a git checkout (omarchy plugin remove $id first)"   # non-final && is set-e safe
@@ -506,7 +506,7 @@ mkdir -p "$dest"; exec 9>"$dest.lock"; flock 9
 stage=$(mktemp -d); trap 'rm -rf "$stage"' EXIT
 for f in "${files[@]}"; do install -m 0644 "$root/$f" "$stage/$f"; done
 rsync -a --delete "$stage/" "$dest/"
-if [[ -z ${OMARIFY_DEST:-} && $existed -eq 0 ]]; then omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true; fi
+if [[ -z ${COOLWATCH_DEST:-} && $existed -eq 0 ]]; then omarchy-shell shell rescanPlugins >/dev/null 2>&1 || true; fi
 ```
 `rescanPlugins` only on first creation: after that the shell's own inotify watch reloads the plugin, and a rescan reloads every plugin.
 
@@ -532,7 +532,7 @@ if compgen -G "$root/*.qml" >/dev/null && grep -nE '#[0-9a-fA-F]{3,8}\b|font\.fa
 [[ ${1:-} == --no-shell ]] && exit 0
 need omarchy; need rsync; need flock
 stage=$(mktemp -d); trap 'rm -rf "$stage"' EXIT
-OMARIFY_DEST="$stage/plugin" "$root/bin/dev-sync" || fail "dev-sync"
+COOLWATCH_DEST="$stage/plugin" "$root/bin/dev-sync" || fail "dev-sync"
 omarchy plugin validate "$stage/plugin" || fail "validate"
 mkdir -p "$stage/imports"; ln -s /usr/share/omarchy/shell "$stage/imports/qs"
 /usr/lib/qt6/bin/qmllint -I "$stage/imports" --missing-property disable "$root"/*.qml > "$stage/lint.txt" 2>&1 || true
@@ -552,17 +552,17 @@ The `qs` shim lives in the temp dir, never in the repo or plugin dir. qmllint is
 
 Files: `manifest.json`, `Service.qml`, `BarWidget.qml`, `Panel.qml`, `Model.js` (stub: `.pragma library` + `function version() { return "0" }`), `Api.js` (stub likewise).
 
-`manifest.json`: `schemaVersion: 1`, `id`, `name: "Omarify"`, `version: "0.1.0"`, `description`, `kinds: ["service","bar-widget"]`, `keepLoaded: true`, `entryPoints: { service: "Service.qml", barWidget: "BarWidget.qml" }`, `barWidget: { defaultSection: "right" }`. `Service.qml`: `Item` with `property var shell; property var manifest`, `readonly property var snapshot` (empty shape), `readonly property var bar: ({ glyph: "󰅜", dimmed: true, active: false, tooltip: "Omarify — starting" })`, `IpcHandler` with `status()` returning `"{}"` and `refresh()` returning `"ok"`. `BarWidget.qml`: the omasnitch skeleton bound to `svc.bar`. `Panel.qml`: root properties, `KeyboardPanel` with a hero and one `note` row, all `Text` PlainText.
+`manifest.json`: `schemaVersion: 1`, `id`, `name: "Coolwatch"`, `version: "0.1.0"`, `description`, `kinds: ["service","bar-widget"]`, `keepLoaded: true`, `entryPoints: { service: "Service.qml", barWidget: "BarWidget.qml" }`, `barWidget: { defaultSection: "right" }`. `Service.qml`: `Item` with `property var shell; property var manifest`, `readonly property var snapshot` (empty shape), `readonly property var bar: ({ glyph: "󰅜", dimmed: true, active: false, tooltip: "Coolwatch — starting" })`, `IpcHandler` with `status()` returning `"{}"` and `refresh()` returning `"ok"`. `BarWidget.qml`: the omasnitch skeleton bound to `svc.bar`. `Panel.qml`: root properties, `KeyboardPanel` with a hero and one `note` row, all `Text` PlainText.
 
-**Verify**: `bin/check` prints `ok`; `bin/dev-sync && omarchy plugin enable io.github.danjonesio.omarify right`; icon on every monitor; click opens a native card with the hero; `omarchy-shell io.github.danjonesio.omarify status` prints `{}`; `omarchy plugin list --json | jq -r '.[].id' | grep -c omarify` is 1.
+**Verify**: `bin/check` prints `ok`; `bin/dev-sync && omarchy plugin enable io.github.danjonesio.coolwatch right`; icon on every monitor; click opens a native card with the hero; `omarchy-shell io.github.danjonesio.coolwatch status` prints `{}`; `omarchy plugin list --json | jq -r '.[].id' | grep -c coolwatch` is 1.
 
 ### 3. The curl-over-stdin smoke test
 
 Files: `Api.js` (`quote`, `seg`, `base`, `argv`, `block`, `config`, `reqVersion`, `TRAILER`), `Service.qml` (one `Req`, the reaper, `_launch`, `_finish`, and a temporary `FileView` that does `JSON.parse` of `instances[0].url`/`token` with no validation, marked `// replaced in step 6`), `Model.js` (`splitResponses`, `parseVersion`, `redact`, `elide`).
 
-Create the read-only token (open question 6) and a hand-written `~/.config/omarify/config.json` (`chmod 600`). Wire `reqVersion`. Log only `kind`, `code`, `exit`, `timeMs`, `bytes`.
+Create the read-only token (open question 6) and a hand-written `~/.config/coolwatch/config.json` (`chmod 600`). Wire `reqVersion`. Log only `kind`, `code`, `exit`, `timeMs`, `bytes`.
 
-**Verify**: within 2 s `status` shows the version and `perKind.version.reaps` is 0 (the process exited on its own, proving EOF); `ps -eww -o args= | grep -cFf <(jq -r '.instances[0].token // empty' ~/.config/omarify/config.json | cut -c1-12) || true` prints 0 during a poll; `quickshell log -p /usr/share/omarchy/shell -t 100000 | grep -cFf <(…same…) || true` prints 0. Contingency only if the reaper fires on every attempt (it should not): drop `-K -`, move every non-secret option to argv, source the token with `--variable %OMARIFY_TOKEN --expand-header 'Authorization: Bearer {{OMARIFY_TOKEN}}'` from `Process.environment`, verify with `tr '\0' '\n' < /proc/<pid>/environ` that only that process holds it, and record the deviation in AGENTS.md (environ is 0400 same-user: better than argv, weaker than stdin).
+**Verify**: within 2 s `status` shows the version and `perKind.version.reaps` is 0 (the process exited on its own, proving EOF); `ps -eww -o args= | grep -cFf <(jq -r '.instances[0].token // empty' ~/.config/coolwatch/config.json | cut -c1-12) || true` prints 0 during a poll; `quickshell log -p /usr/share/omarchy/shell -t 100000 | grep -cFf <(…same…) || true` prints 0. Contingency only if the reaper fires on every attempt (it should not): drop `-K -`, move every non-secret option to argv, source the token with `--variable %COOLWATCH_TOKEN --expand-header 'Authorization: Bearer {{COOLWATCH_TOKEN}}'` from `Process.environment`, verify with `tr '\0' '\n' < /proc/<pid>/environ` that only that process holds it, and record the deviation in AGENTS.md (environ is 0400 same-user: better than argv, weaker than stdin).
 
 ### 4. Reconcile the docs with the settled transport
 
@@ -592,7 +592,7 @@ Files: `Service.qml` (replaces the step-3 temporary loader).
 
 Both `FileView`s, `mkdirProc`, `statProc` with the pending re-arm, `tokenCmd`, `Model.normaliseConfig`, error kinds `noconfig/configerror/unsafe/tokencmd/waitingtoken`, warnings `permissions/plaintext`, token cache keyed by the `tokenCommand` JSON, self-heal on `refresh`.
 
-**Verify**: `mv ~/.config/omarify/config.json{,.bak}` → `status.error.kind` is `noconfig`, icon `󰅜` dimmed, no restart; `mv` back → recovers within 2 s. `rm -rf ~/.config/omarify` → `noconfig`; recreate dir and file → recovers after `omarchy-shell io.github.danjonesio.omarify refresh` at the latest. `chmod 644` → `status.configState` shows the warning, polling continues. `chmod 666` → `error.kind` `unsafe`, `perKind.deployments.lastAt` stops advancing. `tokenCommand: ["cat","/path/to/tokenfile"]` → works; `["false"]` → `tokencmd` with exit 1; `["sleep","60"]` → `waitingtoken` then `tokencmd` after ~30 s; `"op read …"` (string) and `["-x"]` → `configerror`. `ps` grep (step 3 form) prints 0 throughout. `stat -c %a ~/.config/omarify` is `700` after a fresh start.
+**Verify**: `mv ~/.config/coolwatch/config.json{,.bak}` → `status.error.kind` is `noconfig`, icon `󰅜` dimmed, no restart; `mv` back → recovers within 2 s. `rm -rf ~/.config/coolwatch` → `noconfig`; recreate dir and file → recovers after `omarchy-shell io.github.danjonesio.coolwatch refresh` at the latest. `chmod 644` → `status.configState` shows the warning, polling continues. `chmod 666` → `error.kind` `unsafe`, `perKind.deployments.lastAt` stops advancing. `tokenCommand: ["cat","/path/to/tokenfile"]` → works; `["false"]` → `tokencmd` with exit 1; `["sleep","60"]` → `waitingtoken` then `tokencmd` after ~30 s; `"op read …"` (string) and `["-x"]` → `configerror`. `ps` grep (step 3 form) prints 0 throughout. `stat -c %a ~/.config/coolwatch` is `700` after a fresh start.
 
 ### 7. Scheduler, store, error mapping, budget instrumentation
 
@@ -601,15 +601,15 @@ Files: `Service.qml`, `Model.js` (`errorFor`, `retryAfterSec`, joins, `diffActiv
 All `Req`s, four timers, `primeAll`, `startupRamp`, two-stage topology, terminal one-shot queue with immediate drain, pause/backoff, panel registry, ring buffer, `status` JSON with reap counters, `Component.onDestruction` stopping everything.
 
 **Verify**:
-- Idle: panel closed 3 min, `for i in $(seq 12); do omarchy-shell io.github.danjonesio.omarify status | jq -c '{requestsLastMin, rateLimitRemaining}'; sleep 10; done` never exceeds 20.
+- Idle: panel closed 3 min, `for i in $(seq 12); do omarchy-shell io.github.danjonesio.coolwatch status | jq -c '{requestsLastMin, rateLimitRemaining}'; sleep 10; done` never exceeds 20.
 - Deploying: trigger a deploy in Coolify's UI, repeat the loop while `status.counts.deployments > 0`; never exceeds 60.
 - Counts: `date +%s; omarchy plugin enable …; sleep 10; status | jq .counts` matches `curl … /resources | jq length` and `/servers | jq length` (curl with the read-only token via `-K -` from `printf`).
 - Terminal: note the second Coolify marks a deployment finished; `status.counts.recent` increments within 5 s.
 - Revoke the token → `error.kind` `auth` within 5 s, last snapshot still shown, `status` shows one probe per 60 s; restore → recovers on the next probe.
 - Offline: set `url` to `https://127.0.0.1:9` → `offline` (exit 7), `backoffUntil` set; `https://10.255.255.1` → `offline` (exit 28); restore url → recovers. `nmcli networking off` is optional and run last.
 - Reaps: `status | jq '[.perKind[].reaps] | add'` is 0 after 10 min idle.
-- Orphans: `for i in $(seq 20); do bin/dev-sync; sleep 0.5; done; pgrep -fa 'curl -q' | wc -l` is 0; `omarchy plugin disable io.github.danjonesio.omarify; sleep 2; pgrep -fa 'curl -q' | wc -l` is 0; re-enable with `--before omarchy.tray` (or the neighbour Dan prefers).
-- Log: `quickshell log -p /usr/share/omarchy/shell -t 100000 | grep -cFf <(jq -r '.instances[0].token // empty' ~/.config/omarify/config.json | cut -c1-12) || true` prints 0 after a fresh `omarchy restart shell` followed by the revoke and offline runs.
+- Orphans: `for i in $(seq 20); do bin/dev-sync; sleep 0.5; done; pgrep -fa 'curl -q' | wc -l` is 0; `omarchy plugin disable io.github.danjonesio.coolwatch; sleep 2; pgrep -fa 'curl -q' | wc -l` is 0; re-enable with `--before omarchy.tray` (or the neighbour Dan prefers).
+- Log: `quickshell log -p /usr/share/omarchy/shell -t 100000 | grep -cFf <(jq -r '.instances[0].token // empty' ~/.config/coolwatch/config.json | cut -c1-12) || true` prints 0 after a fresh `omarchy restart shell` followed by the revoke and offline runs.
 
 ### 8. Bar icon states and tooltip
 
@@ -621,11 +621,11 @@ Files: `Model.js` (`barState`, `GLYPHS`), `BarWidget.qml`.
 
 Files: `Panel.qml`, `Model.js` (`panelRows`, `sameRows`, `indexOfKey`, `nextSelectable`, `firstSelectableInSection`, `footerHints`, `callout`, hero copy, formatting).
 
-**Verify**: manual matrix: click, `r`, `g`, `j/k` across all three sections and folds, Enter on a fold, `k` from the first row to the hero (refresh button shows the cursor ring; Enter refreshes), Esc, Tab to a neighbouring panel and back, `omarchy-shell shell toggle io.github.danjonesio.omarify`, cursor stays on the same row when a deployment row is inserted above it, scroll position survives two polls with the cursor off-screen, no delegate churn on an in-progress deployment (`updated_at` ticking), `g` moves the cursor to RESOURCES, disable/enable, `omarchy restart shell`, unplug/replug a monitor with the panel open then `status.openPanels` is 0 after all panels close, config deleted mid-run, token revoked mid-run, offline. `bin/check` gates pass.
+**Verify**: manual matrix: click, `r`, `g`, `j/k` across all three sections and folds, Enter on a fold, `k` from the first row to the hero (refresh button shows the cursor ring; Enter refreshes), Esc, Tab to a neighbouring panel and back, `omarchy-shell shell toggle io.github.danjonesio.coolwatch`, cursor stays on the same row when a deployment row is inserted above it, scroll position survives two polls with the cursor off-screen, no delegate churn on an in-progress deployment (`updated_at` ticking), `g` moves the cursor to RESOURCES, disable/enable, `omarchy restart shell`, unplug/replug a monitor with the panel open then `status.openPanels` is 0 after all panels close, config deleted mid-run, token revoked mid-run, offline. `bin/check` gates pass.
 
 ### 10. Theme check and the acceptance run
 
-Files: none new. `cp ~/.config/omarchy/shell.toml{,.omarify-bak}` first; restore after. Themes: `catppuccin-latte` (light), `vantablack` (high contrast), and a temporary `shell.toml` with a non-zero corner radius and `[font] base-size = 14` (the default radius is already 0).
+Files: none new. `cp ~/.config/omarchy/shell.toml{,.coolwatch-bak}` first; restore after. Themes: `catppuccin-latte` (light), `vantablack` (high contrast), and a temporary `shell.toml` with a non-zero corner radius and `[font] base-size = 14` (the default radius is already 0).
 
 **Verify**: nothing clips or overflows in any of the three (the one inherently visual check); `bin/check` prints `ok`; every line of `docs/roadmap.md:26-38` ticked with the commands from steps 3, 7, 8; `README.md` install steps followed from scratch on a copy of the config; `shell.toml` restored (`diff` clean).
 
@@ -634,8 +634,8 @@ Files: none new. `cp ~/.config/omarchy/shell.toml{,.omarify-bak}` first; restore
 ```sh
 bin/check                                   # tests, symlink scan, fixture secrets, PlainText + font gates, token grep, validate staged copy, qmllint with qs shim
 bin/check --no-shell                        # CI subset
-omarchy-shell io.github.danjonesio.omarify status | jq
-needle() { jq -r '.instances[0].token // empty' ~/.config/omarify/config.json | cut -c1-12; }
+omarchy-shell io.github.danjonesio.coolwatch status | jq
+needle() { jq -r '.instances[0].token // empty' ~/.config/coolwatch/config.json | cut -c1-12; }
 ps -eww -o args= | grep -cFf <(needle) || true                                             # 0
 quickshell log -p /usr/share/omarchy/shell -t 100000 | grep -cFf <(needle) || true        # 0
 ```

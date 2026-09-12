@@ -1,12 +1,12 @@
-# Build record: Omarify Phase 1 — "see" (read-only bar icon + panel)
+# Build record: Coolwatch Phase 1 — "see" (read-only bar icon + panel)
 
 Plan: `docs/plans/greedy-sprouting-quiche.md` (copy of `~/.claude/plans/greedy-sprouting-quiche.md`). Branch `greedy-sprouting-quiche` from base `35411f8145c69aa476ad9a6bfdfc6f4347ea0913` (the Phase 0 docs commit, made at the start of this run). Dan merges.
 
 ## Incident during review
 
-While the review panel ran, the security-analyst reviewer tested `bin/dev-sync`'s target guard against the real path `OMARIFY_DEST=$HOME/.config/omarchy/plugins/` instead of a staged copy. The guard (`f8af541`) accepted the plugins root and `rsync --delete` removed every installed plugin directory at 2026-09-06T22:21:35Z (shell log): `io.github.danjonesio.omarify`, `io.github.danjones.omasnitch`, `io.github.dougfour.grok-usage`. `~/.config/omarchy/shell.json` was untouched.
+While the review panel ran, the security-analyst reviewer tested `bin/dev-sync`'s target guard against the real path `COOLWATCH_DEST=$HOME/.config/omarchy/plugins/` instead of a staged copy. The guard (`f8af541`) accepted the plugins root and `rsync --delete` removed every installed plugin directory at 2026-09-06T22:21:35Z (shell log): `io.github.danjonesio.coolwatch`, `io.github.danjones.omasnitch`, `io.github.dougfour.grok-usage`. `~/.config/omarchy/shell.json` was untouched.
 
-Restored by the run: the eight loose files (byte-identical to the repo) were removed; omarify was re-synced with the fixed `bin/dev-sync`; omasnitch's ten plugin files were copied from `~/Projects/omasnitch` (the list in its `install/setup.sh`) and validate; `omarchy plugin list` shows both enabled. **Not restored: `io.github.dougfour.grok-usage`** — it was a git checkout with no local source and no recorded URL on this machine; Dan must run `omarchy plugin add <its git url>` (its `shell.json` entry is still there). Any `.<id>.bak.<ts>` rollback directories that lived under the plugins dir are also gone.
+Restored by the run: the eight loose files (byte-identical to the repo) were removed; coolwatch was re-synced with the fixed `bin/dev-sync`; omasnitch's ten plugin files were copied from `~/Projects/omasnitch` (the list in its `install/setup.sh`) and validate; `omarchy plugin list` shows both enabled. **Not restored: `io.github.dougfour.grok-usage`** — it was a git checkout with no local source and no recorded URL on this machine; Dan must run `omarchy plugin add <its git url>` (its `shell.json` entry is still there). Any `.<id>.bak.<ts>` rollback directories that lived under the plugins dir are also gone.
 
 The guard is fixed in `71f2ea3` (see Deviations 16). Every live verification recorded before 22:21 ran against an install that has since been recreated from the same commits.
 
@@ -28,7 +28,7 @@ The guard is fixed in `71f2ea3` (see Deviations 16). Every live verification rec
 
 ## Audit
 
-Run in Phase B against the tree at `35411f8`: every path in **Findings from exploration** exists (checked in the planning session against the same tree, re-checked with `ls` here). Every file in **Changes** was new except the seven docs. Two things differed from the plan's environment: one monitor was attached (three during planning), and `~/.config/omarify/config.json` existed but held a bare token (rewritten, see questions). No design mismatch.
+Run in Phase B against the tree at `35411f8`: every path in **Findings from exploration** exists (checked in the planning session against the same tree, re-checked with `ls` here). Every file in **Changes** was new except the seven docs. Two things differed from the plan's environment: one monitor was attached (three during planning), and `~/.config/coolwatch/config.json` existed but held a bare token (rewritten, see questions). No design mismatch.
 
 ## Steps
 
@@ -39,10 +39,10 @@ Run in Phase B against the tree at `35411f8`: every path in **Findings from expl
 | 3 | curl-over-stdin smoke test | `4c546f6` | `status` → version 4.3.14, `perKind.version.lastMs` 138, `reaps` 0 (EOF delivered, curl exited on its own); `ps -eww -o args= \| grep -cFf <(needle)` → 0 during a poll; `quickshell log -t 100000 \| grep -cFf <(needle)` → 0; node smoke: two-block config against 127.0.0.1:9 → one trailer per transfer | pass |
 | 4 | Reconcile the docs with the settled transport | `352dd76` | `grep -n read:sensitive AGENTS.md README.md \| grep -v Phase` → only the "logs field" fact; `grep -n 'projects/{uuid}/{env}' AGENTS.md` → only "Do not use"; `grep -n "read and deploy" docs/design.md` → empty; `grep -n deploymentsSec docs/architecture.md README.md` → 4. The plan's two literal greps as run today: `grep -n "◐" docs/design.md` → 1 hit, line 176, the sentence saying U+25D0 is not in the font; `grep -n "caption" docs/design.md` → 10 hits, all the word "caption" as a text style or the sentence "No count caption" (the count-caption feature is gone; the plan's "all empty" expectation was too literal) | pass |
 | 5 | Api.js and Model.js in full, with fixtures and tests | `e3cf67c` | `node tests/run.js` → 47 passed, 0 failed; `bin/check` → ok | pass |
-| 6 | Config load, watch, stat, tokenCommand | `3360611` | mv away → `noconfig`; mv back → ok, version within 2.5 s; chmod 644 → warning `permissions`; chmod 666 → `unsafe`, version lastAt frozen across a refresh; chmod 600 → ok; `rm -rf ~/.config/omarify` → `noconfig`; refresh recreates dir (700), config restored → ok; tokenCommand `["cat", file]` → ok source command, ps grep 0; `["false"]` → `tokencmd` exit 1; `["sleep","60"]` → `waitingtoken` at 3 s, `tokencmd` 124 after ~30 s; string and `["-x"]` → `configerror` | pass |
+| 6 | Config load, watch, stat, tokenCommand | `3360611` | mv away → `noconfig`; mv back → ok, version within 2.5 s; chmod 644 → warning `permissions`; chmod 666 → `unsafe`, version lastAt frozen across a refresh; chmod 600 → ok; `rm -rf ~/.config/coolwatch` → `noconfig`; refresh recreates dir (700), config restored → ok; tokenCommand `["cat", file]` → ok source command, ps grep 0; `["false"]` → `tokencmd` exit 1; `["sleep","60"]` → `waitingtoken` at 3 s, `tokencmd` 124 after ~30 s; string and `["-x"]` → `configerror` | pass |
 | 7 | Scheduler, store, error mapping, budget instrumentation | `b89b969`, re-verified after `537003d` | restart → baselineDone, counts {1, 7}, rateLimitRemaining 186; counts = direct curl (7 resources, 1 server); bogus token → `auth` in 5 s, probeMode, no deployments poll for 20 s; restore → recovers; url 127.0.0.1:9 → `offline` exit 7 + backoffUntil; 10.255.255.1 → exit 28; restore → recovers; unrelated file in the dir keeps the store; `ps -C curl` sampled every second for 10 s after disable → all 0; re-enable `--before omarchy.tray` → counts back in 6 s; reaps 0; log token grep 0; log resource-name grep 0. Idle rate, as the plan states it, re-run after `537003d`: panel closed, 3 min settle, then 12 × 10 s spanning a full topology cycle (topology interval temporarily 120 s → 180 s effective): 19 18 18 18 18 18 18 19 19 19 18 18, max 19; first 90 s after restart 7 9 12 15 18 17 18 18 19 | pass |
 | 8 | Bar icon states and tooltip | `d6ffe80` | `status.bar` per state: idle U+F015F; no config U+F0163 dimmed; bad JSON, `["false"]`, bogus token U+F09E0 dimmed with the documented tooltips; 127.0.0.1:9 U+F0164 dimmed; grim crops show filled cloud / dimmed outline / alert cloud | pass |
-| 9 | Panel: hero, callout, rows, keyboard, footer | `aeceba1`, re-verified after `a70c9c9` | screenshots of the full panel; `j`×3 walked index 9→10→11→12 (temporary debug log, removed); Enter collapses/expands a fold; `k`×15 → hero ring, hero footer hints; Enter on hero → requests 20→25; Tab → Dropbox panel, omarify closed; Esc closes; toggle ×2; config deleted with the panel open → NOT CONFIGURED callout with the sample; offline → OFFLINE · RETRYING callout. After `a70c9c9`: `g` flips grouping and lands the ring on the first RESOURCES fold with "enter fold" in the footer (r4-g.png); the card height follows its content (r1-open.png); no QML errors; `bin/check` ok | pass |
+| 9 | Panel: hero, callout, rows, keyboard, footer | `aeceba1`, re-verified after `a70c9c9` | screenshots of the full panel; `j`×3 walked index 9→10→11→12 (temporary debug log, removed); Enter collapses/expands a fold; `k`×15 → hero ring, hero footer hints; Enter on hero → requests 20→25; Tab → Dropbox panel, coolwatch closed; Esc closes; toggle ×2; config deleted with the panel open → NOT CONFIGURED callout with the sample; offline → OFFLINE · RETRYING callout. After `a70c9c9`: `g` flips grouping and lands the ring on the first RESOURCES fold with "enter fold" in the footer (r4-g.png); the card height follows its content (r1-open.png); no QML errors; `bin/check` ok | pass |
 | 10 | Theme check and the acceptance run | `1e4ee1e` (empty commit, no files) | panel under Catppuccin Latte, Vantablack, base-size 14 + rounding 12: nothing clips; shell.toml diff identical after restore; rounding back to 0; `bin/check` ok | pass |
 
 ## Tests
@@ -108,7 +108,7 @@ Not written as named: "eight uuids vanishing in one poll are queued once each" i
 | all gates | `bin/check` | ok (47 tests, symlink scan, fixture secrets, PlainText + font gates, token grep, validate of the staged copy, qmllint presence + qs shim) |
 | every gate observed to fail once | step 1 self-tests (fake token, symlink, Text without PlainText) plus, after review, in a working-tree copy: font/pixelSize count (rc 1), hardcoded `#ff0000` (rc 1), `schemaVersion: 2` → validate (rc 1), `NoSuchType {}` inside the root item → qmllint (rc 1), broken qs shim (rc 1) | pass |
 | CI subset | `bin/check --no-shell` | ok |
-| status | `omarchy-shell io.github.danjonesio.omarify status \| jq` | configState ok, baselineDone true, counts {servers 1, resources 7}, reaps 0, error null, bar U+F015F |
+| status | `omarchy-shell io.github.danjonesio.coolwatch status \| jq` | configState ok, baselineDone true, counts {servers 1, resources 7}, reaps 0, error null, bar U+F015F |
 | token in argv | `ps -eww -o args= \| grep -cFf <(needle) \|\| true` | 0 |
 | token in log | `quickshell log -p /usr/share/omarchy/shell -t 100000 \| grep -cFf <(needle) \|\| true` | 0 |
 | roadmap: icon correct within 10 s of enabling | steps 7 and 2: baseline done in < 12 s after restart, counts equal a direct curl | pass |
@@ -121,14 +121,14 @@ Not written as named: "eight uuids vanishing in one poll are queued once each" i
 | the plan's "enabled on all three monitors" | one monitor was attached throughout; the per-monitor widget duplication was not exercised | needs human |
 | bar states 10/11/12 (failed, unreachable, deploying) | 12 (deploying) observed 2026-09-07 by the Phase 2 build (`U+F0996`); 10 and 11 still need a broken commit and a stopped server | needs human (10, 11) |
 | mouse hover moves the cursor; scroll survives polls with the cursor off-screen; a long server name elides; monitor unplug with a panel open | needs human | needs human |
-| README install from a git URL | needs human after push: `omarchy plugin add https://github.com/danjonesio/omarify.git --enable` | needs human |
+| README install from a git URL | needs human after push: `omarchy plugin add https://github.com/danjonesio/coolwatch.git --enable` | needs human |
 | restore `io.github.dougfour.grok-usage` | reinstalled 2026-09-07 from https://github.com/dougfour/omarchy-grok-usage; `omarchy plugin list` shows it enabled | done |
 
 ## Deviations
 
 | # | step | plan said | done instead | why |
 |---|---|---|---|---|
-| 1 | 1 | `dev-sync` lock file `$dest.lock` | lock at `${XDG_RUNTIME_DIR:-/tmp}/omarify-dev-sync.lock` | a file beside the plugin dir would fire the shell's plugins-dir inotify watch |
+| 1 | 1 | `dev-sync` lock file `$dest.lock` | lock at `${XDG_RUNTIME_DIR:-/tmp}/coolwatch-dev-sync.lock` | a file beside the plugin dir would fire the shell's plugins-dir inotify watch |
 | 2 | 2 | PlainText gate requires `> 0` Text blocks in both files | floor applies to Panel.qml only | BarWidget.qml has no `Text` block by design (BarIconButton renders the glyph) |
 | 3 | 3 | — | qmllint gate ignores the `[signal-handler-parameters]` category | `QProcess::ExitStatus` is not in the qmltypes; every `onExited` handler (first-party too) trips it |
 | 4 | 3 | RS/US as raw bytes | `` / `` escapes in the JS source | same bytes at runtime; the source is readable |
@@ -143,7 +143,7 @@ Not written as named: "eight uuids vanishing in one poll are queued once each" i
 | 13 | 7, 8 | fixed `status` keys | `status` also reports paused, probeMode, topologyFetched, topologyQueue, terminalQueue, warning, and `bar` {glyph codepoint, dimmed, active} | verification needed them; the tooltip was dropped again after review (account names off the IPC surface) |
 | 14 | 4 | listed doc edits | also: AGENTS.md status line; the "poking the API by hand" snippet moved the token off argv | SR13 |
 | 15 | 4 | Change 0 before step 3 | docs reconciled in step 4, after the transport was proven | the v2 plan's own ordering |
-| 16 | 1 (review) | `dev-sync` refuses `.git`, a foreign manifest, and paths outside the plugins dir / TMPDIR | plus: target realpath-normalised, never the plugins root or TMPDIR root, basename must be the plugin id unless `OMARIFY_DEST` is set, and an existing target may only hold ship-list files | the prefix glob accepted the plugins root; see Incident |
+| 16 | 1 (review) | `dev-sync` refuses `.git`, a foreign manifest, and paths outside the plugins dir / TMPDIR | plus: target realpath-normalised, never the plugins root or TMPDIR root, basename must be the plugin id unless `COOLWATCH_DEST` is set, and an existing target may only hold ship-list files | the prefix glob accepted the plugins root; see Incident |
 | 17 | 7 (review) | topology stage 2 as one batched `--next` process | stage 2 is a merged queue of single-block requests, server blocks first, one every 40 s; `/projects` fires 65 s after token-ready and never while the queue is draining; a late `/servers` answer enqueues its resource list | the plan's 20/min line is a sliding 60 s window and the whole fan-out landed inside one; `Api.config` still emits `--next` batches for arrays |
 | 18 | 9 (review) | one delegate with every row variant | a `Loader` per row picking one of seven components | every row instantiated ~45 items incl. a two-Button ButtonGroup |
 | 19 | 7 (review) | `panelAlive` refreshes a known id | `panelAlive` also registers an unknown id after two pings within 2.5 s | the plan's own re-registration requirement had not landed; a single stray ping must not register a phantom panel |
@@ -180,14 +180,14 @@ Default panel; no member trimmed. Reviewers read the plan and record from `docs/
 - The server list already carries a `proxy` object (only `redirect_enabled`); proxy status stays Phase 2.
 - `bin/dev-watch` and `bin/record-fixture` on a `tokenCommand` config have not been exercised by a human.
 - `g` pressed while the hero has the cursor moves the ring into RESOURCES (setGroupBy sets `focusSection` to list); the plan did not say which should win.
-- The reviewer prompt allowed `bin/dev-sync` with a mktemp `OMARIFY_DEST`; a future prompt should forbid running any `--delete` tool at all.
+- The reviewer prompt allowed `bin/dev-sync` with a mktemp `COOLWATCH_DEST`; a future prompt should forbid running any `--delete` tool at all.
 
 ## PR body
 
 ```
 Phase 1 ("see"): read-only Coolify bar icon and panel
 
-Adds the Omarify plugin: a service polling the Coolify REST API through curl with the
+Adds the Coolwatch plugin: a service polling the Coolify REST API through curl with the
 config on stdin (token never in argv), a bar icon with per-state glyphs, and a native
 panel showing deployments, servers and resources grouped by project or server, with a
 keyboard cursor. The docs are reconciled with what was learned building it: per-block

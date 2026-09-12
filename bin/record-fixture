@@ -7,7 +7,7 @@ set -euo pipefail
 [[ $# -eq 2 ]] || { echo "usage: record-fixture <name> <api-path>" >&2; exit 2; }
 name=$1; apipath=$2
 root=$(cd "$(dirname "$0")/.." && pwd)
-cfg=${OMARIFY_CONFIG:-$HOME/.config/omarify/config.json}
+cfg=${COOLWATCH_CONFIG:-$HOME/.config/coolwatch/config.json}
 url=$(jq -r '.instances[0].url' "$cfg")
 tok=$(jq -r '.instances[0].token // empty' "$cfg")
 if [[ -z $tok ]]; then

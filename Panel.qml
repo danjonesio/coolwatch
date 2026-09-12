@@ -10,7 +10,7 @@ import "Model.js" as Model
 // reassigned when Model.sameRows says they changed. The cursor is a row key.
 Panel {
   id: root
-  moduleName: "io.github.danjonesio.omarify"
+  moduleName: "io.github.danjonesio.coolwatch"
   manageIpc: false
 
   property var anchorItem: null

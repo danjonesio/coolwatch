@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.danjonesio.omarify",
-  "name": "Omarify",
+  "id": "io.github.danjonesio.coolwatch",
+  "name": "Coolwatch",
   "version": "0.3.0",
   "author": "Dan Jones",
   "license": "MIT",
@@ -13,7 +13,7 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Omarify",
+    "displayName": "Coolwatch",
     "description": "Coolify servers, resources and deployments",
     "category": "Network",
     "allowMultiple": false,

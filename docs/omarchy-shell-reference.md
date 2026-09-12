@@ -871,7 +871,7 @@ For transient in-shell feedback (volume-style), summon the OSD instead:
 - Gate pollers on `root.opened`; release hardware/scanners in `Component.onDestruction`.
 - Keep parsing/formatting in a sibling `Model.js` (`import "Model.js" as Model`) with a
   `module.exports` block so it is unit-testable in Node, as every first-party panel does.
-  (Omarify deviates: its `Model.js`/`Api.js` are `.pragma library` files run by a
+  (Coolwatch deviates: its `Model.js`/`Api.js` are `.pragma library` files run by a
   `vm` runner, the omasnitch convention; the two styles must not be mixed in one file.)
 - Read settings with `setting(key, fallback)`; persist with
   `bar.shell.updateEntryInline(moduleName, entry)`; declare `defaults`/`schema` in the

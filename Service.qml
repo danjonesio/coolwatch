@@ -16,12 +16,12 @@ Item {
   property var barWidgetRegistry: null
   property var pluginRegistry: null
 
-  readonly property string configDirPath: Quickshell.env("HOME") + "/.config/omarify"
+  readonly property string configDirPath: Quickshell.env("HOME") + "/.config/coolwatch"
   readonly property string configPath: configDirPath + "/config.json"
   readonly property string me: Quickshell.env("USER")
   // State (Phase 3): recent terminal deployments. The directory is the permission control
   // (FileView has no mode API and its atomic rename discards a chmod on the file).
-  readonly property string stateDirPath: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/omarify"
+  readonly property string stateDirPath: (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state")) + "/coolwatch"
   readonly property string recentPath: stateDirPath + "/recent.json"
 
   // Private. `_` is a naming convention, not access control: any plugin in this
@@ -102,7 +102,7 @@ Item {
   // suppression, ordering, caps, argv) so tests/run.js covers it. Nothing here enters
   // `snapshot` (the `pending` precedent). Every diff is gated on its kind's own _baseline
   // flag, never _baselineDone.
-  readonly property string pluginId: "io.github.danjonesio.omarify"
+  readonly property string pluginId: "io.github.danjonesio.coolwatch"
   property var _notifyQueue: []
   property var _actionAt: ({})         // uuid -> last user action ms (resource uuid; deployment uuid for cancel); pruned > 300 s
   property var _lastNotified: ({})     // "<kind>:<uuid>:<event>" -> ms; the dedupe/flap ledger; pruned > 3600 s
@@ -216,7 +216,7 @@ Item {
       configDir.path = ""
       configDir.path = root.configDirPath
       root._stateDirReady = code === 0             // a failed mkdir/chmod means no read and no write: the 0700 dir is the control
-      if (code !== 0) console.warn("omarify state dir unavailable (mkdir exit " + code + ")")
+      if (code !== 0) console.warn("coolwatch state dir unavailable (mkdir exit " + code + ")")
       root._armRecent()
       Qt.callLater(function() { if (!root._cfg) configFile.reload(); root._stat() })
     }
@@ -230,7 +230,7 @@ Item {
     printErrors: false
     onLoaded: root._loadRecent(text())
     onLoadFailed: function(err) { root._loadRecent(null) }
-    onSaveFailed: function(err) { console.log("omarify recent save failed") }
+    onSaveFailed: function(err) { console.log("coolwatch recent save failed") }
   }
 
   // Called from _configText (after _instance is set) and from mkdirProc.onExited; needs both.
@@ -246,7 +246,7 @@ Item {
     var r = Model.parseRecent(text, root._recentKey, Date.now())
     root._recent = Model.joinBranch(Model.mergeRecent(root._recent, r.recent), root._resources)
     root._recentPersisted = r.recent.length; root._recentRejected = r.rejected; root._recentLoaded = true
-    console.log(r.rejected ? "omarify recent rejected" : "omarify recent loaded " + r.recent.length)
+    console.log(r.rejected ? "coolwatch recent rejected" : "coolwatch recent loaded " + r.recent.length)
   }
   function _saveRecent() {             // the deployment arm is the only caller
     if (!root._recentLoaded || !root._stateDirReady || root._recentKey === "") return
@@ -530,7 +530,7 @@ Item {
                 lastNotified: root._lastNotified, sentLastMin: log.length, now: now, pluginId: root.pluginId }
     var out = Model.notifyPlan(q, root.snapshot, ctx)
     out.notified.forEach(function(n) { root._lastNotified[n.key] = n.at }); root._lastNotified = root._lastNotified
-    out.log.forEach(function(l) { console.log("omarify notify " + l) })          // event + uuid8 only, at intent
+    out.log.forEach(function(l) { console.log("coolwatch notify " + l) })          // event + uuid8 only, at intent
     for (var i = 0; i < out.argvs.length; i++) Util.execArgv(out.argvs[i])
     for (var j = 0; j < out.nonCritical; j++) log.push(now)         // critical toasts are exempt from the minute cap and never charge it
     root._notifyLog = log
@@ -627,7 +627,7 @@ Item {
         break
       }
     }
-    console.log("omarify " + req.kind + " " + r.code + " exit=" + r.exit + " " + r.timeMs + "ms " + r.bytes + "B")
+    console.log("coolwatch " + req.kind + " " + r.code + " exit=" + r.exit + " " + r.timeMs + "ms " + r.bytes + "B")
   }
 
   function _markPoll(kind, now) {
@@ -708,12 +708,12 @@ Item {
     if (!f || !f.uuid) return
     var t = root._drainTries
     if (ok || gone) {
-      if (gone) console.log("omarify drain 404 " + Model.uuid8(f.uuid))
+      if (gone) console.log("coolwatch drain 404 " + Model.uuid8(f.uuid))
       if (Object.prototype.hasOwnProperty.call(t, f.uuid)) { delete t[f.uuid]; root._drainTries = t }
       return
     }
     var n = (t[f.uuid] || 0) + 1
-    if (n > 2) { delete t[f.uuid]; root._drainTries = t; console.log("omarify drain gave up " + Model.uuid8(f.uuid)); return }
+    if (n > 2) { delete t[f.uuid]; root._drainTries = t; console.log("coolwatch drain gave up " + Model.uuid8(f.uuid)); return }
     var q = root._terminalQueue.slice()
     if (q.indexOf(f.uuid) >= 0 || q.length >= 20) { delete t[f.uuid]; root._drainTries = t; return }   // already queued, or the cap: no retry is scheduled, so none is counted
     t[f.uuid] = n; root._drainTries = t; root._drainRetries += 1
@@ -753,7 +753,7 @@ Item {
       var bo = root._backoff; var a = ((bo[kind] && bo[kind].attempt) || 0) + 1
       bo[kind] = { until: Date.now() + (a <= 1 ? 30 : 60) * 1000, attempt: a }; root._backoff = bo
     }
-    console.warn("omarify " + kind + " failed: " + e.kind + " http=" + e.httpCode + " exit=" + e.curlExit + " " + e.detail)
+    console.warn("coolwatch " + kind + " failed: " + e.kind + " http=" + e.httpCode + " exit=" + e.curlExit + " " + e.detail)
   }
 
   // 429 is instance-wide: pause every timer for Retry-After (clamped) or the ladder.
@@ -818,7 +818,7 @@ Item {
       root._clearPending(a.uuid); root._inflightAction = null
       return root._refuse("busy", a.verb, a.uuid)
     }
-    console.log("omarify action launch " + a.verb + " " + a.uuid.slice(0, 8) + (fromIpc ? " ipc" : ""))
+    console.log("coolwatch action launch " + a.verb + " " + a.uuid.slice(0, 8) + (fromIpc ? " ipc" : ""))
     return "queued"
   }
 
@@ -858,7 +858,7 @@ Item {
       default: root._say("Nothing to " + verb, "dim")
     }
     root._lastAction = { verb: String(verb || ""), uuid8: u8, code: 0, curlExit: 0, ms: 0, at: Date.now(), result: "refused" }
-    console.log("omarify action refuse " + why + " " + String(verb || "").slice(0, 16) + " " + u8)
+    console.log("coolwatch action refuse " + why + " " + String(verb || "").slice(0, 16) + " " + u8)
     return token
   }
 
@@ -883,7 +883,7 @@ Item {
     var result = o.ok ? (o.deploymentUuid ? "queued" : "ok") : (o.error ? (o.error.kind === "ability" ? "ability" : (o.error.kind === "offline" ? "offline" : "http")) : "http")
     root._say(o.text, o.tone)
     root._lastAction = { verb: a.verb, uuid8: a.uuid.slice(0, 8), code: rec.code, curlExit: rec.exit, ms: rec.timeMs, at: Date.now(), result: result }
-    console.log("omarify action " + a.verb + " " + rec.code + " exit=" + rec.exit + " " + rec.timeMs + "ms " + a.uuid.slice(0, 8))
+    console.log("coolwatch action " + a.verb + " " + rec.code + " exit=" + rec.exit + " " + rec.timeMs + "ms " + a.uuid.slice(0, 8))
   }
 
   function _say(text, tone) {
@@ -1051,14 +1051,14 @@ Item {
             var ia = root._inflightAction; root._inflightAction = null
             root._say("Sent, but Coolify did not answer", "urgent")
             root._lastAction = { verb: ia ? ia.verb : "", uuid8: ia ? ia.uuid.slice(0, 8) : "", code: 0, curlExit: 0, ms: 0, at: now, result: "reaped" }
-            console.warn("omarify reaped action")
+            console.warn("coolwatch reaped action")
             continue
           }
           pk.consecutiveFailures += 1
           root._perKind = root._perKind
           var bo = root._backoff; var a = ((bo[p.kind] && bo[p.kind].attempt) || 0) + 1
           bo[p.kind] = { until: now + (a <= 1 ? 30 : 60) * 1000, attempt: a }; root._backoff = bo
-          console.warn("omarify reaped " + p.kind)
+          console.warn("coolwatch reaped " + p.kind)
           if (p.kind === "deployment") { root._drainDone(false, false); root._drainTerminal() }
         }
       }
@@ -1140,12 +1140,12 @@ Item {
     if (!u) return "usage: " + verb + " <uuid>"
     var r = root.act(verb, u, true)
     var token = r === "queued" ? "queued " + verb + " " + u.slice(0, 64) : r
-    console.log("omarify ipc " + verb + " " + u.slice(0, 8) + " -> " + token.split(" ")[0])
+    console.log("coolwatch ipc " + verb + " " + u.slice(0, 8) + " -> " + token.split(" ")[0])
     return token
   }
 
   IpcHandler {
-    target: "io.github.danjonesio.omarify"
+    target: "io.github.danjonesio.coolwatch"
     function refresh(): string { root.refresh(); return "ok" }
     function status(): string { return JSON.stringify(root._status()) }
     function deploy(uuid: string): string { return root._ipcAct("deploy", uuid) }
