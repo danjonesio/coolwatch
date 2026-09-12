@@ -343,13 +343,14 @@ Panel {
     if (!root.viewStack.length) root._prevFocus = root.focusSection
     root.viewStack = root.viewStack.concat([v])
     root.focusSection = "view"; root.cursorActive = true
-    root.following = true; root.showHidden = false; root.viewCursorKey = ""
+    root.following = true; root.showHidden = false
+    if (root.viewStack.length === 1) root.viewCursorKey = ""        // a nested log keeps the history cursor underneath
     root.syncView(true)
   }
   function popView() {
     if (!root.viewStack.length) return
     root.viewStack = root.viewStack.slice(0, -1)
-    root.following = true; root.showHidden = false; root.viewCursorKey = ""
+    root.following = true; root.showHidden = false                 // the cursor key survives: back from a log lands on the row it came from
     if (root.view) { root.syncView(true); root._watch() }
     else { root.focusSection = root._prevFocus === "hero" ? "hero" : "list"; viewModel.clear(); if (svc) svc.closeView(root.panelId) }
   }
@@ -1046,10 +1047,14 @@ Panel {
             id: actionsComp
             Item {
               implicitHeight: actRow.implicitHeight + Style.space(6)
-              Row {
+              // A Flow, not a Row: a running application now offers six buttons (Phase 4 adds
+              // Logs and History), which wrap to a second line inside the card.
+              Flow {
                 id: actRow
                 anchors.left: parent.left
+                anchors.right: parent.right
                 anchors.leftMargin: Style.space(8) + Style.space(22) + Style.space(8)
+                anchors.rightMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Style.spacing.md
                 Repeater {

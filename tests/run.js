@@ -1434,6 +1434,11 @@ test("Model.viewRow: every overlay row builder emits the same key set (ListModel
   rows.push(M.pickRow("svc1", "wordpress"))
   rows.push(M.noteRow("n", "Loading…"))
   for (const r of rows) eq(Object.keys(r).sort().join(","), want, "keys of a " + r.rowType + " row")
+  for (const r of rows) eq(r.type, r.rowType, "type mirrors rowType so the cursor helpers see it")
+  const list = [M.historyRow(hist.rows[0], "app1", ""), M.historyRow(hist.rows[1], "app1", ""), M.moreRow({ appUuid: "app1", rows: hist.rows, count: 39, loading: false }, 10)]
+  eq(M.nextSelectable(list, 1, 1), 2, "j reaches the Show more row"); eq(list[2].type, "more")
+  eq(M.nextSelectable([M.pickRow("s", "a"), M.pickRow("s", "b")], 0, 1), 1, "j reaches the second container")
+  for (const r of rows) if (r.rowType === "line" || r.rowType === "note") assert(!M.SELECTABLE[r.type], "log lines and notes never take the cursor")
 })
 
 test("Model.parseContainerLog: split on newline, no trailing newline, empty and missing logs, cap and tail", () => {

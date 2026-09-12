@@ -1519,6 +1519,7 @@ function viewRow(rowType, fields) {
   var r = {}
   for (var k = 0; k < VIEW_KEYS.length; k++) r[VIEW_KEYS[k]] = VIEW_DEFAULTS[VIEW_KEYS[k]]
   r.rowType = rowType
+  r.type = rowType                       // the cursor helpers (SELECTABLE, nextSelectable) key on `type`
   if (fields) for (var f in fields) if (Object.prototype.hasOwnProperty.call(fields, f)) {
     var v = fields[f], d = VIEW_DEFAULTS[f]
     r[f] = v === undefined || v === null ? (d === undefined ? "" : d) : (typeof d === "string" ? String(v) : v)   // never a null, never a type change
