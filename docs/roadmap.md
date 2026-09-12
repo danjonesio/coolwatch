@@ -112,8 +112,9 @@ Acceptance
   the failing command visible. Rendering verified from api's recorded failures
   (`$ docker exec … docker compose … pull'` and the unresolved image reference in
   urgent); the marker lands in the same dispatch as the Failed toast (the drain), so
-  the latency is one deployments interval plus one drain round trip. The live timing
-  needs a deliberately failed build: needs-human.
+  the latency is one deployments interval plus one drain round trip. Verified live by
+  Dan on 2026-09-12 with a deliberately failed api build: the marker and the failing
+  command appeared with the Failed toast.
 - Two instances (Cloud + a self-hosted test box) switch cleanly with independent
   polling and error states: `phase-4-instances`.
 

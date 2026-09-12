@@ -87,7 +87,7 @@ Not written in this branch: the instances-PR cases (`normaliseConfig` ids/origin
 | full check | `bin/check` | `ok` at every commit (qmllint clean; PlainText 34/34 in Panel.qml at head; `bin/check --no-shell` green at all twelve commits via `git archive` + `COOLWATCH_ROOT`, per the ops reviewer; run again at `add2a09`) |
 | CI subset | `bin/check --no-shell` | `ok` |
 | acceptance 1, rendering | step 6 live: History → the recorded failed build | the failing step, its reference error and the "Deployment failed" lines in urgent with hidden steps off |
-| acceptance 1, timing ("within one poll of failure") | the marker lands in the same dispatch as the Failed toast (the drain arm captures the terminal body: step 3 log lines `list n=19` then `drain n=21`) | needs human: fail one api build deliberately (bad image tag in the Coolify UI, then revert) with the panel open on its row's log and confirm the marker appears with the Failed toast |
+| acceptance 1, timing ("within one poll of failure") | the marker lands in the same dispatch as the Failed toast (the drain arm captures the terminal body: step 3 log lines `list n=19` then `drain n=21`) | verified by Dan on 2026-09-12 after the review: a api build failed deliberately (bad image tag in the Coolify UI, then reverted) with the panel open on its row's log; the failure marker and the failing command appeared with the Failed toast. Acceptance 1 holds on both halves |
 | acceptance 2 | `phase-4-instances` | not this branch |
 | rate, closed | 12 × 10 s `status \| jq .requestsLastMin` | max 19 (samples below) |
 | rate, open | same, panel open, first topology drain and the `/tags` fetch inside the window | max 22 (allowance 24), 17–19 after (samples below) |
@@ -236,7 +236,8 @@ Steps: 14 commits: one per plan step (0–9), a tests step, the review fixes, th
 Verification: 119 node tests, bin/check green at every commit, live keyboard runs with
 screenshots, rate 19/22/29 per minute (closed / open / building), token in 0 of
 209 651 ps samples
-Needs human: the acceptance-1 timing on a deliberately failed build; the 404
+Acceptance 1 verified live by Dan (a deliberately failed build: marker and failing command with the Failed toast).
+Needs human: the 404
 not-running copy on a resource stopped in the Coolify UI; the single-container picker
 skip on an account that has one; a re-run of the keyboard smoke test after the review
 fixes (j j L, r, k, b, H, Esc)
