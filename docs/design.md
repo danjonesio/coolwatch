@@ -41,7 +41,8 @@ First matching row wins (`Model.barState`):
 | 4 | Waiting for token | `tokenCommand` running | `󰅟` | yes | no | "Coolwatch — waiting for token command" |
 | 5 | Token rejected | 401 | `󰧠` | yes | no | "Coolwatch — token rejected" |
 | 6 | API disabled / IP blocked | 403 | `󰧠` | yes | no | "Coolwatch — API disabled on this instance" / "Coolwatch — this IP is not allowed" |
-| 7 | Offline | curl exit 6/7/28/35/60 | `󰅤` F0164 | yes | no | "Coolwatch — offline, retrying" |
+| 7 | Offline | curl exit 6/7/28/35 | `󰅤` F0164 | yes | no | "Coolwatch — offline, retrying" |
+| 7b | Certificate rejected (Phase 4) | curl exit 60 | `󰧠` | yes | no | "Coolwatch — certificate rejected, retrying" |
 | 8 | Rate limited | 429 | `󰅟` | yes | no | "Coolwatch — rate limited, backing off Ns" |
 | 9 | Starting | no baseline yet | `󰅟` | yes | no | "Coolwatch — starting" |
 | 10 | Failed, unacknowledged | a failure landed while no panel was open | `󰅙` F0159 | no | **yes** | "Deployment failed: api" (+ " +N more") |
@@ -54,7 +55,10 @@ Opening any panel acknowledges failures; a failure that lands while a panel is o
 already seen and never sets row 10.
 
 Clicks: left toggles the panel; middle cycles instances (Phase 4); right opens the
-instance in the browser. Wheel does nothing.
+instance in the browser. Wheel does nothing. With two or more instances the icon is the
+**current** instance's row and the tooltip gains ` · <other instance>: <trouble>` for the
+first other instance in trouble (its error kind's title, "N failed builds" or "N servers
+unreachable"; `Model.instanceTrouble`); the panel opens on the current instance.
 
 ## Panel anatomy
 
@@ -136,9 +140,14 @@ screen is stale, "Showing data from 3m ago." Healthy panels show no callout.
 
 ### Instance chips (Phase 4)
 
-Row of bordered `Button`s, one per instance, `selected` on the current one, hidden when
-there is a single instance. `h`/`l` switch when the cursor is on the hero. Same
-pattern as the agents provider switch.
+Row of bordered `Button`s (`Style.font.bodySmall`), one per instance, `selected` on the
+current one, hidden when there is a single instance and under a view. A chip whose
+instance is in trouble carries a trailing ` ·` and a "Needs attention" tooltip. Chips never
+take the cursor ring (the hero's refresh button owns it): `h`/`l` switch when the cursor is
+on the hero, a click switches, a middle-click on the bar icon cycles, and
+`omarchy-shell … instance <id>` switches from a terminal. A switch pops every open view and
+collapses the expanded row; a confirm dialog left open across a switch is refused by the
+service ("Instance changed; nothing sent"). Same pattern as the agents provider switch.
 
 ### Deployments section
 
@@ -322,8 +331,8 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 
 | Key | Where | Action |
 |---|---|---|
-| `j` / `k`, arrows | anywhere | move cursor down / up through hero, chips, rows; `k` from the first row lands on the hero |
-| `h` / `l` | hero | previous / next instance (Phase 4) |
+| `j` / `k`, arrows | anywhere | move cursor down / up through hero and rows (chips never take the ring); `k` from the first row lands on the hero |
+| `h` / `l` | hero | previous / next instance (Phase 4, two or more instances; the footer reads `h/l instance`) |
 | `h` / `l` | fold row | fold / unfold |
 | `l` | collapsed leaf row | expand and focus the first action |
 | `h` / `l` | action button | previous / next button; `h` on the first returns to the row |
@@ -405,7 +414,8 @@ shape for an unnamed app (`xyhpwdxqu33omjgwuo6c7cjp-200537415987` → `xyhpwdxq`
 matches the log lines). One rule for every toast; the panel still shows the raw name. `dur` is `createdAt → finishedAt` ("1m 42s"), empty when either is
 unparseable; `sub` is the panel's `branch · commit message`. Headlines are elided at 72,
 bodies at 96 (the toast text box is 304 px). An empty body is omitted, which gives the
-compact one-line toast.
+compact one-line toast. With two or more instances every body ends in ` · <instance
+name>` (`Deployed api` / `21s · main · Coolify Cloud`); the headline never changes.
 
 | Event | Toggle | Glyph | Headline | Body | Urgency | Click |
 |---|---|---|---|---|---|---|

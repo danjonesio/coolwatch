@@ -96,7 +96,16 @@ Secrets and behaviour live in one file the plugin owns, not in `shell.json`, bec
   and no `tokenCommand` (a writable config could point the token at another `url`).
   Group- or world-readable with an inline `token` → a warning in the panel, polling
   continues.
-- `url` must start with `http://` or `https://`; `http://` shows a plaintext warning.
+- `url` must start with `http://` or `https://`; `http://` shows a plaintext warning; a
+  URL carrying credentials (`https://u:p@host`) is a config error (SR33).
+- `instances[]` (Phase 4): one entry per Coolify. `id` is one path segment,
+  `[A-Za-z0-9_-]{1,32}`, unique across the list (it names `recent-<id>.json` and the IPC
+  `instance` argument; SR32); a missing `id` is `instance<N>`. Two entries with the same
+  origin are allowed with a warning (`instancesWarning`, shown as "Same Coolify twice"):
+  every toast and drain then runs twice, which is the acceptance setup, not a product
+  one. A config load reconciles per id: a new id creates a context, a removed id releases
+  one (its requests killed, its token dropped), an entry or `poll` change resets that
+  context only; a `notify`-only edit touches nothing.
 - Every `poll` key has the default shown; values below 2 clamp to 2. `topologySec` is
   raised at runtime so the topology fan-out costs at most 3 req/min.
 - Every `notify` key defaults to `true`; `"notify": false` sets all six false; `true`,
@@ -242,8 +251,16 @@ and under 60/min with one deployment. Idle is ≈17/min at 3 projects and 3 serv
 
 ## State model
 
-The service holds one normalised store per instance. Everything the panel renders is a
-plain object built by `Model.js`, never a live QObject in a ListView.
+The service holds one normalised store per instance: `Service.qml` declares an inline
+`InstanceCtx` component (its own store, timers, the ten `Req`s, ledgers, baseline, pending
+map, notify state, recent file, `_status()`), instantiated by an `Instantiator` over a
+`ListModel` of instance ids that `_setInstanceIds` edits in place (a reassigned array would
+rebuild every context). The root owns the config file, the panel registry, the reaper tick
+and the per-shell toast budget, and mirrors the **active** context as `snapshot`, `bar`
+(with a tooltip suffix naming another instance's trouble, `Model.instanceTrouble`),
+`views`, `pending`, `actionStatus`; `instances` (chip input, `Model.instanceChips`) and
+`activeId` are the switch surface. Everything the panel renders is a plain object built
+by `Model.js`, never a live QObject in a ListView.
 
 ```
 snapshot:  { instance, error, warning, servers, resources, deployments, recent, tree,
@@ -261,8 +278,9 @@ views:     { buildLogs, containerLogs, picks, history } // beside snapshot, the 
 instance:  { id, name, url, version, plaintext }
 error:     null | { kind, title, detail, httpCode, curlExit, request, at, staleSince }
            kind ∈ noconfig | configerror | unsafe | tokencmd | waitingtoken | auth |
-                  apidisabled | ipblocked | ability | ratelimited | offline | toolarge | http
-warning:   null | { kind (permissions | plaintext | notify), title, detail }
+                  apidisabled | ipblocked | ability | ratelimited | offline | tls | toolarge | http
+           // tls (Phase 4, SR36): curl exit 60, the peer certificate failed verification; nothing was sent; retried like offline
+warning:   null | { kind (permissions | plaintext | notify | instances), title, detail }
 server:    { uuid, name, ip, reachable, usable, disabled, buildServer, resourceCount }
 resource:  { uuid, name, kind (application|service|database), type, status,
              state (running|starting|restarting|degraded|paused|exited|unknown),
@@ -286,8 +304,12 @@ byServer:  { serverUuid: [resourceUuid…] }
   `git_branch`, else the first seven characters of the commit.
 - `recent` keeps the last 20 terminal deployments in memory (the panel renders the
   newest 5 under an hour old). Phase 3 persists them to
-  `~/.local/state/coolwatch/recent.json` (`$XDG_STATE_HOME` honoured):
-  `{ version: 1, instance: <Model.origin(url)>, savedAt, recent: [ { uuid, status, appId,
+  `~/.local/state/coolwatch/recent.json` (`$XDG_STATE_HOME` honoured; Phase 4: `instances[0]`
+  keeps that name, every further instance writes `recent-<id>.json`, and every file written
+  carries `id`; `parseRecent` rejects a file whose `id` is another instance's and accepts a
+  Phase 3 file without one, so a rollback reads a Phase 4 file and a reorder of `instances[]`
+  moves which file the first entry reads, never which rows an instance accepts):
+  `{ version: 1, instance: <Model.origin(url)>, id, savedAt, recent: [ { uuid, status, appId,
   appName, serverName, commit, commitMessage, createdAt, updatedAt, finishedAt, url,
   restartOnly, force, isApi, isWebhook } ] }`. Written only from the `deployment` arm of
   `_dispatch` (the one place a terminal record enters `recent`; `_recent` itself is
@@ -389,7 +411,10 @@ except a critical event while Do Not Disturb is on, which is sent as `omarchy-ac
 the only sender the shell shows through DND (`NotificationLogic.js:118-122`; the shell
 archives it to history as that sender). DND is read from
 `shell.serviceFor("omarchy.notifications").doNotDisturb`; `null` (service unreachable)
-counts as off and `status.notify.dnd` reports it. The copy table is in `docs/design.md`.
+counts as off and `status.notify.dnd` reports it. With two or more instances the body
+ends in ` · <instance name>` (Phase 4; `ctx.instanceLabel`), and the ≤ 12-a-minute
+budget is per shell: each context plans against what every context already sent and
+charges the root's ring. The copy table is in `docs/design.md`.
 Log lines are `coolwatch notify <event> <uuid8>` at intent (a detached process cannot
 report success), never a name, message or URL. Names, branches, commit messages and the
 instance URL appear in the notifier's argv and in the shell's 0644 history files by
@@ -563,6 +588,22 @@ refused after three consecutive ability failures until a 2xx or a config change.
 35. (Phase 4 SR37) Missing `read:sensitive` is detected, not silent: a terminal
     deployment row without `logs` sets `sensitive: "no"` (one-way toward `"yes"`), the
     log view shows the swap-the-token sentence, `_status().sensitive` reports it.
+36. (Phase 4 SR32) An instance `id` is a safe filename: `Model.ID_RE`
+    (`[A-Za-z0-9_-]{1,32}`) and uniqueness are config errors before any path is built.
+37. (Phase 4 SR33) No userinfo in an instance URL: a config error, so credentials never
+    reach browser argv or the shell's history files; chips render `name` only.
+38. (Phase 4 SR34) Tokens live in one place per context (`_token`, written by
+    `_tokenReady`, read by `_launch`); a released context kills its requests and drops its
+    token in `Component.onDestruction`; the exposure through `serviceFor()` scales with
+    the instance count and is stated here rather than discovered.
+39. (Phase 4 SR36) TLS failures are named: curl exit 60 is the `tls` kind at every site
+    (`META`, `errorFor`, `barState`, `calloutBody`), retried like a transport error
+    (curl aborts before any request, so the Bearer header was never sent); `insecure`,
+    `-k` and `proto-default` are never emitted (node test).
+40. (Phase 4 SR38) Actions bind to the instance they were opened on: IPC verbs resolve
+    against the active instance only; the confirm dialog captures `activeId` and the
+    context refuses a mismatch with "Instance changed; nothing sent"; every pending entry
+    lives in its context; `status.lastAction.instance` names it.
 
 ## Testing
 
@@ -600,6 +641,7 @@ refused after three consecutive ability failures until a 2xx or a config change.
 | Path | Purpose |
 |---|---|
 | `~/.config/coolwatch/config.json` | instances, tokens, poll and notify settings (0600 in a 0700 directory) |
-| `~/.local/state/coolwatch/recent.json` | recent terminal deployments, survives restarts; the directory is created and chmod'ed 0700 by the service (`mkdir -m` is create-only), the file is umask-mode |
+| `~/.local/state/coolwatch/recent.json` | recent terminal deployments of `instances[0]`, survives restarts; the directory is created and chmod'ed 0700 by the service (`mkdir -m` is create-only), the file is umask-mode |
+| `~/.local/state/coolwatch/recent-<id>.json` | the same for every further instance (Phase 4); a removed instance's file is left in place |
 | `~/.config/omarchy/plugins/io.github.danjonesio.coolwatch/` | installed plugin files |
 | `~/.config/omarchy/shell.json` | bar placement and display-only widget settings |

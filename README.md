@@ -5,7 +5,7 @@ deployments, and the buttons to deploy, redeploy, restart, stop and cancel, in a
 [Omarchy](https://omarchy.org/) panel. Works with Coolify Cloud and self-hosted Coolify
 through the REST API.
 
-**Status: Phase 4 depth (build logs, container logs, deployment history, tag deploy) built on `phase-4-depth`; Phases 1 (read-only bar icon and panel), 2 (actions) and 3 (notifications) merged. Multi-instance chips follow on `phase-4-instances`.** See [docs/roadmap.md](docs/roadmap.md).
+**Status: Phase 4 built on `phase-4-depth` (build logs, container logs, deployment history, tag deploy) and `phase-4-instances` (several Coolify instances, chips); Phases 1 (read-only bar icon and panel), 2 (actions) and 3 (notifications) merged.** See [docs/roadmap.md](docs/roadmap.md).
 
 **Renamed from Omarify on 2026-09-12.** New plugin id `io.github.danjonesio.coolwatch`, config at
 `~/.config/coolwatch/config.json`, state at `~/.local/state/coolwatch/recent.json`. Nothing is read
@@ -44,7 +44,9 @@ directory as 0700):
 {
   "version": 1,
   "instances": [
-    { "id": "cloud", "name": "Coolify Cloud", "url": "https://app.coolify.io", "token": "67|…" }
+    { "id": "cloud", "name": "Coolify Cloud", "url": "https://app.coolify.io", "token": "67|…" },
+    { "id": "homelab", "name": "Homelab", "url": "http://10.0.0.5:8000",
+      "tokenCommand": ["op", "read", "op://Private/Coolify Homelab/credential"] }
   ],
   "poll": { "deploymentsSec": 4, "resourcesSec": 60, "serversSec": 120, "topologySec": 600 },
   "notify": { "deploymentQueued": true, "deploymentStarted": true, "deploymentFinished": true,
@@ -52,7 +54,12 @@ directory as 0700):
 }
 ```
 
-`poll` is optional; those are the defaults. `notify` is optional too: every key
+One entry in `instances` is the usual case; with two or more, chips under the panel's
+title switch between them (`h`/`l` on the title, a click, a middle-click on the bar icon
+or `omarchy-shell io.github.danjonesio.coolwatch instance <id>`), each polls on its own,
+the bar icon follows the one you are looking at and its tooltip names another's trouble,
+and toasts say which instance they are about. Each `id` is a short name of letters,
+digits, `-` and `_`. `poll` is optional; those are the defaults. `notify` is optional too: every key
 defaults to `true`, `"notify": false` switches every toast off, a cancelled deployment
 rides `deploymentFinished`, and the values are booleans, unquoted (a bad value keeps its
 default and polling continues; the panel shows a warning unless a plaintext or

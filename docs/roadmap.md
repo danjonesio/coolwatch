@@ -103,8 +103,13 @@ Deliverables
 - Deployment history per application with "show more".
 - Tag deploy from a "Tags" fold if the account uses tags (Dan tagged landing
   `production-landing` for the build; the API cannot list a tag's members).
-- Multi-instance chips; middle-click cycling: split out to `phase-4-instances` so each
-  branch is installable on its own.
+- Multi-instance chips; middle-click cycling: built 2026-09-12 on `phase-4-instances`
+  (see `docs/plans/phase-4-instances.build.md`): one `InstanceCtx` per `instances[]`
+  entry with its own store, timers, requests, ledgers, pending map, notify state and
+  `recent-<id>.json`; chips under the hero, `h`/`l` on the hero, middle-click, IPC
+  `instances` / `instance <id>`; the bar icon follows the current instance with a
+  tooltip suffix for another's trouble; toast bodies name the instance; curl exit 60
+  is the named `tls` kind.
 
 Acceptance
 
@@ -115,8 +120,17 @@ Acceptance
   the latency is one deployments interval plus one drain round trip. Verified live by
   Dan on 2026-09-12 with a deliberately failed api build: the marker and the failing
   command appeared with the Failed toast.
-- Two instances (Cloud + a self-hosted test box) switch cleanly with independent
-  polling and error states: `phase-4-instances`.
+- Two instances switch cleanly with independent polling and error states. Verified
+  2026-09-12 with a second entry on the same Cloud account (a self-hosted box was not
+  reachable from this machine): both contexts poll at 17–19/min each, a mangled second
+  token puts only that context in `auth` while the first keeps polling and the icon
+  stays healthy with the tooltip suffix, each writes and reads its own recent file (a
+  reorder makes the other's file `recentRejected`), removing the entry leaves one chip
+  and no stray curl, an unreachable dummy entry shows `offline` beside a healthy Cloud
+  and a toast body ends in ` · Coolify Cloud`. Needs-human: a real self-hosted Coolify
+  (plain-http warning, the `tls` kind, the API-disabled path, an older version's 404
+  note), cross-account data isolation, and the keyboard and mouse paths (`h`/`l` on the
+  hero, a chip click, the middle-click, the confirm refused across a switch).
 
 ## Phase 5 — beyond the API (optional, each item its own decision)
 
