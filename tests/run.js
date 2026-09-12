@@ -1627,5 +1627,31 @@ test("Model.footerHints: view lines for following/held/paused/terminal logs, con
   eq(M.footerHints("view", null, { view: { kind: "history" }, confirmOpen: true }), "h/l pick · enter confirm · esc cancel", "the confirm wins")
 })
 
+// ---- Phase 4 depth: remaining plan cases --------------------------------------------------
+
+test("Model.normaliseHistory rows take joinBranch like the drain arm: branch and appUuid from the joined resources", () => {
+  const s = loadedSnap()
+  const h = M.normaliseHistory(fx("history-page.json"))
+  const joined = M.joinBranch(h.rows, s.resources)
+  eq(joined.length, h.rows.length)
+  for (const r of joined) assert(!("logs" in r), "still no logs after the join")
+  const api = s.resources.filter(r => r.uuid === "xyhpwdxqu33omjgwuo6c7cjp")[0]
+  if (api) { assert(joined.every(r => r.appUuid === "xyhpwdxqu33omjgwuo6c7cjp"), "appUuid joined"); eq(joined[0].branch, api.gitBranch || joined[0].branch) }
+  const row = M.historyRow(joined[0], "xyhpwdxqu33omjgwuo6c7cjp", "https://app.coolify.io")
+  assert(row.sub === "deploy" || row.sub === "restart" || (row.sub && row.sub !== "HEAD"), "sub never renders HEAD: " + row.sub)
+  assert(row.url.indexOf("https://app.coolify.io/") === 0, "url from the instance origin")
+})
+
+test("Model.serialiseRecent never emits a logs key, even when a record carries one (SR26)", () => {
+  const d = M.normaliseDeployment(fx("deployment-finished.json"))
+  d.logs = "[{\"command\":null,\"output\":\"secret build output\"}]"
+  d.entries = [{ output: "x" }]
+  const at = Date.parse(d.finishedAt || d.updatedAt) + 1000       // the file's 24 h age-out is measured from this clock
+  const text = M.serialiseRecent([d], "https://app.coolify.io", at).text
+  assert(text.indexOf("logs") < 0, "no logs key or text"); assert(text.indexOf("secret build output") < 0); assert(text.indexOf("entries") < 0)
+  const back = M.parseRecent(text, "https://app.coolify.io", at)
+  eq(back.rejected, false); eq(back.recent.length, 1); assert(!("logs" in back.recent[0]))
+})
+
 console.log(passed + " passed, " + failed + " failed")
 process.exit(failed ? 1 : 0)
