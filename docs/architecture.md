@@ -139,8 +139,8 @@ per-transfer option at `next`:
 url = "https://app.coolify.io/api/v1/deployments"
 silent
 connect-timeout = "5"
-max-time = "6"
-max-filesize = "8388608"
+max-time = "12"
+max-filesize = "4194304"
 proto = "=https,http"
 header = "Authorization: Bearer 67|…"
 header = "Accept: application/json"
@@ -159,8 +159,10 @@ write-out = "\n<RS>%{exitcode} %{http_code} %{time_total} %{size_download} %{err
   topology) so kinds overlap but the same kind never stacks. Each carries a monotonic
   `seq`/`liveSeq`; output from a reaped or superseded request is dropped (the
   `MultiSelect.optionsCommand` pattern). Collectors are `id`'d and read in `onExited`.
-- Per-kind `max-time` (deployments 6, deployment 6, version 6, resources 10, servers 10,
-  topology 8 per block). A `Req`'s deadline is `blocks × max-time + 3` s; one 5 s reaper
+- Per-kind `max-time` (deployments 12, deployment 12, version 6, resources 10, servers 10,
+  topology 8 per block; the two log-bearing kinds carry `maxBytes` 4 MB, the largest cap
+  a 12 s transfer can deliver at the slowest measured throughput, because with
+  `read:sensitive` every deployment row carries its full build log). A `Req`'s deadline is `blocks × max-time + 3` s; one 5 s reaper
   `Timer`, armed once at service start, kills a `Req` past its deadline (bumping `seq`
   first) and counts a reap as a failure.
 - Errors map per transfer: exit 6/7/28/35/60 → offline; exit 63 → response too large;
@@ -426,8 +428,9 @@ refused after three consecutive ability failures until a 2xx or a config change.
 1. Curl config injection: every emitted value passes `Api.quote`, every path segment
    `Api.seg`; the write-out is a per-block line through `quote` too.
 2. `~/.curlrc` isolation: `-q` is argv[1]; nothing else is in argv.
-3. Bounds per block: `connect-timeout 5`, per-kind `max-time`, `max-filesize 8388608`
-   (exit 63 → "response too large"), `proto =https,http`; `url` validated on load,
+3. Bounds per block: `connect-timeout 5`, per-kind `max-time`, `max-filesize` 8388608
+   (4194304 on the log-bearing `deployments` and `deployment` kinds, set per descriptor
+   with `maxBytes`; exit 63 → "response too large"), `proto =https,http`; `url` validated on load,
    `http://` warns.
 4. Header whitelist: `Model.splitResponses` discards the raw header blob; only
    `retry-after`, `x-ratelimit-remaining`, `x-ratelimit-limit` survive, as integers or

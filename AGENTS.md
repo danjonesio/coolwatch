@@ -24,7 +24,9 @@ Status: **Phase 3 ("notify") built on branch `phase-3-notify`; Phases 1 ("see") 
   edit-abilities flow, so a new token is swapped in, not edited.
   `read:sensitive` is added in Phase 4 for the log viewer; it also makes
   `GET /deployments` carry every deployment's full build log on every poll, so do not
-  hold it before then. `write` is optional and only gates "Validate server".
+  hold it before then; the two log-bearing kinds run with `max-time` 12 and a 4 MB
+  `maxBytes` per descriptor so a verbose build cannot take the deployments poll into
+  backoff. `write` is optional and only gates "Validate server".
 - Failed deployment and unreachable server notify at `critical`; everything else
   `low`/`normal`. The shell shows a toast through Do Not Disturb only when its app name
   is `omarchy-action` (`plugins/notifications/NotificationLogic.js:118-122`); a plugin-id

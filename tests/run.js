@@ -138,13 +138,22 @@ test("Api.block GET output is byte-identical for every Phase 1 descriptor (SR1)"
   const gets = [A.reqVersion(), A.reqDeployments(), A.reqDeployment("u1"), A.reqResources(), A.reqServers(), A.reqProjects(), A.reqProject("p1"), A.reqServerResources("s1")]
   for (const r of gets) {
     const b = A.block(inst, TOK, r, 6)
-    const want = 'url = "' + A.quote(A.base(inst) + r.path) + '"\nsilent\nconnect-timeout = "5"\nmax-time = "6"\nmax-filesize = "8388608"\nproto = "=https,http"\nheader = "Authorization: Bearer ' + TOK + '"\nheader = "Accept: application/json"\nwrite-out = "' + A.quote(A.TRAILER) + '"\n'
+    const want = 'url = "' + A.quote(A.base(inst) + r.path) + '"\nsilent\nconnect-timeout = "5"\nmax-time = "6"\nmax-filesize = "' + (r.maxBytes || A.MAX_FILESIZE) + '"\nproto = "=https,http"\nheader = "Authorization: Bearer ' + TOK + '"\nheader = "Accept: application/json"\nwrite-out = "' + A.quote(A.TRAILER) + '"\n'
     eq(b, want, "byte-identical Phase 1 block for " + r.kind)
     eq(count(b, "request = "), 0, "no method line on a GET")
     eq(count(b, "data-raw"), 0)
     eq(count(b, "Content-Type"), 0)
     eq(b.split("\n").filter(l => l.length).length, 9, "nine lines per GET block")
   }
+})
+
+test("Api.block max-filesize is per descriptor: 4 MB for log-bearing kinds, 8 MB otherwise (SR30)", () => {
+  eq(A.MAX_FILESIZE_LOG, 4194304)
+  eq(count(A.block(inst, TOK, A.reqDeployments(), 12), 'max-filesize = "4194304"'), 1, "deployments list carries build logs")
+  eq(count(A.block(inst, TOK, A.reqDeployment("u1"), 12), 'max-filesize = "4194304"'), 1, "deployment detail carries a build log")
+  eq(count(A.block(inst, TOK, A.reqResources(), 10), 'max-filesize = "8388608"'), 1, "resources keep the default")
+  eq(count(A.block(inst, TOK, A.reqDeploy("u1", false), 10), 'max-filesize = "8388608"'), 1, "actions keep the default")
+  eq(A.block(inst, TOK, A.reqDeployments(), 12).split("\n").filter(l => l.length).length, 9, "still nine lines per GET block")
 })
 
 test("Api.block POST shape: one request, one Content-Type, one constant data-raw, all nine GET lines (SR1)", () => {
