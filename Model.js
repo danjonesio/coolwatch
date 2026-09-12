@@ -1533,7 +1533,7 @@ function buildLogLines(entries, opts) {
     var e = entries[k], isFail = !!(failing && e.i === failing.i)
     if (e.hidden && !opts.showHidden && !isFail) continue
     var n = 0, base = isFail ? "urgent" : (e.hidden ? "dim" : "fg")
-    if (isFail) out.push(noteRow(uuid + ":" + e.i + ":mark", "── failure ──", "urgent"))
+    if (isFail) { var mark = noteRow(uuid + ":" + e.i + ":mark", "── failure ──", "urgent"); mark.i = e.i; out.push(mark) }   // carries the index so a head trim drops it with its entry
     if (e.command !== null) out.push(viewRow("line", { key: uuid + ":" + e.i + ":" + (n++), i: e.i, text: "$ " + e.command, tone: isFail ? "urgent" : "dim", hidden: e.hidden }))
     if (e.output !== "") {
       var chunks = e.output.split("\n")

@@ -126,7 +126,7 @@ Item {
 
   // Depth (Phase 4). View slices live beside `snapshot` (the `pending` precedent): log
   // text never enters snapshot, _status(), recent.json, a console line or a toast (SR26).
-  // Every write is mutate-then-self-assign so the panel's bindings fire.
+  // Every write assigns a fresh shallow copy (_fresh) so the panel's bindings fire.
   property var _buildLogs: ({})        // uuid -> { uuid, entries, dropped, rev, status, terminal, source, truncated, refused, bytes, fetchedAt, message, at }; LRU 3, targets pinned
   property var _containerLogs: ({})    // uuid -> { uuid, kind, sub, label, lines (null while loading), truncated, fetchedAt, message, at }; LRU 3
   property var _servicePicks: ({})     // uuid -> { uuid, label, names (null while loading), message }
@@ -734,12 +734,16 @@ Item {
     else if (s === "no" && root._sensitive === "unknown") root._sensitive = "no"
   }
 
+  // A var property assigned the same object emits no change; the panel binds on these maps,
+  // so every writer assigns a fresh shallow copy.
+  function _fresh(m) { var o = {}; for (var k in m) if (Object.prototype.hasOwnProperty.call(m, k)) o[k] = m[k]; return o }
+
   function _isLogTarget(uuid) { for (var k in root._logTargets) if (root._logTargets[k] === uuid) return true; return false }
 
   function _setLogTarget(panelKey, uuid) {
     var t = root._logTargets, cur = t[panelKey]
-    if (uuid) { if (cur !== uuid) { t[panelKey] = uuid; root._logTargets = t } }
-    else if (cur !== undefined) { delete t[panelKey]; root._logTargets = t }
+    if (uuid) { if (cur !== uuid) { t[panelKey] = uuid; root._logTargets = root._fresh(t) } }
+    else if (cur !== undefined) { delete t[panelKey]; root._logTargets = root._fresh(t) }
   }
 
   // Oldest unpinned records go first; the map is reassigned by the caller.
@@ -779,16 +783,17 @@ Item {
       if (rec.bytes < 0) rec.bytes = 0
       if (root._sensitive === "no" && rec.terminal) rec.message = root.sensitiveMessage   // SR37: a terminal row with no log
     }
-    m[uuid] = rec
+    m[uuid] = root._fresh(rec)                                   // a fresh record too: the panel binds on the record reference
     root._evictLru(m, 3, root._isLogTarget)
-    root._buildLogs = m
+    root._buildLogs = root._fresh(m)
   }
 
   function _setBuildLogMessage(uuid, text) {
     var m = root._buildLogs, rec = m[uuid]
     if (!rec) { rec = { uuid: uuid, entries: [], dropped: 0, rev: "", status: "", terminal: false, source: "fetch", truncated: false, refused: false, bytes: 0, fetchedAt: 0, message: null, at: Date.now() }; m[uuid] = rec }
     rec.message = text; rec.at = Date.now()
-    root._buildLogs = m
+    m[uuid] = root._fresh(rec)
+    root._buildLogs = root._fresh(m)
   }
 
   function _setContainerLog(uuid, kind, sub, parsed, message, label) {
@@ -798,16 +803,16 @@ Item {
     else if (message !== undefined) rec.message = message
     if (!parsed && message === null) rec.lines = null      // loading again
     rec.at = Date.now()
-    m[uuid] = rec
+    m[uuid] = root._fresh(rec)
     root._evictLru(m, 3, null)
-    root._containerLogs = m
+    root._containerLogs = root._fresh(m)
   }
   function _setContainerLogMessage(uuid, text) { root._setContainerLog(uuid, (root._containerLogs[uuid] || {}).kind || "application", (root._containerLogs[uuid] || {}).sub || null, null, text, "") }
 
   function _setPick(uuid, names, message, label) {
     var m = root._servicePicks
     m[uuid] = { uuid: uuid, label: label || ((m[uuid] || {}).label || ""), names: names, message: message === undefined ? null : message }
-    root._servicePicks = m
+    root._servicePicks = root._fresh(m)
   }
 
   function _setHistoryPage(appUuid, skip, count, rows) {
@@ -816,15 +821,16 @@ Item {
     var seen = {}; merged.forEach(function(r) { seen[r.uuid] = true })
     rows.forEach(function(r) { if (!seen[r.uuid]) { merged.push(r); seen[r.uuid] = true } })
     page.rows = merged; page.count = count; page.skip = skip; page.loading = false; page.message = null; page.at = Date.now()
-    h[appUuid] = page
+    h[appUuid] = root._fresh(page)
     root._evictLru(h, 3, null)
-    root._history = h
+    root._history = root._fresh(h)
   }
   function _setHistoryMessage(appUuid, text) {
     var h = root._history, page = h[appUuid]
     if (!page) return
     page.loading = false; page.message = text; page.at = Date.now()
-    root._history = h
+    h[appUuid] = root._fresh(page)
+    root._history = root._fresh(h)
   }
 
   function _viewFail(p, r) {
@@ -891,9 +897,9 @@ Item {
     appUuid = String(appUuid || ""); skip = Math.max(0, skip | 0)
     var h = root._history, page = h[appUuid] || { appUuid: appUuid, label: String(label || ""), count: 0, rows: [], skip: 0, loading: false, message: null, at: 0 }
     if (label) page.label = String(label)
-    if (historyReq.running || historyReq.stopping) { page.message = "Busy · try again"; h[appUuid] = page; root._history = h; return }
+    if (historyReq.running || historyReq.stopping) { page.message = "Busy · try again"; h[appUuid] = root._fresh(page); root._history = root._fresh(h); return }
     page.loading = true; page.message = null; page.skip = skip; page.at = Date.now()
-    h[appUuid] = page; root._evictLru(h, 3, null); root._history = h
+    h[appUuid] = root._fresh(page); root._evictLru(h, 3, null); root._history = root._fresh(h)
     historyReq.target = { kind: "history", appUuid: appUuid, skip: skip, label: page.label }
     root._launch(historyReq, Api.reqHistory(appUuid, skip), 12)
   }

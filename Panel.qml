@@ -4,6 +4,7 @@ import Quickshell
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
+import "Api.js" as Api
 
 // One instance per monitor. Reads the service snapshot; never polls. Rows are
 // flattened by Model.panelRows only while open and the ListView model is only
@@ -45,6 +46,32 @@ Panel {
   property bool confirmArmed: false         // Enter resolves the dialog only after confirmArm fires
   property double _lastLadderAt: 0
 
+  // Phase 4 overlay views (per monitor). A view is a plain object; its live record is read
+  // from svc.views by uuid, never from the pushed object. The overlay owns its own
+  // ListModel: log lines are appended by absolute entry index, never routed through rows.
+  property var viewStack: []                // [] | [view] | [history, buildlog]
+  readonly property var view: root.viewStack.length ? root.viewStack[root.viewStack.length - 1] : null
+  property bool following: true             // build log sticks to the newest line until the user scrolls up
+  property bool showHidden: false           // H: internal steps (the failing one is always shown)
+  property string viewCursorKey: ""         // cursor inside a history/picker view (a key, never an index)
+  property int consumed: 0                  // absolute entry index the ListModel has been filled up to
+  property int seenDropped: 0
+  property int lastFailIndex: -1
+  property string _prevFocus: "list"
+  readonly property var liveRec: root.view && root.svc && root.svc.views
+    ? (root.view.kind === "buildlog" ? (root.svc.views.buildLogs[root.view.uuid] || null)
+     : root.view.kind === "containerlog" ? (root.svc.views.containerLogs[root.view.uuid] || null)
+     : root.view.kind === "history" ? (root.svc.views.history[root.view.uuid] || null)
+     : (root.svc.views.picks[root.view.uuid] || null)) : null
+  // One string that changes exactly when the overlay must re-sync (never on an unrelated slice).
+  readonly property string myRev: !root.view ? "" : !root.liveRec ? "none"
+    : root.view.kind === "buildlog" ? [root.liveRec.rev, root.liveRec.status, root.liveRec.message || "", root.liveRec.refused, root.liveRec.bytes].join("|")
+    : root.view.kind === "containerlog" ? [root.liveRec.fetchedAt, root.liveRec.message || "", root.liveRec.lines ? root.liveRec.lines.length : -1].join("|")
+    : root.view.kind === "history" ? [root.liveRec.at, root.liveRec.rows.length, root.liveRec.loading, root.liveRec.message || "", root.liveRec.count].join("|")
+    : [root.liveRec.names ? root.liveRec.names.length : -1, root.liveRec.message || ""].join("|")
+  onMyRevChanged: root.syncView(false)
+  onShowHiddenChanged: root.syncView(true)
+
   readonly property var snapshot: svc ? svc.snapshot : null
   readonly property var pending: svc && svc.pending ? svc.pending : ({})
   readonly property var rows: root.opened && root.snapshot
@@ -59,7 +86,7 @@ Panel {
 
   onRowsChanged: applyRows()
   onOpenedChanged: {
-    if (!opened) { root.confirmOpen = false; root.confirmAction = null; root.confirmArmed = false; root.expandedKey = ""; root.actionFocus = "" }
+    if (!opened) { root.confirmOpen = false; root.confirmAction = null; root.confirmArmed = false; root.expandedKey = ""; root.actionFocus = ""; root.clearViews() }
     if (!svc) return
     if (opened) svc.panelOpened(panelId)
     else svc.panelClosed(panelId)
@@ -70,7 +97,8 @@ Panel {
     interval: 1000
     repeat: true
     running: root.opened
-    onTriggered: { root.nowMs = Date.now(); if (root.svc) root.svc.panelAlive(root.panelId) }
+    // The heartbeat re-asserts the watched build log every second, so the service never loses it.
+    onTriggered: { root.nowMs = Date.now(); if (root.svc) root.svc.panelAlive(root.panelId, root.view && root.view.kind === "buildlog" ? root.view.uuid : "") }
   }
   // Arms the confirm 250 ms after it opens: an Enter that opened it (and its auto-repeat)
   // cannot also resolve it, and a pointer already over the Confirm cell is re-overridden.
@@ -107,7 +135,7 @@ Panel {
       if (i < 0) i = Model.nextSelectable(next, next.length, -1)
     }
     if (i >= 0 && next[i].key !== root.cursorKey) root.cursorKey = next[i].key
-    if (root.cursorActive && i !== prev) Qt.callLater(root.scrollToSelection)
+    if (root.cursorActive && i !== prev && !root.view) Qt.callLater(root.scrollToSelection)   // never fights the overlay's follow
     // The expansion and the focused button are repaired the same way as the cursor.
     if (root.expandedKey) {
       var ai = Model.indexOfKey(next, "act:" + root.expandedKey)
@@ -130,12 +158,13 @@ Panel {
   }
 
   function focusHero() {
+    if (root.view) return                     // the ring stays put while a view is open
     root.cursorActive = true
     root.focusSection = "hero"
   }
 
   function hoverCursor(key) {
-    if (root.reflowing || root.confirmOpen) return
+    if (root.reflowing || root.confirmOpen || root.view) return
     root.setCursor(key)
   }
 
@@ -246,6 +275,8 @@ Panel {
     var a = Model.actionFor(row, verb)
     if (!a) return
     if (a.id === "open") { root.openRow(row); return }
+    if (a.id === "logs") { root.openLogsFor(row); return }        // Phase 4: navigation, never act()
+    if (a.id === "history") { root.openHistoryFor(row); return }
     if (!svc) return
     // Fail closed: a confirming verb never reaches act() from here; only resolveConfirm does.
     if (a.confirm) { if (!root.confirmOpen) root.openConfirm(a.id, row); return }
@@ -286,6 +317,7 @@ Panel {
     if (now - root._lastLadderAt < 250) return
     root._lastLadderAt = now
     if (root.confirmOpen) { root.resolveConfirm(false); return }
+    if (root.viewStack.length) { root.popView(); return }       // Phase 4: a view is the first rung
     if (root.expandedKey) { root.collapse(); return }
     root.close()
   }
@@ -303,6 +335,183 @@ Panel {
     if (i >= 0) listView.positionViewAtIndex(i, ListView.Contain)
   }
 
+  // ---- Phase 4: overlay views (build log, container log, service picker, history) --------
+  // The service owns every byte of log text; the panel appends lines to its own ListModel
+  // by absolute entry index and removes from the head when the tail cap drops entries.
+
+  function pushView(v) {
+    if (!root.viewStack.length) root._prevFocus = root.focusSection
+    root.viewStack = root.viewStack.concat([v])
+    root.focusSection = "view"; root.cursorActive = true
+    root.following = true; root.showHidden = false; root.viewCursorKey = ""
+    root.syncView(true)
+  }
+  function popView() {
+    if (!root.viewStack.length) return
+    root.viewStack = root.viewStack.slice(0, -1)
+    root.following = true; root.showHidden = false; root.viewCursorKey = ""
+    if (root.view) { root.syncView(true); root._watch() }
+    else { root.focusSection = root._prevFocus === "hero" ? "hero" : "list"; viewModel.clear(); if (svc) svc.closeView(root.panelId) }
+  }
+  function clearViews() { if (root.viewStack.length) { root.viewStack = []; root.focusSection = root._prevFocus === "hero" ? "hero" : "list"; viewModel.clear(); if (svc) svc.closeView(root.panelId) } }
+  // Tell the service which build log this panel is watching (pinned against eviction).
+  function _watch() { if (!svc) return; if (root.view && root.view.kind === "buildlog") svc.openBuildLog(root.panelId, root.view.uuid); else svc.closeView(root.panelId) }
+
+  function openLogsFor(row) {
+    if (!row || !svc) return
+    if (row.type === "deployment" || row.type === "history") {
+      root.pushView({ kind: "buildlog", uuid: row.uuid, name: row.name || row.uuid, url: row.url || "", status: row.status || "" })
+      root._watch()
+    } else if (row.type === "resource") {
+      if (row.kind === "service") {
+        root.pushView({ kind: "servicepick", uuid: row.uuid, name: row.name || row.uuid, url: row.url || "", ckind: "service" })
+        svc.fetchContainerLog("service", row.uuid, row.name || "")
+      } else {
+        root.pushView({ kind: "containerlog", uuid: row.uuid, name: row.name || row.uuid, url: row.url || "", ckind: row.kind, sub: "" })
+        svc.fetchContainerLog(row.kind, row.uuid, row.name || "")
+      }
+    }
+  }
+  function openHistoryFor(row) {
+    if (!row || !svc || row.type !== "resource" || row.kind !== "application") return
+    root.pushView({ kind: "history", uuid: row.uuid, name: row.name || row.uuid, url: row.url || "" })
+    svc.fetchHistory(row.uuid, 0, row.name || "")
+  }
+  // Enter inside a history or picker view.
+  function activateView() {
+    var v = root.view
+    if (!v || !svc) return
+    var i = root.viewIndex(root.viewCursorKey)
+    if (i < 0) return
+    var r = viewModel.get(i)
+    if (v.kind === "history") {
+      if (r.rowType === "history") root.openLogsFor({ type: "history", uuid: r.uuid, name: r.name, url: r.url, status: r.status })
+      else if (r.rowType === "more" && root.liveRec && !root.liveRec.loading) svc.fetchHistory(v.uuid, root.liveRec.rows.length, v.name)
+    } else if (v.kind === "servicepick" && r.rowType === "pick") {
+      root.viewStack = root.viewStack.slice(0, -1).concat([{ kind: "containerlog", uuid: v.uuid, name: v.name, url: v.url, ckind: "service", sub: r.name }])
+      root.following = true; root.viewCursorKey = ""
+      svc.fetchContainerLogSub(v.uuid, r.name, v.name)
+      root.syncView(true)
+    }
+  }
+  function refetchView() {
+    var v = root.view
+    if (!v || !svc) return
+    if (v.kind === "containerlog") { if (v.ckind === "service") svc.fetchContainerLogSub(v.uuid, v.sub, v.name); else svc.fetchContainerLog(v.ckind, v.uuid, v.name) }
+    else if (v.kind === "buildlog") svc.refetchBuildLog(v.uuid)
+    else if (v.kind === "history") svc.fetchHistory(v.uuid, 0, v.name)
+    else if (v.kind === "servicepick") svc.fetchContainerLog("service", v.uuid, v.name)
+  }
+  function openView() { if (root.view && root.view.url) root.openRow({ url: root.view.url }) }
+  function viewRows() { var out = []; for (var i = 0; i < viewModel.count; i++) out.push(viewModel.get(i)); return out }
+  function viewIndex(key) { for (var i = 0; i < viewModel.count; i++) if (viewModel.get(i).key === key) return i; return -1 }
+  function moveViewCursor(dy) {
+    var rows = root.viewRows()
+    var i = root.viewIndex(root.viewCursorKey)
+    var n = Model.nextSelectable(rows, i, dy)
+    if (n < 0) return
+    root.viewCursorKey = rows[n].key
+    viewList.positionViewAtIndex(n, ListView.Contain)
+  }
+  function scrollLog(dy) {
+    var max = Math.max(0, viewList.contentHeight - viewList.height)
+    viewList.contentY = Util.clamp(viewList.contentY + dy * Style.space(18), 0, max)
+    if (dy < 0) root.following = false
+    else if (viewList.atYEnd) root.following = true
+  }
+  function followNewest() { root.following = true; viewList.positionViewAtEnd() }
+
+  // Fill or top up the overlay model from the live record. `rebuild` clears first.
+  function syncView(rebuild) {
+    var v = root.view
+    if (!v) return
+    var rec = root.liveRec
+    if (v.kind === "buildlog") {
+      var failing = rec ? Model.failingEntry(rec.entries, rec.status) : null
+      var fi = failing ? failing.i : -1
+      if (rebuild || !rec || fi !== root.lastFailIndex) { viewModel.clear(); root.consumed = 0; root.seenDropped = 0; root.lastFailIndex = fi }
+      if (!rec) return
+      if (rec.dropped > root.seenDropped) {                         // the tail cap dropped entries: trim the head by absolute index
+        while (viewModel.count && viewModel.get(0).i !== null && viewModel.get(0).i < rec.dropped) viewModel.remove(0)
+        root.seenDropped = rec.dropped
+        if (root.consumed < rec.dropped) root.consumed = rec.dropped
+      }
+      var fresh = rec.entries.filter(function(e) { return e.i >= root.consumed })
+      if (fresh.length) {
+        var lines = Model.buildLogLines(fresh, { showHidden: root.showHidden, failing: failing, uuid: v.uuid })
+        for (var k = 0; k < lines.length; k++) viewModel.append(lines[k])
+        root.consumed = rec.dropped + rec.entries.length
+      }
+      if (root.following) Qt.callLater(function() { if (root.following) viewList.positionViewAtEnd() })
+    } else if (v.kind === "containerlog") {
+      viewModel.clear()
+      if (rec && rec.lines) for (var c = 0; c < rec.lines.length; c++) viewModel.append(Model.viewRow("line", { key: v.uuid + ":" + c, i: c, text: rec.lines[c], tone: "fg", hidden: false }))
+      Qt.callLater(function() { viewList.positionViewAtEnd() })
+    } else if (v.kind === "history") {
+      viewModel.clear()
+      var o = Model.origin(root.snapshot && root.snapshot.instance ? root.snapshot.instance.url : "")
+      if (rec) {
+        for (var h = 0; h < rec.rows.length; h++) viewModel.append(Model.historyRow(rec.rows[h], v.uuid, o))
+        var more = Model.moreRow(rec, Api.HISTORY_TAKE)
+        if (more) viewModel.append(more)
+      }
+      if (root.viewIndex(root.viewCursorKey) < 0 && viewModel.count) root.viewCursorKey = viewModel.get(Math.max(0, Model.nextSelectable(root.viewRows(), -1, 1))).key
+    } else if (v.kind === "servicepick") {
+      viewModel.clear()
+      if (rec && rec.names) for (var p = 0; p < rec.names.length; p++) viewModel.append(Model.pickRow(v.uuid, rec.names[p]))
+      if (root.viewIndex(root.viewCursorKey) < 0 && viewModel.count) root.viewCursorKey = viewModel.get(0).key
+    }
+  }
+
+  // The note above or below the lines: loading, queued, empty, refused, message, truncated head.
+  readonly property string viewHeadNote: {
+    var v = root.view, rec = root.liveRec
+    if (!v) return ""
+    if (v.kind === "buildlog" && rec && rec.dropped > 0) return "… " + rec.dropped + " earlier entries not shown. Open it in Coolify for the full log."
+    return ""
+  }
+  readonly property string viewNote: {
+    var v = root.view, rec = root.liveRec
+    if (!v) return ""
+    if (v.kind === "buildlog") {
+      if (!rec) return "Loading log…"
+      if (rec.message) return rec.message
+      if (rec.refused) return "This build log is larger than 4 MB. Open it in Coolify."
+      if (rec.entries.length) return ""
+      if (rec.status === "queued") return "Queued. Coolify has not started this build yet."
+      if (rec.status === "in_progress") return "Starting…"
+      if (rec.terminal && rec.bytes === 0 && rec.source !== "fetch") return "Loading log…"
+      if (rec.terminal) return "The log is empty."
+      return "Loading log…"
+    }
+    if (v.kind === "containerlog") {
+      if (!rec || rec.lines === null) return rec && rec.message ? rec.message : "Fetching the last 200 lines…"
+      if (rec.message) return rec.message
+      if (!rec.lines.length) return "The container has written nothing."
+      return rec.truncated ? "… earlier lines not shown." : ""
+    }
+    if (v.kind === "history") {
+      if (!rec) return "Loading history…"
+      if (rec.message) return rec.message
+      if (rec.loading && !rec.rows.length) return "Loading history…"
+      if (!rec.rows.length) return "No deployments recorded for this application."
+      return ""
+    }
+    if (!rec || rec.names === null) return rec && rec.message ? rec.message : "Loading containers…"
+    if (rec.message) return rec.message
+    return rec.names.length ? "Pick a container." : "This service has no containers."
+  }
+  readonly property string breadcrumb: {
+    var v = root.view, rec = root.liveRec
+    if (!v) return ""
+    var bits = [v.name]
+    if (v.kind === "buildlog") { var st = rec && rec.status ? rec.status : v.status; if (st) bits.push(st === "in_progress" ? "building" : st === "cancelled-by-user" ? "cancelled" : st); if (rec && rec.fetchedAt) bits.push(Model.age(rec.fetchedAt, root.nowMs)) }
+    else if (v.kind === "containerlog") { bits.push("last 200 lines"); if (v.sub) bits.push(v.sub); if (rec && rec.fetchedAt) bits.push(Model.age(rec.fetchedAt, root.nowMs)) }
+    else if (v.kind === "history") bits.push(rec && rec.count ? rec.count + " deployments" : "history")
+    else bits.push("pick a container")
+    return Model.G.back + " " + bits.join(" · ")
+  }
+
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
@@ -312,7 +521,8 @@ Panel {
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(380))
     // Fitted to what is actually in the card, capped: an error or empty state collapses it.
-    contentHeight: panel.fittedContentHeight(header.implicitHeight + Style.space(14) + listView.contentHeight + Style.space(10) + footer.implicitHeight, Style.space(640))
+    // While a view is open the body is pinned so a filling log does not resize under the reader.
+    contentHeight: panel.fittedContentHeight(header.implicitHeight + Style.space(14) + (root.view ? Style.space(480) : listView.contentHeight) + Style.space(10) + footer.implicitHeight, Style.space(640))
 
     // The confirm dialog is driven from the key catcher's signals below (its handleKey
     // needs a raw KeyEvent from a Keys.onPressed, which this panel never adds). It is a
@@ -335,24 +545,42 @@ Panel {
       anchors.fill: parent
       onMoveRequested: function(dx, dy) {
         if (root.confirmOpen) { if (dx !== 0) confirm.selectedIndex = confirm.selectedIndex === 0 ? 1 : 0; return }
+        // Phase 4: a view owns h/j/k/l before the cursor guard. h pops through the ladder; l is a no-op.
+        if (root.view) {
+          if (dx < 0) { root.closeLadder(); return }
+          if (dx > 0) return
+          if (root.view.kind === "buildlog" || root.view.kind === "containerlog") root.scrollLog(dy)
+          else root.moveViewCursor(dy)
+          return
+        }
         if (!root.cursorActive) { root.cursorActive = true; return }
         root.moveCursor(dx, dy)
       }
       onActivateRequested: {
         if (root.confirmOpen) { if (root.confirmArmed) root.resolveConfirm(confirm.selectedIndex === 1); return }
+        if (root.view) { if (root.view.kind === "history" || root.view.kind === "servicepick") root.activateView(); return }   // Enter/Space: nothing in a log
         if (root.cursorActive) root.activateCursor()
       }
       // `x` arrives here, not through textKey: cancel, only on a deployment row (the
       // applicability lookup drops it on a terminal one).
       onDeleteRequested: {
-        if (root.confirmOpen || root.focusSection !== "list") return
+        if (root.confirmOpen || root.view || root.focusSection !== "list") return
         var row = root.currentRow
         if (row && row.type === "deployment") root.runAction("cancel", row.key)
       }
       onCloseRequested: root.closeLadder()
-      onTabRequested: function(direction) { if (!root.confirmOpen) root.switchPanel(direction) }
+      onTabRequested: function(direction) { if (!root.confirmOpen) { root.clearViews(); root.switchPanel(direction) } }
       onTextKey: function(t) {
         if (root.confirmOpen) return
+        // Phase 4: the view's keys come first, above r and g, which must not touch the list underneath.
+        if (root.view) {
+          var kind = root.view.kind
+          if (t === "H" && kind === "buildlog") root.showHidden = !root.showHidden
+          else if (t === "b" && (kind === "buildlog" || kind === "containerlog")) root.followNewest()
+          else if (t === "r" || t === "R") root.refetchView()
+          else if (t === "o" || t === "O") root.openView()
+          return
+        }
         if (t === "r" || t === "R") { root.refreshNow(); return }
         if (t === "g" || t === "G") { root.setGroupBy(root.groupBy === "project" ? "server" : "project"); return }
         if (root.focusSection !== "list" || !root.currentRow) return
@@ -363,6 +591,7 @@ Panel {
         else if (t === "s" || t === "S") root.runAction("s", row.key)
         else if (t === "t" || t === "T") root.runAction("restart", row.key)
         else if (t === "v" || t === "V") root.runAction("validate", row.key)
+        else if (t === "L") root.runAction("L", row.key)          // Phase 4: the build or container log (the catcher takes lowercase l)
         else if (t === "o" || t === "O") root.openRow(row)
       }
 
@@ -409,6 +638,29 @@ Panel {
               onClicked: root.refreshNow()
             }
           }
+        }
+
+        // Phase 4: the breadcrumb of the open view; a click pops it. Lives in the header so it
+        // never scrolls away under the overlay's own list.
+        Item {
+          id: breadcrumbRow
+          width: parent.width
+          visible: root.view !== null
+          implicitHeight: visible ? breadcrumbText.implicitHeight + Style.space(4) : 0
+          height: implicitHeight
+          Text {
+            id: breadcrumbText
+            width: parent.width
+            textFormat: Text.PlainText
+            text: root.breadcrumb
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            font.bold: true
+            elide: Text.ElideRight
+            anchors.verticalCenter: parent.verticalCenter
+          }
+          MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.popView() }
         }
 
         // Status line: the outcome of the last action, 2.2 s for success, 6 s for a
@@ -477,11 +729,270 @@ Panel {
         anchors.bottom: parent.bottom
         textFormat: Text.PlainText
         text: Model.footerHints(root.focusSection, root.currentRow,
-                                { expanded: !!root.currentRow && root.expandedKey === root.currentRow.key, actionFocus: root.actionFocus, confirmOpen: root.confirmOpen })
+                                { expanded: !!root.currentRow && root.expandedKey === root.currentRow.key, actionFocus: root.actionFocus, confirmOpen: root.confirmOpen,
+                                  view: root.view ? { kind: root.view.kind, following: root.following, terminal: !!(root.liveRec && root.liveRec.terminal),
+                                                      paused: !!(root.snapshot && root.snapshot.error && root.snapshot.error.kind === "ratelimited"), hasUrl: !!root.view.url } : null })
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
         wrapMode: Text.WordWrap
+      }
+
+      // ---- Phase 4 overlay: a view over the list, inside the catcher so it anchors to the
+      // header and footer. Paints above the list (z), below the confirm. A full-fill
+      // MouseArea beneath its own list keeps hover, clicks and right-clicks from reaching
+      // the rows underneath; a button-less one above observes the wheel to release the follow.
+      Item {
+        id: overlay
+        z: 9
+        visible: root.view !== null
+        anchors.top: header.bottom
+        anchors.bottom: footer.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.topMargin: Style.space(14)
+        anchors.bottomMargin: Style.space(10)
+
+        MouseArea { anchors.fill: parent; hoverEnabled: true; acceptedButtons: Qt.AllButtons; onWheel: function(w) { w.accepted = true } }
+
+        // Wrapper Items size from their child's implicitHeight (which follows width), so no
+        // height binding loops back on itself.
+        Item {
+          id: viewHead
+          anchors.top: parent.top
+          anchors.left: parent.left
+          anchors.right: parent.right
+          visible: headText.text.length > 0
+          height: visible ? headText.implicitHeight + Style.space(4) : 0
+          Text {
+            id: headText
+            width: parent.width - Style.space(16)
+            x: Style.space(8)
+            textFormat: Text.PlainText
+            text: root.viewHeadNote
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+        }
+
+        ListView {
+          id: viewList
+          anchors.top: viewHead.bottom
+          anchors.bottom: viewFoot.top
+          anchors.left: parent.left
+          anchors.right: parent.right
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+          flickableDirection: Flickable.VerticalFlick
+          spacing: Style.space(2)
+          model: ListModel { id: viewModel }
+          ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+          // The hold is driven by user input only, never by contentY: an append moves contentY too.
+          onMovementStarted: root.following = false
+          onFlickStarted: root.following = false
+
+          delegate: Item {
+            id: viewDelegate
+            required property var modelData
+            required property int index
+            width: viewList.width
+            implicitHeight: viewLoader.item ? viewLoader.item.implicitHeight : 0
+            height: implicitHeight
+            readonly property string rowType: modelData.rowType
+            readonly property bool selected: root.focusSection === "view" && root.viewCursorKey === modelData.key
+
+            Loader {
+              id: viewLoader
+              width: parent.width
+              sourceComponent: viewDelegate.rowType === "line" ? lineComp
+                : viewDelegate.rowType === "note" ? viewNoteComp
+                : viewDelegate.rowType === "history" ? historyComp
+                : viewDelegate.rowType === "more" ? moreComp
+                : viewDelegate.rowType === "pick" ? pickComp
+                : null
+            }
+
+            // One physical log line, wrapped anywhere: a horizontal scroll would hide the
+            // tail of exactly the line that matters.
+            Component {
+              id: lineComp
+              Text {
+                width: viewDelegate.width - Style.space(16)
+                x: Style.space(8)
+                textFormat: Text.PlainText
+                text: viewDelegate.modelData.text || ""
+                color: root.toneColor(viewDelegate.modelData.tone)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.WrapAnywhere
+              }
+            }
+
+            Component {
+              id: viewNoteComp
+              Text {
+                width: viewDelegate.width - Style.space(16)
+                x: Style.space(8)
+                textFormat: Text.PlainText
+                text: viewDelegate.modelData.text || ""
+                color: root.toneColor(viewDelegate.modelData.tone)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+              }
+            }
+
+            // A history row: glyph · name over sub · age. Enter opens its build log.
+            Component {
+              id: historyComp
+              CursorSurface {
+                implicitHeight: histRow.implicitHeight + Style.spacing.rowPaddingX
+                hasCursor: viewDelegate.selected
+                foreground: root.foreground
+                accent: root.accent
+                HoverHandler { onHoveredChanged: if (hovered && !root.reflowing) root.viewCursorKey = viewDelegate.modelData.key }
+                MouseArea {
+                  anchors.fill: parent
+                  acceptedButtons: Qt.LeftButton | Qt.RightButton
+                  onClicked: function(m) { root.viewCursorKey = viewDelegate.modelData.key; if (m.button === Qt.RightButton) root.openRow(viewDelegate.modelData); else root.activateView() }
+                }
+                Row {
+                  id: histRow
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.leftMargin: Style.space(8)
+                  anchors.rightMargin: Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(8)
+                  Text {
+                    width: Style.space(22)
+                    textFormat: Text.PlainText
+                    text: viewDelegate.modelData.glyph || ""
+                    color: root.toneColor(viewDelegate.modelData.tone)
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.title
+                    horizontalAlignment: Text.AlignHCenter
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                  Column {
+                    width: parent.width - Style.space(22) - histTime.implicitWidth - parent.spacing * 2
+                    spacing: Style.space(2)
+                    anchors.verticalCenter: parent.verticalCenter
+                    Text {
+                      width: parent.width
+                      textFormat: Text.PlainText
+                      text: viewDelegate.modelData.status === "in_progress" ? "building" : (viewDelegate.modelData.status || "")
+                      color: viewDelegate.modelData.tone === "urgent" ? root.urgent : root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                      elide: Text.ElideRight
+                    }
+                    Text {
+                      width: parent.width
+                      visible: text.length > 0
+                      textFormat: Text.PlainText
+                      text: viewDelegate.modelData.sub || ""
+                      color: root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                      elide: Text.ElideRight
+                    }
+                  }
+                  Text {
+                    id: histTime
+                    textFormat: Text.PlainText
+                    // Rows carry timestamps, not strings: the age ticks with nowMs.
+                    text: Model.age(viewDelegate.modelData.finishedAt || viewDelegate.modelData.updatedAt || viewDelegate.modelData.createdAt, root.nowMs)
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    anchors.verticalCenter: parent.verticalCenter
+                  }
+                }
+              }
+            }
+
+            // "Show N more (shown of total)" and a container name share one shape.
+            Component {
+              id: moreComp
+              CursorSurface {
+                implicitHeight: moreText.implicitHeight + Style.spacing.rowPaddingX
+                hasCursor: viewDelegate.selected
+                foreground: root.foreground
+                accent: root.accent
+                HoverHandler { onHoveredChanged: if (hovered && !root.reflowing) root.viewCursorKey = viewDelegate.modelData.key }
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { root.viewCursorKey = viewDelegate.modelData.key; root.activateView() } }
+                Text {
+                  id: moreText
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.leftMargin: Style.space(8) + Style.space(22) + Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  textFormat: Text.PlainText
+                  text: viewDelegate.modelData.text || ""
+                  color: viewDelegate.modelData.loading ? root.dim : root.accent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
+                }
+              }
+            }
+            Component {
+              id: pickComp
+              CursorSurface {
+                implicitHeight: pickText.implicitHeight + Style.spacing.rowPaddingX
+                hasCursor: viewDelegate.selected
+                foreground: root.foreground
+                accent: root.accent
+                HoverHandler { onHoveredChanged: if (hovered && !root.reflowing) root.viewCursorKey = viewDelegate.modelData.key }
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { root.viewCursorKey = viewDelegate.modelData.key; root.activateView() } }
+                Text {
+                  id: pickText
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.leftMargin: Style.space(8) + Style.space(22) + Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  textFormat: Text.PlainText
+                  text: viewDelegate.modelData.name || ""
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  elide: Text.ElideRight
+                }
+              }
+            }
+          }
+        }
+
+        // A button-less area above the list: it sees the wheel (releasing the follow) and
+        // lets every event through to the rows.
+        MouseArea { anchors.fill: viewList; hoverEnabled: false; acceptedButtons: Qt.NoButton; onWheel: function(w) { root.following = false; w.accepted = false } }
+
+        Item {
+          id: viewFoot
+          anchors.bottom: parent.bottom
+          anchors.left: parent.left
+          anchors.right: parent.right
+          visible: footText.text.length > 0
+          height: visible ? footText.implicitHeight + Style.space(6) : 0
+          Text {
+            id: footText
+            width: parent.width - Style.space(16)
+            x: Style.space(8)
+            anchors.verticalCenter: parent.verticalCenter
+            textFormat: Text.PlainText
+            text: root.viewNote
+            color: root.liveRec && root.liveRec.message ? root.urgent : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+          }
+        }
       }
 
       ListView {
@@ -498,6 +1009,7 @@ Panel {
         spacing: Style.space(6)
         model: root.rowsModel
         reuseItems: false
+        visible: root.view === null          // the overlay replaces the list, it does not float over it
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
         // One Loader per row: a row builds only its own variant's subtree.
