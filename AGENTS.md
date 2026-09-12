@@ -135,6 +135,8 @@ bin/check --no-shell             # the CI-able subset (no omarchy, no Qt)
 # builds one in a temp dir (qs -> /usr/share/omarchy/shell). `-I /usr/share/omarchy/shell`
 # alone resolves nothing and exits 0.
 bin/record-fixture servers /servers   # record a scrubbed GET fixture (POST bodies are pasted by hand through the same scrubber)
+# gate self-test (Phase 3 step 8 shape): cp -r the repo into $(mktemp -d), drop a probe under its tests/fixtures/, then COOLWATCH_ROOT=<copy> bin/check --no-shell
+# build-log fixtures are hand-written entry arrays under "entries" and container text under "text": no fixture ever holds a "logs" value (bin/check SR31)
 
 # dev loop (validator refuses symlinks, so copy)
 bin/dev-sync                     # Panel/Bar QML hot-reload sometimes; Service.qml and Panel.qml changes need `omarchy restart shell`

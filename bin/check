@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Tests and static gates. `--no-shell` skips the parts that need Omarchy/Qt (CI subset).
 set -uo pipefail
+export LC_ALL=C.UTF-8   # the « in the SR31 patterns is one character in every locale
 root=${COOLWATCH_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}   # override for gate self-tests on a scratch copy
 fail() { echo "check: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null || fail "missing tool: $1"; }
@@ -11,17 +12,35 @@ node "$root/tests/run.js" || fail "tests"
 find "$root" -name .git -prune -o -type l -print -quit | grep -q . && fail "symlink in repo"
 
 [[ -d $root/tests/fixtures ]] || fail "fixtures dir missing"
-matches=$(grep -rEl '[0-9]+\|[A-Za-z0-9]{20,}|BEGIN .*PRIVATE KEY|://[^/]*:[^@/]*@|"configuration_snapshot"|"logs"' "$root/tests/fixtures"); rc=$?
+matches=$(grep -rEl '[0-9]+\|[A-Za-z0-9]{20,}|BEGIN .*PRIVATE KEY|://[^/]*:[^@/]*@' "$root/tests/fixtures"); rc=$?
 [[ $rc -eq 1 ]] || fail "secret material in fixtures (grep rc=$rc): $matches"
+# SR31 (Phase 4): a "logs" or "configuration_snapshot" key may only hold null or the scrub
+# marker, and the keys the read:sensitive token started returning (a bare 40-char webhook
+# secret, a Sentinel token, a drain endpoint, a proxy config) may only hold the marker.
+# A real log value is doubly-escaped JSON that no line regex can match, so this walks the
+# parsed JSON. Hand-written log fixtures keep their entries under "entries" and container
+# text under "text", so no fixture ever carries a "logs" value at all.
+for fx in "$root"/tests/fixtures/*.json; do
+  jq -e '[.. | objects | to_entries[] | select(.key == "logs" or .key == "configuration_snapshot") | select(.value != null and .value != "«scrubbed»")] | length == 0' "$fx" >/dev/null \
+    || fail "SR31: $fx holds a logs/configuration_snapshot value that is neither null nor «scrubbed»"
+  jq -e '[.. | objects | to_entries[] | select(.key | test("^(manual_webhook_secret_[a-z]+|sentinel_token|sentinel_custom_url|logdrain_[a-z_]*(key|config|url)|last_saved_proxy_configuration|last_applied_settings|last_saved_settings|validation_logs)$")) | select(.value != null and .value != "«scrubbed»")] | length == 0' "$fx" >/dev/null \
+    || fail "SR31: $fx holds an unscrubbed sensitive key"
+done
 
-for q in Panel.qml BarWidget.qml; do
-  [[ -f $root/$q ]] || continue
-  t=$(grep -o 'Text {' "$root/$q" | wc -l); p=$(grep -o 'textFormat: Text.PlainText' "$root/$q" | wc -l)
-  [[ $t -eq $p ]] || fail "$q: $t Text blocks, $p PlainText"
+# Every text item in every QML file is PlainText and pairs pixelSize with family (SR25:
+# TextEdit/TextArea count too; log text is the most attacker-influenced string in the product).
+for qf in "$root"/*.qml; do
+  q=$(basename "$qf")
+  t=$(grep -oE '\b(Text|TextEdit|TextArea) \{' "$qf" | wc -l); p=$(grep -oE 'textFormat: Text(Edit)?\.PlainText' "$qf" | wc -l)
+  [[ $t -eq $p ]] || fail "$q: $t text blocks, $p PlainText"
   [[ $q != Panel.qml || $t -gt 0 ]] || fail "$q: no Text blocks found"
-  s=$(grep -o 'font.pixelSize:' "$root/$q" | wc -l); f=$(grep -o 'font.family:' "$root/$q" | wc -l)
+  s=$(grep -o 'font.pixelSize:' "$qf" | wc -l); f=$(grep -o 'font.family:' "$qf" | wc -l)
   [[ $s -eq $f ]] || fail "$q: $s pixelSize, $f font.family"
 done
+if grep -nE 'Text\.(RichText|StyledText|MarkdownText|AutoText)' "$root"/*.qml; then fail "SR25: rich text formats are banned"; fi
+# SR26: log text never reaches a log line. No console call in Service.qml may name a
+# log entry field or the logs key (comments stripped first).
+if sed 's#//.*##' "$root/Service.qml" | grep -nE 'console\.(log|warn|error)\(.*(\.output|\.entries|\.lines|\.text\b|logs)'; then fail "SR26: log text in a console line"; fi
 
 if compgen -G "$root/*.qml" >/dev/null && grep -nE '#[0-9a-fA-F]{3,8}\b|font\.family: "|pixelSize: [0-9]|radius: [0-9]' "$root"/*.qml; then
   fail "hardcoded colour/size/font"
