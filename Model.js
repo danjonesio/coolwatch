@@ -1120,6 +1120,19 @@ function failedName(s, uuid) {
 }
 
 var SAMPLE_CONFIG = '{ "version": 1, "instances": [\n  { "id": "cloud", "name": "Coolify Cloud", "url": "https://app.coolify.io", "token": "67|…" } ] }'
+// The file "Edit config" creates when none exists (0600 in a 0700 directory, written by the
+// service): the same shape with a placeholder the user replaces. It parses, so the next
+// state is "token rejected", whose callout keeps the button.
+var SAMPLE_CONFIG_FILE = '{\n  "version": 1,\n  "instances": [\n    { "id": "cloud", "name": "Coolify Cloud", "url": "https://app.coolify.io", "token": "paste-your-token-here" }\n  ]\n}\n'
+// The callouts the config file can fix carry an "Edit config" button (`e`): the file is
+// missing, unreadable, unsafe, readable by others, its token command failed or its token
+// was rejected. Network, rate-limit and ability problems are not the file's.
+var EDITABLE_ERRORS = { noconfig: true, configerror: true, unsafe: true, tokencmd: true, auth: true }
+function calloutEditable(s) {
+  if (!s) return false
+  if (s.error) return !!EDITABLE_ERRORS[s.error.kind]
+  return !!(s.warning && s.warning.kind === "permissions")
+}
 
 function calloutBody(e, s) {
   switch (e.kind) {
@@ -1167,7 +1180,7 @@ function callout(s, nowMs) {
     title = w.kind === "permissions" ? "Config is readable by others" : (w.kind === "plaintext" ? "Plaintext instance" : (w.title || "Warning"))
     body = warningBody(w)
   }
-  return { title: title, body: body }
+  return { title: title, body: body, edit: calloutEditable(s) }
 }
 
 var NOTES = { deployments: "Nothing deploying.", servers: "No servers on this team.", resources: "No resources on this team.", nomatch: "No match." }
@@ -1740,7 +1753,9 @@ function footerHints(focusSection, row, ui) {
   if (ui.confirmOpen) return "h/l pick · enter confirm · esc cancel"
   if (ui.view) return viewHints(ui.view)
   if (ui.filterFocus) return "type to narrow · enter list · esc clear"
-  if (focusSection === "hero") return (ui.instances > 1 ? "h/l instance · " : "") + "enter refresh · j down · r refresh · esc close"
+  var edit = ui.editConfig ? "e edit config · " : ""
+  if (focusSection === "hero") return edit + (ui.instances > 1 ? "h/l instance · " : "") + "enter refresh · j down · r refresh · esc close"
+  if (ui.editConfig && !row) return edit + "enter refresh · r refresh · esc close"
   if (row && row.type === "fold") return "j/k move · enter fold · g group · / filter · r refresh · esc close"
   if (ui.expanded && ui.actionFocus === MORE_ID) return "h/l pick · enter " + (ui.moreOpen ? "less" : "more") + " · esc collapse"
   if (ui.expanded && ui.actionFocus) return "h/l pick · enter run · esc collapse"

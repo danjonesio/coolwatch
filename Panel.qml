@@ -150,6 +150,7 @@ Panel {
     return false
   }
   function refreshNow() { if (svc) svc.refresh() }
+  function editConfig() { if (svc) svc.editConfig() }         // the callout's "Edit config" button and `e`
 
   function toneColor(t) {
     if (t === "urgent") return root.urgent
@@ -693,6 +694,7 @@ Panel {
         if (t === "r" || t === "R") { root.refreshNow(); return }
         if (t === "g" || t === "G") { root.setGroupBy(root.groupBy === "project" ? "server" : "project"); return }
         if (t === "/") { root.openFilter(); return }            // Phase 4b
+        if ((t === "e" || t === "E") && root.callout && root.callout.edit) { root.editConfig(); return }
         if (root.focusSection !== "list" || !root.currentRow) return
         var row = root.currentRow
         // d / D is the one deliberate case-sensitive pair: D is the no-cache rebuild.
@@ -889,6 +891,21 @@ Panel {
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.Wrap
             }
+            // "Edit config": only on the callouts the file can fix (Model.calloutEditable).
+            // No hasCursor, like the chips: `e` reaches it from anywhere in the list.
+            Button {
+              visible: !!root.callout && !!root.callout.edit
+              text: "Edit config"
+              bordered: true
+              width: implicitWidth
+              height: implicitHeight
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              verticalPadding: Style.spacing.controlPaddingY
+              tooltipText: "Open ~/.config/coolwatch/config.json in your editor (e)"
+              onClicked: root.editConfig()
+            }
           }
         }
       }
@@ -902,6 +919,7 @@ Panel {
         text: Model.footerHints(root.focusSection, root.currentRow,
                                 { expanded: !!root.currentRow && root.expandedKey === root.currentRow.key, actionFocus: root.actionFocus, moreOpen: root.moreOpen, confirmOpen: root.confirmOpen,
                                   filterFocus: filterField.activeFocus,
+                                  editConfig: !!root.callout && !!root.callout.edit,
                                   instances: svc ? svc.instances.length : 0,
                                   view: root.view ? { kind: root.view.kind, following: root.following, terminal: !!(root.liveRec && root.liveRec.terminal),
                                                       paused: !!(root.snapshot && root.snapshot.paused), hasUrl: !!root.view.url } : null })

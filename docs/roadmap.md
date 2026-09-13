@@ -162,6 +162,10 @@ Done
   (`Model.IDLE_DEPLOYMENTS_SEC`); `deploymentsSec` (4 s) applies with a panel open and the
   2 s byte-stepped cadence while a build runs. Idle cost drops from ≈17 to ≈11 req/min per
   instance (Dan, 2026-09-13).
+- Edit config: the config-class callouts carry an **Edit config** button (`e`) that creates
+  the directory and a 0600 sample file when none exists and opens the file with
+  `omarchy-launch-config-editor` (Phase 5 prep, 2026-09-13). The log says
+  "coolwatch config edit -> created|kept|failed".
 - Row polish: a running resource's caption is its health word alone (`healthy`, never
   `running · healthy`; the dot carries the state), which hands the name the width back;
   a name or deployment that still elides shows the full label in a `PanelToolTip` on the

@@ -121,6 +121,15 @@ A `BorderSurface` under the hero (the agents panel's callout tint), shown only w
 there is an error or a warning, carrying the body text below and, when the data on
 screen is stale, "Showing data from 3m ago." Healthy panels show no callout.
 
+An **Edit config** button (bordered, `bodySmall`, no cursor ring; `e` from anywhere in
+the list) sits under the body on the callouts the file can fix: no config, config error,
+config unsafe, config readable by others, token command failed, token rejected
+(`Model.calloutEditable`). It asks the service, which creates the directory (0700) and,
+only when no file exists, a sample file (0600, `Model.SAMPLE_CONFIG_FILE`), then runs
+`omarchy-launch-config-editor` on it: Omarchy's own low toast and default editor. The
+file watcher clears the callout on save. The footer reads `e edit config · …` while the
+button shows.
+
 | Kind | Body |
 |---|---|
 | no config | "Create ~/.config/coolwatch/config.json (chmod 600):" + the three-line sample |
