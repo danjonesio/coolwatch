@@ -25,6 +25,7 @@ under Coolify's rate limit by design.
 - Coolify 4.3 or newer. Coolify Cloud has the API on; self-hosted must enable it under
   **Settings → Advanced → API Access**.
 - An API token with `read`, `read:sensitive` and `deploy` (see [Token](#token)).
+- `curl`, which the Omarchy base already ships. Nothing else: no daemon, no Python, no SSH.
 
 ## Install
 
