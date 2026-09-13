@@ -981,14 +981,24 @@ function heroDetail(s) {
   return v ? "v" + v : ""
 }
 
+// Phase 4b: the trouble counts follow the totals so the hero and the bar tooltip (both
+// read this) say where the trouble is. Stopped = exited or paused; unhealthy = running
+// with an unhealthy health word, or degraded. Zero clauses drop.
+function stoppedResources(s) { return (s && s.resources ? s.resources : []).filter(function (r) { return r.state === "exited" || r.state === "paused" }) }
+function unhealthyResources(s) { return (s && s.resources ? s.resources : []).filter(function (r) { return r.state === "degraded" || (r.state === "running" && r.health === "unhealthy") }) }
+
 function countsLine(s) {
   var parts = []
   var ns = s.servers ? s.servers.length : 0
   var nr = s.resources ? s.resources.length : 0
   var nd = activeDeployments(s).length
+  var nx = stoppedResources(s).length
+  var nu = unhealthyResources(s).length
   if (ns) parts.push(plural(ns, "server"))
   if (nr) parts.push(plural(nr, "resource"))
   if (nd) parts.push(nd + " deploying")
+  if (nx) parts.push(nx + " stopped")
+  if (nu) parts.push(nu + " unhealthy")
   return parts.join(" · ")
 }
 
@@ -1201,9 +1211,12 @@ function statusDot(res) {
   }
 }
 
+// Phase 4b: the dot already carries the state, so a running resource shows only its
+// health word ("healthy", "unhealthy"); with no health word the state stays so the
+// caption is never empty. Every other state is its own word.
 function statusWords(res) {
   if (res.state === "unknown") return res.status || "unknown"
-  if (res.state === "running" && res.health !== "unknown") return "running · " + res.health
+  if (res.state === "running" && res.health !== "unknown") return res.health
   return res.state
 }
 

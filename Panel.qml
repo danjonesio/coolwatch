@@ -1393,6 +1393,7 @@ Panel {
                   spacing: Style.space(2)
                   anchors.verticalCenter: parent.verticalCenter
                   Text {
+                    id: depName
                     width: parent.width
                     textFormat: Text.PlainText
                     text: rowDelegate.row.name || ""
@@ -1400,6 +1401,11 @@ Panel {
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.body
                     elide: Text.ElideRight
+                    PanelToolTip {
+                      visible: depName.truncated && rowDelegate.selected
+                      text: rowDelegate.row.name || ""
+                      fontFamily: root.fontFamily
+                    }
                   }
                   Text {
                     width: parent.width
@@ -1593,6 +1599,7 @@ Panel {
                   anchors.verticalCenter: parent.verticalCenter
                 }
                 Text {
+                  id: resName
                   width: parent.width - Style.space(22) - resStatus.implicitWidth - resKind.implicitWidth - parent.spacing * 3
                   textFormat: Text.PlainText
                   text: rowDelegate.row.name || ""
@@ -1602,6 +1609,13 @@ Panel {
                   font.bold: true
                   elide: Text.ElideRight
                   anchors.verticalCenter: parent.verticalCenter
+                  // Phase 4b: the full name for whatever still elides. Visible on the cursor row only
+                  // (hover writes the cursor), so no containsMouse and no second MouseArea.
+                  PanelToolTip {
+                    visible: resName.truncated && rowDelegate.selected
+                    text: rowDelegate.row.name || ""
+                    fontFamily: root.fontFamily
+                  }
                 }
                 Text {
                   id: resStatus

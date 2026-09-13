@@ -158,19 +158,17 @@ Done
   written by `uiFlush` a second after the last gesture, never the click or `_resetStore`;
   every monitor's panel mirrors the same entry, and an instance switch shows that
   instance's own grouping. Was item 5.
+- Row polish: a running resource's caption is its health word alone (`healthy`, never
+  `running · healthy`; the dot carries the state), which hands the name the width back;
+  a name or deployment that still elides shows the full label in a `PanelToolTip` on the
+  cursor row. The hero meta and the bar tooltip append `· N stopped` / `· N unhealthy`
+  after the totals (`Model.countsLine`; zero clauses drop). Was items 2 and 3.
 
 Quick wins
 
 1. Done above (names through `appLabel`).
-2. **Name width.** The row lays out status words and the kind hint first, leaving the
-   name about 18 characters on the 380 card. Either drop the state word the dot already
-   carries (`running · healthy` → `healthy`) or stack status under the name as deployment
-   rows do; add a full-name tooltip for whatever still elides. Acceptance: no name on
-   Dan's account elides at the default width.
-3. **Hero counts the trouble.** `1 SERVER · 7 RESOURCES` while one resource is exited.
-   `Model.heroMeta` appends `· N stopped` / `· N unhealthy` (zero clauses dropped, as
-   today); the bar tooltip gets the same. Acceptance: stop one resource, the hero and
-   tooltip say so within one resources poll.
+2. Done above (health word alone, full-name tooltip on the cursor row).
+3. Done above (`· N stopped` / `· N unhealthy` in the hero and the bar tooltip).
 4. Done above (last deployment stays, with Dismiss).
 5. Done above (grouping and folds persist to `ui.json`).
 
