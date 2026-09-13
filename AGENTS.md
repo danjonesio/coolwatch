@@ -10,7 +10,7 @@ that runs inside `omarchy-shell`; there is no daemon and no second process.
 
 Status: **Phases 1 ("see"), 2 ("act"), 3 ("notify") and 4 (depth: build logs, container
 logs, history, tag deploy; instances: one `InstanceCtx` per configured Coolify, chips,
-per-instance state files) all merged (PRs #6–#8 on 2026-09-12); manifest 0.6.0.**
+per-instance state files) and 4b (polish) all merged; manifest 1.0.0 (2026-09-13).**
 Read `docs/roadmap.md` before writing code.
 
 ## Product locks
