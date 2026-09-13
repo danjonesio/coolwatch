@@ -94,6 +94,10 @@ the browser.
 Press `/` to type a filter: it narrows resources and deployments as you type, opens the
 folds with a match and hides the rest. Esc clears it.
 
+<p align="center">
+  <img src="docs/images/filter.png" width="380" alt="The filter field narrowing the list to the two resources matching the typed term">
+</p>
+
 ## What you can do
 
 Click a row (or press Enter) to open its strip of buttons. Which ones appear depends on
@@ -110,6 +114,10 @@ the row:
 | Deployment, finished or failed | Logs · Dismiss · Open |
 | Tag | Deploy |
 
+<p align="center">
+  <img src="docs/images/strip.png" width="380" alt="An application row with its action strip open: Redeploy, Restart, Stop and Less on the first line, Logs, History and Open beneath">
+</p>
+
 **Stop**, **Cancel**, **Rebuild without cache** (`D`, keyboard only) and **tag deploy** ask
 first. Everything else runs on the click. After an action the row says `deploying…`,
 `stopping…` and so on until Coolify reports the change; Coolify refreshes statuses about
@@ -125,9 +133,6 @@ build's log.
 <p align="center">
   <img src="docs/images/build-log.png" width="380" alt="A failed build's log inside the panel, with the failing docker step and error lines">
 </p>
-
-<!-- PLACEHOLDER: screenshot of an application row with its strip open (docs/images/strip.png) -->
-<!-- PLACEHOLDER: screenshot of the filter field narrowing the list (docs/images/filter.png) -->
 
 ### Keyboard
 
