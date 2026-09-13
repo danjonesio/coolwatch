@@ -276,6 +276,18 @@ loaded into the same shell can read the service, so the machine is the trust bou
 Omarchy's notification history keeps the newest toasts, with names, branches and commit
 messages, in files readable by your user.
 
+## Update
+
+```sh
+omarchy plugin update io.github.danjonesio.coolwatch
+omarchy restart shell
+```
+
+The first command shows the diff since your installed commit and asks before it
+fast-forwards; it validates the result and rolls back if that fails. Nothing updates on
+its own. The restart is needed because a running service keeps its old objects across a
+rescan; your config and state are untouched by either step.
+
 ## Remove
 
 ```sh
