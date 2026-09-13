@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "author": "Dan Jones",
   "license": "MIT",
-  "description": "Coolify in the Omarchy bar: servers, resources, deployments and their status.",
+  "description": "Coolify in your Omarchy bar, fast and native. One icon, one keyboard-first panel: every server, resource and deployment with live status, one-key deploy, restart, stop and cancel, build and container logs, and toasts the moment a build queues, finishes or fails. Cloud or self-hosted, several instances at once, REST API only: no daemon, no SSH, nothing to babysit.",
   "kinds": ["service", "bar-widget"],
   "keepLoaded": true,
   "entryPoints": {
