@@ -673,6 +673,10 @@ function notifyCopy(ev, obj, s, ctx) {
   var row = NOTIFY_ROWS[ev.event]
   if (!row || !obj) return null
   var url = row.target ? openUrl(row.target, obj, ctx.origin) : ""
+  // Phase 4b item 6: a failed build's click opens the panel on its log through the IPC verb,
+  // unless the instance's token has no read:sensitive (ctx.logClick, a boolean the service
+  // read from the context, never Coolify data); then the browser stays the target.
+  var logUuid = ev.kind === "deployment" && ev.event === "failed" && ctx.logClick === true && UUID_RE.test(String(ev.uuid || "")) ? String(ev.uuid) : ""
   var head = "", body = ""
   if (ev.kind === "deployment") {
     var d = obj, A = appLabel(d.appName, d.uuid)
@@ -684,7 +688,7 @@ function notifyCopy(ev, obj, s, ctx) {
       case "finished": head = "Deployed " + A; body = [dur, d.branch].filter(function (x) { return !!x }).join(" · "); break
       case "restarted": head = "Restarted " + A; body = dur; break
       case "failed": head = (d.restartOnly ? "Restart failed: " : "Deployment failed: ") + A
-                     body = [dur, url ? "click to open in Coolify" : d.branch].filter(function (x) { return !!x }).join(" · "); break
+                     body = [dur, logUuid ? "click for the log" : url ? "click to open in Coolify" : d.branch].filter(function (x) { return !!x }).join(" · "); break
       case "cancelled": head = "Cancelled " + A; body = ""; break
       default: return null
     }
@@ -704,11 +708,11 @@ function notifyCopy(ev, obj, s, ctx) {
   // Two or more instances: the body names which one (the headline stays the resource's).
   if (ctx.instanceLabel) body = [body, String(ctx.instanceLabel)].filter(function (x) { return !!x }).join(" · ")
   return { toggle: row.toggle, glyph: G[row.glyph], urgency: row.urgency, targetType: row.target,
-           headline: notifySafe(head, NOTIFY_MAX_HEADLINE), body: notifyBody(body, NOTIFY_MAX_BODY), url: url }
+           headline: notifySafe(head, NOTIFY_MAX_HEADLINE), body: notifyBody(body, NOTIFY_MAX_BODY), url: url, logUuid: logUuid }
 }
 
 // events -> { argvs, log, suppressed: {rule: n}, notified: [{key, at}], lastKind }.
-// ctx = { notify, origin, dnd, pending, actionAt, lastNotified, sentLastMin, now, pluginId, instanceLabel }.
+// ctx = { notify, origin, dnd, pending, actionAt, lastNotified, sentLastMin, now, pluginId, instanceLabel, logClick }.
 // Per-event drops first (first match wins), then critical-first ordering, then the caps.
 function notifyPlan(events, s, ctx) {
   var out = { argvs: [], log: [], suppressed: {}, notified: [], lastKind: "", nonCritical: 0 }   // nonCritical: what the minute ring counts
@@ -776,7 +780,9 @@ function notifyPlan(events, s, ctx) {
     var appName = c.urgency === "critical" && ctx.dnd === true ? "omarchy-action" : String(ctx.pluginId || "")
     var a = ["omarchy-notification-send", "--app-name", appName, "-g", c.glyph, "-u", c.urgency, c.headline]
     if (c.body) a.push(c.body)
-    if (c.url) a = a.concat(["--exec", "omarchy-launch-browser", c.url])
+    var pid = notifySafe(String(ctx.pluginId || ""), 64), lu = notifySafe(c.logUuid || "", 64)
+    if (lu) a = a.concat(["--exec", "omarchy-shell", pid, "log", lu])
+    else if (c.url) a = a.concat(["--exec", "omarchy-launch-browser", c.url])
     out.argvs.push(a)
     if (c.urgency !== "critical") out.nonCritical += 1
     out.log.push((v.e.event + " " + uuid8(v.e.uuid)).trim())
@@ -1272,6 +1278,18 @@ function deploymentRow(d, originStr) {
     createdAt: d.createdAt, updatedAt: d.updatedAt, terminal: !!TERMINAL[d.status], status: d.status,
     url: openUrl("deployment", d, originStr), pendingVerb: ""
   }
+}
+
+// The IPC verb `log <uuid>` (Phase 4b item 6) hands the panel a deployment row for
+// openLogsFor: the active list first, then recent (both already joined), else a bare row
+// (uuid8 as the name) so the view opens and the fetch reports in-view.
+function logRequestRow(s, uuid, originStr) {
+  uuid = String(uuid === undefined || uuid === null ? "" : uuid)
+  if (!UUID_RE.test(uuid)) return null
+  var d = byUuid(s && s.deployments)[uuid] || byUuid(s && s.recent)[uuid] || null
+  var row = d ? deploymentRow(d, originStr) : { type: "deployment", uuid: uuid, name: uuid8(uuid), url: "", status: "", createdAt: "", updatedAt: "" }
+  row.finishedAt = d && d.finishedAt ? d.finishedAt : ""
+  return row
 }
 
 function serverRow(x, originStr) {

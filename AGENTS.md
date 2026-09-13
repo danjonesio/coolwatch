@@ -98,6 +98,15 @@ Read `docs/roadmap.md` before writing code.
   deployments section never goes blank while an undismissed terminal entry exists: the
   newest stays past the hour window. Row names pass `Model.appLabel` (resources and
   deployments), so the panel and the toasts agree.
+- Toast click (Phase 4b): a failed build's toast tail is `--exec omarchy-shell <plugin id>
+  log <uuid>` (still last, the uuid through `UUID_RE` and `notifySafe`, built only in
+  `Model.notifyPlan`; `bin/check` SR16 pins the shape), unless the context's `_sensitive`
+  is `no`, when the browser tail stays (`ctx.logClick`). The `log` IPC verb is the one verb
+  that looks past the active instance: it switches to the context holding the uuid, parks
+  `root.viewRequest` and summons the bar widget through the scoped shell (never a payload:
+  a bar-widget summon drops it; never a panel reference on the service). The open panel
+  takes the request once (`takeViewRequest`, stale after 5 s) and routes
+  `Model.logRequestRow` through `openLogsFor`.
 - Row polish (Phase 4b): a running resource's status words are its health word alone
   (`Model.statusWords`; the dot carries the state); a name that still elides shows a
   `PanelToolTip` on the cursor row (resources and deployments), bound to `Text.truncated`
@@ -239,6 +248,7 @@ quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [A-Za
 omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`; resolves against the active instance only
 omarchy-shell io.github.danjonesio.coolwatch instances                          # -> "cloud (active), homelab"
 omarchy-shell io.github.danjonesio.coolwatch instance homelab                   # -> "active homelab" | "unknown instance homelab"
+omarchy-shell io.github.danjonesio.coolwatch log <deployment uuid>             # -> "log <uuid8>" | "invalid uuid": opens the panel on that build's log (a failed toast's click); the log says "coolwatch ipc log <uuid8> -> summoned|open|no panel <instance id>"
 omarchy-shell io.github.danjonesio.coolwatch status | jq '{activeInstance, requestsTotalLastMin, instances: [.instances[]|{id, configState, requestsLastMin, sensitive, paused, error}]}'   # Phase 4 instances; top-level keys mirror the active one
 omarchy-shell io.github.danjonesio.coolwatch status | jq '[.instances[]|{id, requestsLastMin}]'   # the rate gate, per token
 quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [A-Za-z0-9_-]+/(deployments|resources|servers) '   # per-request, failure and reaper lines carry "<instance id>/<kind>" since Phase 4 (ids may hold capitals); "coolwatch notify|recent|drain|logview|action " lines do not

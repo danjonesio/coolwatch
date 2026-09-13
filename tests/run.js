@@ -683,6 +683,48 @@ test("Model.notifyPlan: argv shape, argv[0], --exec last, body omitted, app-name
   eq(p.lastKind, "reachable"); eq(p.notified.length, 4); eq(p.notified[0].key, "deployment:" + fail.uuid + ":failed", "critical first")
 })
 
+test("Model.notifyPlan / notifyCopy / logRequestRow: a failed toast's click runs the IPC log verb; every other tail is unchanged (Phase 4b item 6)", () => {
+  const s = nsnap()
+  const fin = M.joinBranch([M.normaliseDeployment(fx("deployment-finished.json"))], s.resources)[0]
+  const fail = M.joinBranch([M.normaliseDeployment(fx("deployment-failed.json"))], s.resources)[0]
+  const evs = [{ kind: "deployment", event: "finished", uuid: fin.uuid, obj: fin }, { kind: "deployment", event: "failed", uuid: fail.uuid, obj: fail },
+               { kind: "server", event: "unreachable", uuid: NSRV, obj: s.servers[0] }]
+  const p = M.notifyPlan(evs, s, nctx({ logClick: true }))
+  eq(p.argvs.length, 3)
+  const byHead = {}; p.argvs.forEach(a => { byHead[a[7]] = a })
+  byHead["storefront stopped"] = M.notifyPlan([stopEv(NAPP)], s, nctx({ logClick: true })).argvs[0]   // apart: the unreachable server above would drop it (serverDown)
+  const f = byHead["Deployment failed: storefront"]
+  eq(f[8], "1m 4s · click for the log")
+  eq(JSON.stringify(f.slice(9)), JSON.stringify(["--exec", "omarchy-shell", "io.github.danjonesio.coolwatch", "log", fail.uuid]), "the shell tail, --exec last")
+  for (const h of ["Deployed storefront", "hetzner-1 unreachable", "storefront stopped"]) {
+    const a = byHead[h]; const i = a.indexOf("--exec"); assert(i === a.length - 3, h + ": browser tail"); eq(a[i + 1], "omarchy-launch-browser")
+  }
+  // The DND sender rule is untouched: the tail carries the verb either way.
+  const d = M.notifyPlan([evs[1]], s, nctx({ logClick: true, dnd: true })).argvs[0]
+  eq(d[2], "omarchy-action"); eq(d[d.length - 2], "log"); eq(d[d.length - 1], fail.uuid)
+  // No read:sensitive (logClick false or absent): the browser tail and the old copy.
+  for (const lc of [false, undefined, "yes"]) {
+    const b = M.notifyPlan([evs[1]], s, nctx({ logClick: lc })).argvs[0]
+    eq(b[8], "1m 4s · click to open in Coolify", "logClick=" + lc); eq(b[b.length - 2], "omarchy-launch-browser")
+  }
+  // A restart failure and a failed build without a page both still reach the log.
+  const rf = M.notifyPlan([{ kind: "deployment", event: "failed", uuid: "u9", obj: Object.assign({}, fail, { uuid: "u9", restartOnly: true, url: null }) }], s, nctx({ logClick: true })).argvs[0]
+  eq(rf[7], "Restart failed: storefront"); eq(rf[8], "1m 4s · click for the log"); eq(rf[rf.length - 1], "u9")
+  // A uuid outside UUID_RE never becomes a positional: the browser tail (or nothing) instead.
+  const bad = M.notifyPlan([{ kind: "deployment", event: "failed", uuid: "-x y", obj: Object.assign({}, fail, { uuid: "-x y", url: null }) }], s, nctx({ logClick: true })).argvs[0]
+  eq(bad.indexOf("omarchy-shell"), -1); eq(bad.indexOf("--exec"), -1)
+  // logRequestRow: the active list, then recent, then a bare row; a bad uuid is null.
+  const act = M.joinBranch(M.normaliseDeployments(fx("deployments-active.json")), s.resources)
+  const snap = Object.assign({}, s, { deployments: act, recent: [fail] })
+  const r1 = M.logRequestRow(snap, act[0].uuid, "https://app.coolify.io")
+  eq(r1.type, "deployment"); eq(r1.uuid, act[0].uuid); eq(r1.name, "storefront"); assert(r1.url.startsWith("https://app.coolify.io/"), "url from origin"); eq(r1.finishedAt, "")
+  const r2 = M.logRequestRow(snap, fail.uuid, "https://app.coolify.io")
+  eq(r2.status, "failed"); eq(r2.finishedAt, fail.finishedAt); eq(r2.name, "storefront")
+  const r3 = M.logRequestRow(snap, "zzzzzzzzzzzz1234", "https://app.coolify.io")
+  eq(r3.name, "zzzzzzzz"); eq(r3.url, ""); eq(r3.status, ""); eq(r3.uuid, "zzzzzzzzzzzz1234")
+  eq(M.logRequestRow(snap, "-bad", ""), null); eq(M.logRequestRow(snap, "", ""), null); eq(M.logRequestRow(null, act[0].uuid, "").name, "activein", "no snapshot -> the bare row")
+})
+
 test("Model.notifyPlan: the eight per-event drops with just-inside and just-outside cases; suppressed per rule", () => {
   const s = nsnap()
   const run = (ctx, events, snap) => M.notifyPlan(events || [stopEv(NAPP)], snap || s, nctx(ctx))
