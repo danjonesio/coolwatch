@@ -157,9 +157,21 @@ body weight, "branch · commit message" in caption dim (the branch is the joined
 application's `git_branch`; the first seven characters of the commit when the join
 misses), right-aligned elapsed or age. Expanded row (Phase 2) shows an action row:
 **Logs** first (Phase 4; `L` is the direct key, so Enter, Enter reaches the build log),
-**Cancel** (only while queued or in progress; `foreground: root.urgent`), **Open**. A pending cancel appends " · cancelling…" to the caption in accent. The section shows all active plus the newest 5 terminal deployments from the
+**Cancel** (only while queued or in progress; `foreground: root.urgent`) or **Dismiss** (a
+terminal row; `x` does the same), **Open**. A pending cancel appends " · cancelling…" to the caption in accent. The section shows all active plus the newest 5 terminal deployments from the
 last hour; older ones drop out on their own (Phase 3 persists them across restarts; the
-history view below, reached from an application's strip, holds the rest).
+history view below, reached from an application's strip, holds the rest). It never goes
+blank while there is an outcome to show (Phase 4b): with nothing active and nothing under
+an hour old, the newest terminal deployment stays with its age (`3h ago`, `2d ago`) until
+it is dismissed. Every terminal row carries a `×` (`Model.G.dismiss`, U+00D7) at its right
+edge, dim, foreground while the row has the cursor (`hasCursor`, never `containsMouse`);
+one click on it, `x` on the row, or **Dismiss** in the strip acknowledges. Dismiss clears
+that row **and every older terminal entry**, so the section reads "Nothing deploying."
+rather than promoting the next build into the same place (Dan, 2026-09-13: a promotion
+looks like nothing happened). It is local: no request, no pending, no `lastAction`; the
+entries stay in `recent` for dedupe with `dismissed: true` and are hidden from the panel
+at any age; the status line reads "Dismissed". The file keeps entries for seven days, so
+a Friday build is still Monday's last deployment.
 
 Elapsed time ticks every second while the panel is open (a `Timer` on `root.opened`),
 formatted `1m 20s`, `45s`, `2h 03m`.
@@ -249,7 +261,9 @@ minute or so with a panel open, five with it closed). Resource rows:
 
 - Dot: `●` running (foreground), `󱎖` (U+F1396) starting/restarting/degraded (urgent),
   `○` exited/paused (dim), `◌` unknown. `◐` U+25D0 is not in JetBrainsMono Nerd Font.
-- Name bold body, status words in caption: "running · healthy", "exited", "restarting",
+- Name bold body, through `Model.appLabel` (Phase 4b: `storefront`, never Coolify's
+  `storefront:main-h0wx…`; an unnamed app shows its uuid's first 8; deployment rows
+  the same), status words in caption: "running · healthy", "exited", "restarting",
   or the pending verb in accent with the half glyph: "deploying…", "rebuilding…",
   "restarting…", "stopping…", "starting…" ("stopping… · still pending" after 150 s).
 - Kind hint on the right in caption dim: `app`, `service`, `postgres`, `redis`.
@@ -323,7 +337,7 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 | any row expanded, focus back on the row | `l pick · enter collapse · esc collapse` |
 | server row | `enter actions · v validate · o open` |
 | active deployment row | `enter actions · x cancel · L logs · o open` |
-| terminal deployment row | `enter actions · L logs · o open` |
+| terminal deployment row | `enter actions · x dismiss · L logs · o open` |
 | tag row | `enter actions · d deploy` |
 | build log, following / held / paused | `following · j/k scroll · b newest · H steps · o open · h back` (`held`, `paused`; a terminal log drops the first word) |
 | container log | `j/k scroll · b newest · r refetch · o open · h back` |
@@ -354,7 +368,8 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 | `D` | running application row | rebuild without cache (confirm); the one case-sensitive pair |
 | `s` / `S` | resource row | stop (confirm) or start, whichever applies |
 | `t` / `T` | resource row | restart |
-| `x` / `X` | active deployment row | cancel (confirm) (via `deleteRequested`; a no-op elsewhere) |
+| `x` / `X` | active deployment row | cancel (confirm) (via `deleteRequested`) |
+| `x` / `X` | terminal deployment row | dismiss: clears the row and everything older, no confirm (Phase 4b; the row's `×` and the strip's Dismiss do the same); a no-op elsewhere |
 | `o` / `O` | any row with a page | open in browser |
 | `g` | anywhere | toggle grouping |
 | `r` | anywhere | refresh now |
@@ -408,7 +423,7 @@ partial > loading > healthy.
 | other ≥ 400 | "COOLIFY ERROR" | the redacted message |
 | One kind failing, others fine | "<KIND> UNAVAILABLE · SHOWING LAST KNOWN" | callout with staleness |
 | A section that has never loaded while an error is up | — | "Not loaded yet." |
-| No deployments | — | "Nothing deploying." |
+| No deployments (nothing active, every terminal entry dismissed or none recorded) | — | "Nothing deploying." |
 | No servers | — | "No servers on this team." |
 | No resources | — | "No resources on this team." |
 | Zero servers and resources with a valid token | "NO RESOURCES ON THIS TEAM" | — |

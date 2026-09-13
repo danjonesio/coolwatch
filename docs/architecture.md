@@ -310,7 +310,8 @@ byServer:  { serverUuid: [resourceUuid…] }
   maps uuids to servers. A deployment's branch comes from the joined application's
   `git_branch`, else the first seven characters of the commit.
 - `recent` keeps the last 20 terminal deployments in memory (the panel renders the
-  newest 5 under an hour old). Phase 3 persists them to
+  newest 5 under an hour old, else the newest one at any age until dismissed; a
+  `dismissed` entry is hidden at any age and kept for `hasTerminal`). Phase 3 persists them to
   `~/.local/state/coolwatch/recent.json` (`$XDG_STATE_HOME` honoured; Phase 4: `instances[0]`
   keeps that name, every further instance writes `recent-<id>.json`, and every file written
   carries `id`; `parseRecent` rejects a file whose `id` is another instance's and accepts a
@@ -319,17 +320,19 @@ byServer:  { serverUuid: [resourceUuid…] }
   first entry reads; a file without `id` read by any later instance is rejected):
   `{ version: 1, instance: <Model.origin(url)>, id, savedAt, recent: [ { uuid, status, appId,
   appName, serverName, commit, commitMessage, createdAt, updatedAt, finishedAt, url,
-  restartOnly, force, isApi, isWebhook } ] }`. Written only from the `deployment` arm of
+  restartOnly, force, isApi, isWebhook, dismissed } ] }`. Written from the `deployment` arm of
   `_dispatch` (the one place a terminal record enters `recent`; `_recent` itself is
   reassigned on every poll by the joins, so a writer bound to it would write every 4 s and
-  `_resetStore` would truncate it), armed only after the state directory exists and the
+  `_resetStore` would truncate it) and, after a dismiss, from the next `deployments` arm
+  (`ctx.dismissRecent` flips the entry with `Model.dismissRecent` and sets `_recentDirty`;
+  the click itself never writes, and `_resetStore` clears the flag), armed only after the state directory exists and the
   file was read once, skipped when the stamp-free content is unchanged. Read on every
   config load (keyed on the instance origin, not the token, so a `tokenCommand` vault is
   never waited on) and again after every `_resetStore`; `_resetStore` never writes. The
   file is untrusted input: `Model.parseRecent` bounds the text at 262 144 chars, requires
   `version 1` and a non-empty matching instance (the bound applies after FileView has read the
   whole file: there is no size-capped read, and no remote path writes a large file), whitelists fields, validates `uuid` and a
-  terminal `status`, drops unparseable or > 24 h timestamps, caps at 20, never throws;
+  terminal `status`, drops unparseable or > 7 d timestamps, caps at 20, never throws;
   `branch`/`appUuid` are recomputed by `joinBranch`; `url` passes `openUrl` on every use;
   `status.recentPersisted` is the count accepted at the last load, not the file's current length;
   every string is redacted and elided on the way out. Loading never notifies and never

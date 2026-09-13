@@ -132,6 +132,63 @@ Acceptance
   note), cross-account data isolation, and the keyboard and mouse paths (`h`/`l` on the
   hero, a chip click, the middle-click, the confirm refused across a switch).
 
+## Phase 4b — polish (UX sweep before the marketplace submission; opened 2026-09-13)
+
+Found by Dan using the panel daily. Each item is small and independent; the order is
+payoff against effort. Nothing here adds a request, a kind or a state file format.
+
+Done
+
+- Opening a strip no longer moves the list: the ListView model is a `ListModel` patched
+  in place by key (`Model.listPatch`), never swapped (`79fca28`).
+- A strip above four buttons folds behind **More**: Redeploy · Restart · Stop · More, with
+  Logs · History · Open beneath while More is open (`Model.stripFor`, `79fca28`).
+- The deployments section keeps the newest terminal deployment past the hour window until
+  it is dismissed: a `×` on every terminal row, `x`, or **Dismiss** in the strip. Dismiss is
+  an acknowledge that clears the row and everything older (a promotion of the next build
+  looked like nothing happened); local, persisted as `dismissed` in the recent file on the
+  next poll; the file window is seven days. Was item 4 below.
+- Resource and deployment rows pass `Model.appLabel`, as toasts already did. Was item 1.
+
+Quick wins
+
+1. Done above (names through `appLabel`).
+2. **Name width.** The row lays out status words and the kind hint first, leaving the
+   name about 18 characters on the 380 card. Either drop the state word the dot already
+   carries (`running · healthy` → `healthy`) or stack status under the name as deployment
+   rows do; add a full-name tooltip for whatever still elides. Acceptance: no name on
+   Dan's account elides at the default width.
+3. **Hero counts the trouble.** `1 SERVER · 7 RESOURCES` while one resource is exited.
+   `Model.heroMeta` appends `· N stopped` / `· N unhealthy` (zero clauses dropped, as
+   today); the bar tooltip gets the same. Acceptance: stop one resource, the hero and
+   tooltip say so within one resources poll.
+4. Done above (last deployment stays, with Dismiss).
+5. **Remember grouping and folds.** `groupBy` and the folded set reset on every shell
+   restart. Persist them per instance to `~/.local/state/coolwatch/ui.json` (0700 dir,
+   same write discipline as `recent.json`; never from `_resetStore`). Acceptance: fold a
+   project, switch to by-server, restart the shell, both survive.
+
+Medium
+
+6. **Toast click opens the log.** A failed-build toast runs `--exec omarchy-launch-browser
+   <url>`. Run `omarchy-shell io.github.danjonesio.coolwatch log <deployment uuid>`
+   instead: a new IPC verb that opens the panel on that build's log (the panel is a
+   bar-widget, so `summon` drops payloads; IPC is the only channel). Acceptance: click the
+   Failed toast, the log view opens with the failing step visible. Every positional still
+   passes `Model.notifySafe`; `--exec` stays last.
+7. **Type-to-filter.** A `/` filter narrowing resources and deployments by name, Esc
+   clears. Depends on whether `PanelKeyCatcher` hands plain text keys to the panel (read
+   `/usr/share/omarchy/shell` first; the panel may not add a `Keys.onPressed`). Hold until
+   a user with a large account asks or the catcher is known to allow it.
+
+Left alone, on purpose
+
+- `Ungrouped · loading` for the first minute is the topology drain; faster costs rate budget.
+- The 380 card width is a design lock; widening fixes elision at the cost of looking native.
+- The bar icon cannot carry a count (`BarIconButton` has no badge slot).
+- A row inserted above the viewport shifts the visible content by one row; standard
+  ListView behaviour, rare during interaction.
+
 ## Phase 5 — beyond the API (optional, each item its own decision)
 
 - Overlay "console" for wide screens, summoned by keybinding.

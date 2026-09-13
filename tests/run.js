@@ -784,7 +784,7 @@ test("Model.parseRecent / serialiseRecent / mergeRecent: round-trip, corrupt, nu
   const twoText = JSON.stringify({ version: 1, instance: KEY, recent: two }); assert(twoText.length < 262144, "under the bound")
   eq(M.parseRecent(twoText, KEY, NOW).recent.length, 20, "array capped at 20")
   eq(M.parseRecent(JSON.stringify({ version: 1, instance: KEY, recent: [entry(1, { uuid: "constructor" })] }), KEY, NOW).recent.length, 1, "a uuid that names a prototype member survives")
-  const mixed = { version: 1, instance: KEY, recent: [entry(1, { finishedAt: null, updatedAt: null }), entry(2, { finishedAt: new Date(NOW - 25 * 3600 * 1000).toISOString() }), entry(3, { status: "in_progress" }), entry(4, { uuid: "../x" }), entry(5), entry(5)] }
+  const mixed = { version: 1, instance: KEY, recent: [entry(1, { finishedAt: null, updatedAt: null }), entry(2, { finishedAt: new Date(NOW - 8 * 24 * 3600 * 1000).toISOString() }), entry(3, { status: "in_progress" }), entry(4, { uuid: "../x" }), entry(5), entry(5)] }
   const m = M.parseRecent(JSON.stringify(mixed), KEY, NOW); eq(m.recent.length, 1); eq(m.recent[0].uuid, "u5")
   for (const u of ["https://evil/x", "//evil/x", "javascript:x", "-private", "project/x"]) {
     const r = M.parseRecent(JSON.stringify({ version: 1, instance: KEY, recent: [entry(9, { url: u })] }), KEY, NOW)
@@ -903,8 +903,18 @@ test("Model.panelRows: deployments render active plus newest 5 recent only", () 
   assert(!rows.some(r => r.type === "note" && r.text === "Nothing deploying."))
   const old = recent.map(d => Object.assign({}, d, { updatedAt: new Date(NOW - 2 * 3600000).toISOString() }))
   const aged = M.panelRows(snap({ recent: old }), { nowMs: NOW })
-  eq(aged.filter(r => r.type === "deployment").length, 0, "finished deployments leave after an hour")
-  assert(aged.some(r => r.type === "note" && r.text === "Nothing deploying."))
+  eq(aged.filter(r => r.type === "deployment").length, 1, "after an hour only the newest terminal deployment stays")
+  eq(aged.filter(r => r.type === "deployment")[0].uuid, "r0")
+  assert(!aged.some(r => r.type === "note" && r.text === "Nothing deploying."))
+  const dismissedAll = M.panelRows(snap({ recent: old.map(d => Object.assign({}, d, { dismissed: true })) }), { nowMs: NOW })
+  eq(dismissedAll.filter(r => r.type === "deployment").length, 0, "every terminal row dismissed: the section is empty")
+  assert(dismissedAll.some(r => r.type === "note" && r.text === "Nothing deploying."))
+  const firstGone = M.panelRows(snap({ recent: old.map((d, i) => Object.assign({}, d, { dismissed: i === 0 })) }), { nowMs: NOW })
+  eq(firstGone.filter(r => r.type === "deployment")[0].uuid, "r1", "rendering rule: the newest undismissed entry stands in (the service flags older ones too, so this only happens for a flag set by hand)")
+  const withActive = M.panelRows(snap({ deployments: M.joinBranch(M.normaliseDeployments(fx("deployments-active.json")), []), recent: old }), { nowMs: NOW })
+  eq(withActive.filter(r => r.type === "deployment" && r.terminal).length, 0, "an active build needs no stand-in")
+  const freshDismissed = M.panelRows(snap({ recent: recent.map((d, i) => Object.assign({}, d, { updatedAt: new Date(NOW - 10 * 60000).toISOString(), dismissed: i < 2 })) }), { nowMs: NOW })
+  eq(freshDismissed.filter(r => r.type === "deployment").map(r => r.uuid).join(","), "r2,r3,r4,r5,r6", "dismissed rows under an hour old are hidden too")
   const fresh = M.panelRows(snap({ recent: recent.map(d => Object.assign({}, d, { updatedAt: new Date(NOW - 10 * 60000).toISOString() })) }), { nowMs: NOW })
   eq(fresh.filter(r => r.type === "deployment").length, 5)
 })
@@ -1087,7 +1097,7 @@ test("Model.actionsFor: the applicability table; Open only with a url", () => {
   eq(ids({ type: "server", url: "u" }), "validate,open")
   eq(ids({ type: "deployment", status: "queued", url: "u" }), "logs,cancel,open")
   eq(ids({ type: "deployment", status: "in_progress", url: "" }), "logs,cancel")
-  eq(ids({ type: "deployment", status: "finished", url: "u" }), "logs,open")
+  eq(ids({ type: "deployment", status: "finished", url: "u" }), "logs,dismiss,open")
   eq(ids({ type: "fold" }), ""); eq(ids(null), "")
   const stop = M.actionsFor({ type: "resource", kind: "application", state: "running" }).find(a => a.id === "stop")
   assert(stop.destructive && stop.confirm, "stop confirms")
@@ -1318,6 +1328,39 @@ test("Model.listPatch: keyed in-place edits reproduce next; set only on a rev ch
   }
 })
 
+test("Model.deploymentRow / resourceRow: names pass appLabel (Phase 4b item 1)", () => {
+  const o = "https://app.coolify.io"
+  eq(M.deploymentRow({ uuid: "d1", status: "finished", appName: "storefront:main-h0wxyg40kc0lz727dom9l03i" }, o).name, "storefront")
+  eq(M.deploymentRow({ uuid: "deadbeefdeadbeefdeadbeef", status: "finished", appName: "" }, o).name, "deadbeef", "no app name: uuid8")
+  eq(M.resourceRow({ uuid: "xyhpwdxqu33omjgwuo6c7cjp", name: "xyhpwdxqu33omjgwuo6c7cjp-200537415987", kind: "application", state: "running", status: "running:healthy" }, 0, o).name, "xyhpwdxq")
+  eq(M.resourceRow({ uuid: "u2", name: "Storefront Prod WP", kind: "service", state: "exited", status: "exited" }, 0, o).name, "Storefront Prod WP", "plain names untouched")
+})
+
+test("Model.dismissRecent: clears the row and everything older, keeps newer, same array back when nothing changes; survives the file round trip (Phase 4b)", () => {
+  const rec = [{ uuid: "aaaa", status: "finished", finishedAt: new Date(NOW - 5000).toISOString() }, { uuid: "bbbb", status: "failed", finishedAt: new Date(NOW - 9000).toISOString() }]
+  const out = M.dismissRecent(rec, "bbbb")
+  assert(out !== rec); eq(out[1].dismissed, true); eq(out[0].dismissed, undefined, "newer entries untouched"); eq(rec[1].dismissed, undefined, "input untouched")
+  assert(M.dismissRecent(rec, "zzzz") === rec, "unknown uuid: same array"); assert(M.dismissRecent(out, "bbbb") === out, "already dismissed: same array")
+  const all = M.dismissRecent(rec, "aaaa")
+  eq(all.map(d => !!d.dismissed).join(","), "true,true", "dismissing the newest clears everything older: an acknowledge, not a promotion")
+  const three = [{ uuid: "n", status: "finished" }, { uuid: "m", status: "failed" }, { uuid: "o", status: "finished", dismissed: true }]
+  eq(M.dismissRecent(three, "m").map(d => !!d.dismissed).join(","), "false,true,true")
+  assert(M.dismissRecent(three, "o") === three, "the oldest already dismissed: nothing to do")
+  assert(M.hasTerminal(out, "bbbb"), "dedupe still sees it")
+  const KEY = "https://app.coolify.io"
+  const text = M.serialiseRecent(out, KEY, NOW).text
+  assert(JSON.parse(text).recent[1].dismissed === true && JSON.parse(text).recent[0].dismissed === false, "the flag is a whitelisted bool in the file")
+  const back = M.parseRecent(text, KEY, NOW).recent
+  eq(back[1].dismissed, true); eq(back[0].dismissed, false)
+  assert(M.serialiseRecent(out, KEY, NOW).key !== M.serialiseRecent(rec, KEY, NOW).key, "the unchanged-write guard sees a dismiss")
+  const week = M.parseRecent(JSON.stringify({ version: 1, instance: KEY, recent: [{ uuid: "cccc", status: "finished", finishedAt: new Date(NOW - 6 * 24 * 3600 * 1000).toISOString() }] }), KEY, NOW)
+  eq(week.recent.length, 1, "six days old is kept (seven-day file window)")
+  eq(M.actionRequest({ deployments: [], resources: [], servers: [] }, "dismiss", "aaaa").why, "nav", "dismiss never reaches act()")
+  eq(M.actionFor({ type: "deployment", status: "in_progress" }, "dismiss"), null, "no Dismiss on an active build")
+  eq(M.actionFor({ type: "deployment", status: "failed" }, "dismiss").id, "dismiss")
+  eq(M.actionFor({ type: "deployment", status: "failed" }, "cancel"), null)
+})
+
 test("Model.nextAction: clamps; h from the first returns to the row; a vanished id counts as the first", () => {
   const acts = [{ id: "deploy" }, { id: "start" }, { id: "open" }]
   eq(M.nextAction(acts, "deploy", 1), "start"); eq(M.nextAction(acts, "open", 1), "open")
@@ -1349,8 +1392,8 @@ test("Model.footerHints: every cursor position; no o open without a url", () => 
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }, { expanded: true, actionFocus: "" }), "l pick · enter collapse · esc collapse")
   eq(M.footerHints("list", { type: "server", url: "u" }), "enter actions · v validate · o open")
   eq(M.footerHints("list", { type: "deployment", status: "in_progress", url: "u" }), "enter actions · x cancel · L logs · o open")
-  eq(M.footerHints("list", { type: "deployment", status: "finished", url: "u" }), "enter actions · L logs · o open")
-  eq(M.footerHints("list", { type: "deployment", status: "finished", url: "" }), "enter actions · L logs")
+  eq(M.footerHints("list", { type: "deployment", status: "finished", url: "u" }), "enter actions · x dismiss · L logs · o open")
+  eq(M.footerHints("list", { type: "deployment", status: "finished", url: "" }), "enter actions · x dismiss · L logs")
   eq(M.footerHints("list", { type: "resource" }, { confirmOpen: true }), "h/l pick · enter confirm · esc cancel")
 })
 
@@ -1614,7 +1657,7 @@ test("Model.logViewStatus: counts and a digits-only rev, never text (SR26)", () 
 
 test("Model.actionsFor / actionFor: Logs first on deployments, Logs on running rows, History on applications, Deploy on tags; L resolves (SR3)", () => {
   const ids = r => M.actionsFor(r).map(a => a.id).join(",")
-  eq(ids({ type: "deployment", status: "finished", url: "u" }), "logs,open", "a terminal deployment has Logs then Open")
+  eq(ids({ type: "deployment", status: "finished", url: "u" }), "logs,dismiss,open", "a terminal deployment has Logs, Dismiss, then Open")
   eq(ids({ type: "deployment", status: "in_progress", url: "u" }), "logs,cancel,open")
   eq(ids({ type: "resource", kind: "database", state: "running", url: "u" }), "restart,stop,logs,open")
   eq(ids({ type: "resource", kind: "database", state: "exited", url: "u" }), "start,open", "no Logs on a stopped container")

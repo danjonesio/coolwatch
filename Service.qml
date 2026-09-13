@@ -134,6 +134,7 @@ Item {
     return root._configError && root._configError.kind === "unsafe" ? "config unsafe" : "not configured"
   }
   function openBuildLog(panelId, uuid) { if (root._active) root._active.openBuildLog(panelId, uuid) }
+  function dismissRecent(uuid) { if (root._active) root._active.dismissRecent(uuid) }   // Phase 4b: local, no request
   function refetchBuildLog(uuid) { if (root._active) root._active.refetchBuildLog(uuid) }
   function closeView(panelId) { root._ctxs.forEach(function(c) { c.closeView(panelId) }) }   // every context: a view survives no instance switch
   function fetchContainerLog(kind, uuid, label) { if (root._active) root._active.fetchContainerLog(kind, uuid, label) }
@@ -543,6 +544,7 @@ Item {
     property string _lastRecentKey: ""   // stamp-free guard key of the last write
     property int _recentPersisted: 0
     property bool _recentRejected: false
+    property bool _recentDirty: false    // a dismiss changed `_recent`; the next deployments poll writes it (the arm stays the only writer)
 
     // Depth (Phase 4). View slices live beside `snapshot` (the `pending` precedent): log
     // text never enters snapshot, _status(), recent.json, a console line or a toast (SR26).
@@ -679,7 +681,7 @@ Item {
       ctx._recentPersisted = r.recent.length; ctx._recentRejected = r.rejected; ctx._recentLoaded = true
       console.log(r.rejected ? "coolwatch recent rejected" : "coolwatch recent loaded " + r.recent.length)
     }
-    function _saveRecent() {             // the deployment arm is the only caller
+    function _saveRecent() {             // called from the deployment (drain) arm and, for a dismiss, the deployments arm; nowhere else
       if (!ctx._recentLoaded || !root._stateDirReady || ctx._recentKey === "") return
       var out = Model.serialiseRecent(ctx._recent, ctx._recentKey, Date.now(), ctx.instId)
       if (out.key === ctx._lastRecentKey) return
@@ -720,7 +722,7 @@ Item {
       ctx._actionStatus = ""; actionStatusTimer.stop()
       ctx._notifyQueue = []; ctx._actionAt = {}; ctx._lastNotified = {}; ctx._suppressed = Model.suppressedZero(); ctx._lastEvent = null
       ctx._drainTries = {}; deploymentReq.inflight = null
-      ctx._recentLoaded = false; ctx._recentKey = ""; ctx._lastRecentKey = ""   // never writes; _configText re-arms the read
+      ctx._recentLoaded = false; ctx._recentKey = ""; ctx._lastRecentKey = ""; ctx._recentDirty = false   // never writes; _configText re-arms the read
       // Phase 4: a revoked or swapped token must not leave fetched log text on screen (SR26).
       ctx._buildLogs = {}; ctx._containerLogs = {}; ctx._servicePicks = {}; ctx._history = {}; ctx._tags = []; ctx._tagsAt = 0
       ctx._logTargets = {}; ctx._sensitive = "unknown"; ctx._deploymentsBytes = 0
@@ -918,6 +920,7 @@ Item {
           ctx._deployments = norm
           ctx._queueNotify(diff.events)
           ctx._drainTerminal()
+          if (ctx._recentDirty) { ctx._recentDirty = false; ctx._saveRecent() }   // Phase 4b: a dismiss persists on the next poll, never on the click
           break
         }
         case "deployment": {
@@ -1492,6 +1495,19 @@ Item {
       ctx._say(o.text, o.tone)
       ctx._lastAction = { verb: a.verb, uuid8: a.uuid.slice(0, 8), code: rec.code, curlExit: rec.exit, ms: rec.timeMs, at: Date.now(), result: result, instance: ctx.instId }
       console.log("coolwatch action " + a.verb + " " + rec.code + " exit=" + rec.exit + " " + rec.timeMs + "ms " + a.uuid.slice(0, 8))
+    }
+
+    // Phase 4b: hide a terminal deployment row. Never an action (no request, no pending, no
+    // lastAction): `recent` keeps the entry for dedupe and the file gets it on the next poll.
+    function dismissRecent(uuid) {
+      var u = String(uuid || "")
+      if (!Model.UUID_RE.test(u)) return
+      var next = Model.dismissRecent(ctx._recent, u)
+      if (next === ctx._recent) { ctx._say("Nothing to dismiss", "dim"); return }
+      ctx._recent = next
+      ctx._recentDirty = true
+      ctx._say("Dismissed", "dim")
+      console.log("coolwatch recent dismiss " + u.slice(0, 8))
     }
 
     function _say(text, tone) {

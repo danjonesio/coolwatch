@@ -87,8 +87,17 @@ Read `docs/roadmap.md` before writing code.
   per kind:uuid:event), critical-first ordering, â¤ 3 resource toasts per flush plus one
   summary, â¤ 12 non-critical per minute; critical is never capped. A `notify`-only
   config edit applies live with no store reset; a malformed toggle warns and keeps its
-  default. `recent.json` is written from the deployment arm only, never from a property
-  change or `_resetStore`; the state dir is created and chmod'ed 0700 before the first write.
+  default. `recent.json` is written from the deployment arms only (the drain when a
+  terminal record lands; the deployments poll after a dismiss, via `_recentDirty`), never
+  from a property change, a click or `_resetStore`; the state dir is created and chmod'ed
+  0700 before the first write. Dismiss (`x` or the strip on a terminal deployment row) is
+  local and an acknowledge: `Model.dismissRecent` flags that entry **and every older one**
+  (a promotion of the next build looks like nothing happened; Dan, 2026-09-13), the panel
+  hides them at any age, `hasTerminal` still sees them, and `act()` refuses the verb as
+  `nav`. Every terminal row shows a `×` (`G.dismiss`) that does the same on one click. The
+  deployments section never goes blank while an undismissed terminal entry exists: the
+  newest stays past the hour window. Row names pass `Model.appLabel` (resources and
+  deployments), so the panel and the toasts agree.
 - HTTP is `curl -q -S -K -` in a `Quickshell.Io.Process` with the config on **stdin**;
   nothing else is in argv (`-q` first ignores `~/.curlrc`). Every per-transfer option
   (`max-time`, `max-filesize`, `proto`, headers, `write-out`) lives in every config

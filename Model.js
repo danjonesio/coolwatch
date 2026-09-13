@@ -28,14 +28,15 @@ var G = {
   foldOpen: "▾",          // ▾
   foldClosed: "▸",        // ▸
   back: "‹",              // ‹ U+2039: the overlay breadcrumb (Phase 4; JetBrains Mono Latin-1/punctuation block)
-  tag: "#"                // a tag row's bullet (Phase 4; ASCII)
+  tag: "#",               // a tag row's bullet (Phase 4; ASCII)
+  dismiss: "×"            // × U+00D7: the clear control on a terminal deployment row (Phase 4b; Latin-1)
 }
 var GLYPHS = Object.keys(G).map(function (k) { return G[k] })
 
 var TERMINAL = { finished: true, failed: true, "cancelled-by-user": true }
 var ACTIVE = { queued: true, in_progress: true }
 var RECENT_RENDER_CAP = 5
-var RECENT_MAX_AGE_MS = 60 * 60 * 1000   // finished deployments leave the panel after an hour
+var RECENT_MAX_AGE_MS = 60 * 60 * 1000   // finished deployments leave the panel after an hour, except the newest, which stays until dismissed
 
 // ---- actions (Phase 2) ---------------------------------------------------------------
 // A uuid the service will act on must look like one before it reaches a path (SR3).
@@ -791,10 +792,10 @@ function notifyPlan(events, s, ctx) {
 
 var RECENT_FILE_VERSION = 1
 var RECENT_FILE_MAX_CHARS = 262144
-var RECENT_FILE_MAX_AGE_MS = 24 * 3600 * 1000
+var RECENT_FILE_MAX_AGE_MS = 7 * 24 * 3600 * 1000   // a Friday build is still the "last deployment" on Monday
 var RECENT_CAP = 20
 var RECENT_STRING_FIELDS = { appId: 32, appName: 120, serverName: 80, commit: 64, commitMessage: 200, createdAt: 40, updatedAt: 40, finishedAt: 40, url: 400 }
-var RECENT_BOOL_FIELDS = ["restartOnly", "force", "isApi", "isWebhook"]
+var RECENT_BOOL_FIELDS = ["restartOnly", "force", "isApi", "isWebhook", "dismissed"]   // dismissed: hidden from the panel, kept for dedupe
 
 function recentEntry(d) {
   var o = { uuid: d.uuid, status: d.status, appUuid: null, branch: null }
@@ -840,6 +841,25 @@ function serialiseRecent(recent, instanceKey, nowMs, id) {
   var keyObj = {}; for (var k in head) keyObj[k] = head[k]; keyObj.recent = list
   var textObj = {}; for (var k2 in head) textObj[k2] = head[k2]; textObj.savedAt = nowMs || Date.now(); textObj.recent = list
   return { text: JSON.stringify(textObj, null, 2) + "\n", key: JSON.stringify(keyObj) }
+}
+
+// Dismiss (`x`, the row's × or the strip's Dismiss on a terminal row) is an acknowledge:
+// it clears that row and every older terminal entry (`recent` is newest first), so the
+// section reads "Nothing deploying." rather than promoting the next build into the same
+// place. Entries stay in `recent` for `hasTerminal` and the file. The same array back when
+// nothing changed.
+function dismissRecent(recent, uuid) {
+  var list = recent || [], at = -1
+  for (var i = 0; i < list.length; i++) if (list[i] && list[i].uuid === uuid) { at = i; break }
+  if (at < 0) return recent
+  var hit = false
+  var out = list.map(function (d, j) {
+    if (!d || j < at || d.dismissed) return d
+    hit = true
+    var o = {}; for (var k in d) o[k] = d[k]; o.dismissed = true
+    return o
+  })
+  return hit ? out : recent
 }
 
 function mergeRecent(memory, loaded) {
@@ -1128,7 +1148,7 @@ function deploymentRow(d, originStr) {
   var g = deploymentGlyph(d)
   return {
     type: "deployment", key: "dep:" + d.uuid, uuid: d.uuid, glyph: g.glyph, tone: g.tone,
-    name: d.appName || d.uuid, sub: [d.branch, d.commitMessage].filter(function (x) { return !!x }).join(" · "),
+    name: appLabel(d.appName, d.uuid), sub: [d.branch, d.commitMessage].filter(function (x) { return !!x }).join(" · "),   // Phase 4b: the toast label, not Coolify's decorated name
     createdAt: d.createdAt, updatedAt: d.updatedAt, terminal: !!TERMINAL[d.status], status: d.status,
     url: openUrl("deployment", d, originStr), pendingVerb: ""
   }
@@ -1149,7 +1169,7 @@ function serverRow(x, originStr) {
 
 function resourceRow(r, indent, originStr) {
   var d = statusDot(r)
-  return { type: "resource", key: "res:" + r.uuid, uuid: r.uuid, dot: d.dot, tone: d.tone, name: r.name,
+  return { type: "resource", key: "res:" + r.uuid, uuid: r.uuid, dot: d.dot, tone: d.tone, name: appLabel(r.name, r.uuid),   // Phase 4b: `storefront`, not `storefront:main-h0wx…`
            statusWords: statusWords(r), kindHint: kindHint(r), dim: r.state === "exited" || r.state === "paused", indent: indent || 0,
            kind: r.kind, state: r.state, health: r.health, url: openUrl("resource", r, originStr), pendingVerb: "" }
 }
@@ -1224,6 +1244,7 @@ function actionsFor(row) {
     // Phase 4: Logs first, on every deployment row, so Enter, Enter reaches the build log.
     out.push(act("logs", "Logs"))
     if (ACTIVE[row.status]) out.push(act("cancel", "Cancel", true, true))
+    else if (TERMINAL[row.status]) out.push(act("dismiss", "Dismiss"))   // local: hides the row, no request (Phase 4b)
   } else if (row.type === "tag") {
     // Phase 4: a fan-out the API cannot enumerate, so it always confirms (SR35).
     out.push(act("deployTag", "Deploy", false, true))
@@ -1428,10 +1449,15 @@ function panelRows(s, ui) {
   // DEPLOYMENTS
   rows.push({ type: "section", key: "sec:deployments", title: "DEPLOYMENTS", control: null })
   var active = activeDeployments(s)
-  var recent = (s.recent || []).filter(function(d) {
+  var kept = (s.recent || []).filter(function(d) { return !!d && !d.dismissed })
+  var recent = kept.filter(function(d) {
     var t = Date.parse(d.finishedAt || d.updatedAt || "")
     return isNaN(t) || nowMs - t <= RECENT_MAX_AGE_MS
   }).slice(0, RECENT_RENDER_CAP)
+  // Phase 4b: the section never goes blank while there is an outcome to show. With nothing
+  // active and nothing under an hour old, the newest undismissed terminal deployment stays,
+  // whatever its age, until `x` / Dismiss hides it.
+  if (!active.length && !recent.length && kept.length) recent = [kept[0]]
   if (!active.length && !recent.length) rows.push({ type: "note", key: "note:deployments", text: noteFor(s, "deployments") })
   active.forEach(function (d) { rows.push(pend(deploymentRow(d, o))) })
   recent.forEach(function (d) { rows.push(pend(deploymentRow(d, o))) })
@@ -1533,8 +1559,8 @@ function firstSelectableInSection(rows, title) {
   return -1
 }
 
-var HINT_KEY = { deployTag: "d deploy", deploy: "d deploy", redeploy: "d redeploy", stop: "s stop", start: "s start", restart: "t restart", validate: "v validate", cancel: "x cancel", logs: "L logs", open: "o open" }
-var HINT_ORDER = ["deployTag", "deploy", "redeploy", "stop", "start", "restart", "validate", "cancel", "logs", "open"]
+var HINT_KEY = { deployTag: "d deploy", deploy: "d deploy", redeploy: "d redeploy", stop: "s stop", start: "s start", restart: "t restart", validate: "v validate", cancel: "x cancel", dismiss: "x dismiss", logs: "L logs", open: "o open" }
+var HINT_ORDER = ["deployTag", "deploy", "redeploy", "stop", "start", "restart", "validate", "cancel", "dismiss", "logs", "open"]
 
 // Phase 4: the footer while an overlay view is open. `o open` only when the view has a page.
 function viewHints(view) {
@@ -1587,7 +1613,7 @@ var LOG_CTRL_RE = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/g
 // One query value: no whitespace, no URL structure, no comma (Coolify's multi-tag separator).
 var TAG_RE = /^[^\s\/?#&=,]{1,64}$/
 // Verbs the panel navigates on; they never reach act() or an IPC handler.
-var NAV_VERBS = { open: true, logs: true, history: true }
+var NAV_VERBS = { open: true, logs: true, history: true, dismiss: true }   // the panel's, never an HTTP action
 // Every overlay row carries the union of keys, each with a typed placeholder: a ListModel
 // fixes a role's type on the first append, and a null there would drop every later string.
 var VIEW_DEFAULTS = { rowType: "", type: "", key: "", uuid: "", appUuid: "", i: -1, text: "", tone: "", hidden: false, glyph: "", name: "", sub: "",

@@ -310,6 +310,7 @@ Panel {
     if (a.id === "logs") { root.openLogsFor(row); return }        // Phase 4: navigation, never act()
     if (a.id === "history") { root.openHistoryFor(row); return }
     if (!svc) return
+    if (a.id === "dismiss") { svc.dismissRecent(row.uuid); return }     // Phase 4b: local, never act()
     // Fail closed: a confirming verb never reaches act() from here; only resolveConfirm does.
     if (a.confirm) { if (!root.confirmOpen) root.openConfirm(a.id, row); return }
     svc.act(a.id, row.uuid, false, row.type)
@@ -629,7 +630,7 @@ Panel {
       onDeleteRequested: {
         if (root.confirmOpen || root.view || root.focusSection !== "list") return
         var row = root.currentRow
-        if (row && row.type === "deployment") root.runAction("cancel", row.key)
+        if (row && row.type === "deployment") root.runAction(row.terminal ? "dismiss" : "cancel", row.key)   // x: cancel an active build, dismiss a finished one
       }
       onCloseRequested: root.closeLadder()
       onTabRequested: function(direction) { if (!root.confirmOpen) { root.clearViews(); root.switchPanel(direction) } }
@@ -1322,7 +1323,7 @@ Panel {
                   anchors.verticalCenter: parent.verticalCenter
                 }
                 Column {
-                  width: parent.width - Style.space(22) - depTime.implicitWidth - parent.spacing * 2
+                  width: parent.width - Style.space(22) - depTime.implicitWidth - (depDismiss.visible ? depDismiss.width + parent.spacing : 0) - parent.spacing * 2
                   spacing: Style.space(2)
                   anchors.verticalCenter: parent.verticalCenter
                   Text {
@@ -1354,6 +1355,26 @@ Panel {
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   anchors.verticalCenter: parent.verticalCenter
+                }
+                // Phase 4b: the visible clear control on a terminal row. Dim, brighter while the
+                // row has the cursor (never from containsMouse); one click acknowledges. Declared
+                // after the row's MouseArea, so it takes the click first.
+                Text {
+                  id: depDismiss
+                  visible: !!rowDelegate.row.terminal
+                  width: Style.space(22)
+                  textFormat: Text.PlainText
+                  text: Model.G.dismiss
+                  color: rowDelegate.selected ? root.foreground : root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.title
+                  horizontalAlignment: Text.AlignHCenter
+                  anchors.verticalCenter: parent.verticalCenter
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.runAction("dismiss", rowDelegate.row.key)
+                  }
                 }
               }
             }
