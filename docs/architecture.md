@@ -675,6 +675,15 @@ refused after three consecutive ability failures until a 2xx or a config change.
     against the active instance only; the confirm dialog captures `activeId` and the
     context refuses a mismatch with "Instance changed; nothing sent"; every pending entry
     lives in its context; `status.lastAction.instance` names it.
+41. (SR39, 2026-09-13) Fixtures name no real account: `bin/check` extracts every URL host
+    (including the `https:\/\/` form inside an escaped-JSON string), bare IPv4,
+    `git_repository` and commit-message slug from `tests/fixtures/` and fails on anything
+    outside the placeholder set (`example.net`/`.com`/`.org` and subdomains,
+    `app.coolify.io`, `localhost`, `203.0.113.x`, RFC 1918, `example/<repo>`,
+    `coollabsio/coolify`); `bin/record-fixture` rewrites those fields at capture time.
+    Added after the 2026-09-13 review found three live hostnames, a private repository
+    path and a real commit message that the by-hand rename and the key-name gates (SR31)
+    had both missed. Names and descriptions stay a by-hand check.
 
 ## Testing
 
@@ -695,6 +704,7 @@ refused after three consecutive ability failures until a 2xx or a config change.
   (text under `text`), `tags-empty.json`, `action-deploy-tag-ok.json`. Hand-written ones
   say so in a `_note` key.
 - `bin/check`: node tests, repo symlink scan, fixture secret scan (a jq walk: SR31),
+  fixture identity scan (hosts, IPs, repository and commit slugs: SR39),
   PlainText and `font.family` count gates over every `.qml` including `TextEdit`/
   `TextArea`, the rich-text ban (SR25), the no-log-text-in-console grep (SR26),
   hardcoded-token grep, `omarchy plugin validate` of a staged

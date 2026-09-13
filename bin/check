@@ -30,6 +30,28 @@ for fx in "$root"/tests/fixtures/*.json; do
     || fail "SR31: $fx holds an unscrubbed sensitive key"
 done
 
+# SR39: fixtures name no real account (the public-repo rule in AGENTS.md; a server IP
+# shipped once in 2026-09 and three hostnames survived the rewrite). The key-name gates
+# above cannot see a real hostname inside an fqdn, so this is a value gate over every
+# fixture, JSON or not: every URL host, bare IPv4 and repository slug must be a
+# placeholder, and no commit message may name an owner other than example. Names and
+# descriptions are free text and stay a by-hand check.
+hosts=$(grep -rhoaE 'https?:(//|\\\\/\\\\/)[^"/ \\]+' "$root/tests/fixtures" | sed -E 's#^https?:(//|\\+/\\+/)##; s#:[0-9]+$##' | sort -u)   # also the https:\/\/ of an escaped-JSON string
+bad=$(printf '%s\n' "$hosts" | grep -vE '^(([a-z0-9-]+\.)*example\.(net|com|org)|app\.coolify\.io|localhost|127\.0\.0\.1|10\.[0-9.]+|192\.168\.[0-9.]+|203\.0\.113\.[0-9]+)$' || true)
+[[ -z $bad ]] || fail "SR39: a non-placeholder host in a fixture URL: ${bad//$'\n'/ }"
+ips=$(grep -rhoaE '\b[0-9]{1,3}(\.[0-9]{1,3}){3}\b' "$root/tests/fixtures" | sort -u)
+bad=$(printf '%s\n' "$ips" | grep -vE '^(127\.|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|203\.0\.113\.|0\.0\.0\.0$)' || true)
+[[ -z $bad ]] || fail "SR39: a non-placeholder IP in a fixture: ${bad//$'\n'/ }"
+for fx in "$root"/tests/fixtures/*.json; do
+  jq -e '[.. | objects | to_entries[] | select(.key | test("^(fqdn|domains|docker_compose_domains|git_repository|git_full_url|commit_message|commitMessage)$")) | select(.value | type == "string")
+          | select(.key == "git_repository" and (.value | test("^(example/|coollabsio/coolify$)") | not))] | length == 0' "$fx" >/dev/null \
+    || fail "SR39: $fx holds a git_repository outside example/"
+  jq -e '[.. | objects | to_entries[] | select(.key == "commit_message" or .key == "commitMessage") | select(.value | type == "string")
+          | select(.value | test("(?<![A-Za-z0-9_./-])(?!example/)[A-Za-z0-9_-]+/[A-Za-z0-9_./-]+"))] | length == 0' "$fx" >/dev/null \
+    || fail "SR39: $fx holds a commit message naming a repository or branch outside example/"
+done
+n=$(printf '%s\n' "$hosts" | grep -c . || true); [[ $n -ge 3 ]] || fail "SR39 gate matched fewer than three hosts; the fixtures moved"
+
 # Every text item in every QML file is PlainText and pairs pixelSize with family (SR25:
 # TextEdit/TextArea count too; log text is the most attacker-influenced string in the product).
 for qf in "$root"/*.qml; do
