@@ -909,6 +909,20 @@ test("Model.callout: every error and warning kind has a body; healthy is null; s
   assert(/Showing data from 3m ago\./.test(st.body), "staleness suffix")
   const w = M.callout(snap({ warning: { kind: "permissions" } }))
   assert(/chmod 600/.test(w.body)); assert(/readable/.test(w.title))
+  // "Edit config" (Phase 5 prep): the file's own problems carry the button, nothing else does.
+  ;["noconfig", "configerror", "unsafe", "tokencmd", "auth"].forEach(k => assert(M.callout(snap({ error: M.makeError(k, "d") })).edit === true, k + " editable"))
+  ;["waitingtoken", "apidisabled", "ipblocked", "ability", "ratelimited", "offline", "tls", "toolarge", "http"].forEach(k => assert(M.callout(snap({ error: M.makeError(k, "d") })).edit === false, k + " not editable"))
+  assert(w.edit === true, "permissions warning editable")
+  assert(M.callout(snap({ warning: { kind: "plaintext" } })).edit === false, "plaintext not editable")
+  assert(M.calloutEditable(null) === false && M.calloutEditable(snap({})) === false)
+  const sample = JSON.parse(M.SAMPLE_CONFIG_FILE)
+  assert(sample.instances[0].token === "paste-your-token-here", "the sample file parses")
+  assert(/homelab/.test(sample._help) && /#configuration/.test(sample._help), "the help string shows a second instance and links the README")
+  const ns = M.normaliseConfig(M.SAMPLE_CONFIG_FILE)
+  assert(ns.ok && ns.instances.length === 1 && ns.instances[0].id === "cloud", "normaliseConfig accepts the sample and ignores _help")
+  assert(/ · e config · /.test(M.footerHints("hero", null, {})), "hero hint names e at any time")
+  assert(/^e edit config · /.test(M.footerHints("list", null, { editConfig: true })), "empty list hint under a config callout")
+  assert(!/config/.test(M.footerHints("list", null, {})), "no list hint without the callout")
   const p = M.callout(snap({ warning: { kind: "plaintext" } }))
   assert(/http:\/\//.test(p.body))
   const both = M.callout(snap({ error: M.makeError("auth"), warning: { kind: "plaintext" } }))
@@ -1509,9 +1523,9 @@ test("Model.GLYPHS: the pending dot and every glyph a pending row can emit are i
 })
 
 test("Model.footerHints: every cursor position; no o open without a url", () => {
-  eq(M.footerHints("hero", null), "enter refresh · j down · r refresh · esc close")
-  eq(M.footerHints("hero", null, { instances: 1 }), "enter refresh · j down · r refresh · esc close")
-  eq(M.footerHints("hero", null, { instances: 2 }), "h/l instance · enter refresh · j down · r refresh · esc close")   // Phase 4 chips
+  eq(M.footerHints("hero", null), "enter refresh · j down · r refresh · e config · esc close")
+  eq(M.footerHints("hero", null, { instances: 1 }), "enter refresh · j down · r refresh · e config · esc close")
+  eq(M.footerHints("hero", null, { instances: 2 }), "h/l instance · enter refresh · j down · r refresh · e config · esc close")   // Phase 4 chips
   eq(M.footerHints("list", { type: "fold" }), "j/k move · enter fold · g group · / filter · r refresh · esc close")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }), "enter actions · d redeploy · s stop · t restart · L logs · o open")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "exited", url: "u" }), "enter actions · d deploy · s start · o open")

@@ -53,7 +53,14 @@ No daemon, no second Quickshell, no Python collector. The shell is the runtime.
 Secrets and behaviour live in one file the plugin owns, not in `shell.json`, because
 `shell.json` is a layout file that tools like omardan print, diff and rewrite.
 
-`~/.config/coolwatch/config.json`, mode `0600` in a `0700` directory the service creates, watched with two `FileView`s (file and directory):
+`~/.config/coolwatch/config.json`, mode `0600` in a `0700` directory the service creates, watched with two `FileView`s (file and directory).
+The panel's **Edit config** (the footer's cog, `e`, and a second button on the config-class
+callouts) calls the service's `editConfig()`: one `Process` running `umask 077; mkdir -p; [ -e file ] || printf
+sample > file` with both paths and `Model.SAMPLE_CONFIG_FILE` as positional parameters, then
+`Util.execArgv(["omarchy-launch-config-editor", path])`. It is the one place the service
+writes the config file, only when none exists, and the sample holds a placeholder token,
+never a real one; an existing file is never rewritten. The save arrives through the watcher
+like any other edit.
 
 ```json
 {

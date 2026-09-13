@@ -22,6 +22,7 @@ var G = {
   cancelled: cp(0xF073A),      // md-cancel
   half: cp(0xF1396),           // md-circle_half_full: starting / restarting / degraded
   refresh: cp(0xF0450),        // md-refresh
+  cog: cp(0xF0493),            // md-cog: the footer's Edit config button
   dotOn: "●",             // ●
   dotOff: "○",            // ○
   dotUnknown: "◌",        // ◌
@@ -1120,6 +1121,22 @@ function failedName(s, uuid) {
 }
 
 var SAMPLE_CONFIG = '{ "version": 1, "instances": [\n  { "id": "cloud", "name": "Coolify Cloud", "url": "https://app.coolify.io", "token": "67|…" } ] }'
+// The file "Edit config" creates when none exists (0600 in a 0700 directory, written by the
+// service): the same shape with a placeholder the user replaces. It parses, so the next
+// state is "token rejected", whose callout keeps the button. JSON has no comments, so the
+// second-instance example rides a `_help` string (normaliseConfig ignores unknown keys);
+// a real second entry would poll a made-up URL.
+var SAMPLE_CONFIG_FILE = '{\n  "version": 1,\n  "_help": "One object per Coolify. Add a second one to instances for a self-hosted server, e.g. { \\"id\\": \\"homelab\\", \\"name\\": \\"Homelab\\", \\"url\\": \\"http://10.0.0.5:8000\\", \\"token\\": \\"...\\" }. Full reference: https://github.com/danjonesio/coolwatch#configuration",\n  "instances": [\n    { "id": "cloud", "name": "Coolify Cloud", "url": "https://app.coolify.io", "token": "paste-your-token-here" }\n  ]\n}\n'
+// The footer's cog and `e` open the config at any time. The callouts the file can fix carry a
+// second, spelled-out "Edit config" button as the call to action: the file is missing,
+// unreadable, unsafe, readable by others, its token command failed or its token was
+// rejected. Network, rate-limit and ability problems are not the file's.
+var EDITABLE_ERRORS = { noconfig: true, configerror: true, unsafe: true, tokencmd: true, auth: true }
+function calloutEditable(s) {
+  if (!s) return false
+  if (s.error) return !!EDITABLE_ERRORS[s.error.kind]
+  return !!(s.warning && s.warning.kind === "permissions")
+}
 
 function calloutBody(e, s) {
   switch (e.kind) {
@@ -1167,7 +1184,7 @@ function callout(s, nowMs) {
     title = w.kind === "permissions" ? "Config is readable by others" : (w.kind === "plaintext" ? "Plaintext instance" : (w.title || "Warning"))
     body = warningBody(w)
   }
-  return { title: title, body: body }
+  return { title: title, body: body, edit: calloutEditable(s) }
 }
 
 var NOTES = { deployments: "Nothing deploying.", servers: "No servers on this team.", resources: "No resources on this team.", nomatch: "No match." }
@@ -1740,7 +1757,8 @@ function footerHints(focusSection, row, ui) {
   if (ui.confirmOpen) return "h/l pick · enter confirm · esc cancel"
   if (ui.view) return viewHints(ui.view)
   if (ui.filterFocus) return "type to narrow · enter list · esc clear"
-  if (focusSection === "hero") return (ui.instances > 1 ? "h/l instance · " : "") + "enter refresh · j down · r refresh · esc close"
+  if (focusSection === "hero") return (ui.instances > 1 ? "h/l instance · " : "") + "enter refresh · j down · r refresh · e config · esc close"
+  if (ui.editConfig && !row) return "e edit config · enter refresh · r refresh · esc close"
   if (row && row.type === "fold") return "j/k move · enter fold · g group · / filter · r refresh · esc close"
   if (ui.expanded && ui.actionFocus === MORE_ID) return "h/l pick · enter " + (ui.moreOpen ? "less" : "more") + " · esc collapse"
   if (ui.expanded && ui.actionFocus) return "h/l pick · enter run · esc collapse"

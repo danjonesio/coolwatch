@@ -285,6 +285,30 @@ Item {
   // config text is only re-read when nothing is loaded, so a refresh never cascades.
   function _selfHeal() { mkdirProc.running = true }
 
+  // "Edit config" (Phase 5 prep): the one place the service writes the config file, and
+  // only when none exists: umask 077 makes the file 0600 and the directory 0700; an
+  // existing file is never touched. Then Omarchy's own config-editor launcher (a low toast
+  // plus the default editor). The file watcher picks the save up. Both paths and the
+  // sample are positional parameters, never interpolated; the sample holds no secret.
+  function editConfig() {
+    if (editProc.running) return "busy"
+    editProc.running = true
+    return "ok"
+  }
+  Process {
+    id: editProc
+    running: false
+    command: ["bash", "-c", 'umask 077; mkdir -p "$1" || exit 1; if [ -e "$2" ]; then echo kept; else printf "%s" "$3" > "$2" && echo created; fi',
+              "bash", root.configDirPath, root.configPath, Model.SAMPLE_CONFIG_FILE]
+    stdout: StdioCollector { id: editOut; waitForEnd: true }
+    onExited: function(code) {
+      var what = code === 0 ? String(editOut.text || "").trim() : "failed"
+      console.log("coolwatch config edit -> " + what + (code === 0 ? "" : " (exit " + code + ")"))
+      if (code === 0) Util.execArgv(["omarchy-launch-config-editor", root.configPath])
+      root._selfHeal()
+    }
+  }
+
   // Start rather than restart: a stat already in flight answers for the current file;
   // a change that lands meanwhile is replayed from onExited.
   function _stat() {

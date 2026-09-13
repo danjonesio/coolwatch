@@ -121,6 +121,20 @@ A `BorderSurface` under the hero (the agents panel's callout tint), shown only w
 there is an error or a warning, carrying the body text below and, when the data on
 screen is stale, "Showing data from 3m ago." Healthy panels show no callout.
 
+**Edit config** is always reachable: a cog (`md-cog`) at the right end of the footer,
+tooltip "Edit config (e)", dim like the hints, no cursor ring, and `e` from anywhere in
+the list (a second control in the hero's trailing slot elides the counts line at 380,
+measured 2026-09-13; the hints elide before the cog moves). The callouts the file can fix (no config, config error, config
+unsafe, config readable by others, token command failed, token rejected;
+`Model.calloutEditable`) add a spelled-out bordered **Edit config** button under the body
+as the call to action. Either asks the service, which creates the directory (0700) and,
+only when no file exists, a sample file (0600, `Model.SAMPLE_CONFIG_FILE`: one Cloud
+entry with a placeholder token and a `_help` string showing a second instance and linking
+the README, since JSON has no comments and unknown keys are ignored), then runs
+`omarchy-launch-config-editor` on it: Omarchy's own low toast and default editor. The
+file watcher clears the callout on save. The hero hint carries `e config`; under a
+config callout the empty list reads `e edit config · …`.
+
 | Kind | Body |
 |---|---|
 | no config | "Create ~/.config/coolwatch/config.json (chmod 600):" + the three-line sample |
@@ -335,7 +349,7 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 
 | Cursor position | Hint |
 |---|---|
-| hero | `enter refresh · j down · r refresh · esc close` |
+| hero | `enter refresh · j down · r refresh · e config · esc close` |
 | fold row | `j/k move · enter fold · g group · / filter · r refresh · esc close` |
 | application row, running, collapsed | `enter actions · d redeploy · s stop · t restart · L logs · o open` |
 | application row, stopped, collapsed | `enter actions · d deploy · s start · o open` |

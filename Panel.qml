@@ -150,6 +150,7 @@ Panel {
     return false
   }
   function refreshNow() { if (svc) svc.refresh() }
+  function editConfig() { if (svc) svc.editConfig() }         // the callout's "Edit config" button and `e`
 
   function toneColor(t) {
     if (t === "urgent") return root.urgent
@@ -693,6 +694,7 @@ Panel {
         if (t === "r" || t === "R") { root.refreshNow(); return }
         if (t === "g" || t === "G") { root.setGroupBy(root.groupBy === "project" ? "server" : "project"); return }
         if (t === "/") { root.openFilter(); return }            // Phase 4b
+        if (t === "e" || t === "E") { root.editConfig(); return }   // the hero's cog: at any time
         if (root.focusSection !== "list" || !root.currentRow) return
         var row = root.currentRow
         // d / D is the one deliberate case-sensitive pair: D is the no-cache rebuild.
@@ -732,6 +734,8 @@ Panel {
               verticalAlignment: Text.AlignVCenter
             }
           }
+          // One trailing control: a second icon button here elides the counts line (measured
+          // 2026-09-13), so Edit config lives at the footer's right end instead.
           trailingControl: Component {
             Button {
               id: refreshButton
@@ -889,26 +893,67 @@ Panel {
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.Wrap
             }
+            // The spelled-out "Edit config" on the callouts the file can fix (Model.calloutEditable);
+            // the hero's cog is the permanent one. No hasCursor, like the chips.
+            Button {
+              visible: !!root.callout && !!root.callout.edit
+              text: "Edit config"
+              bordered: true
+              width: implicitWidth
+              height: implicitHeight
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              verticalPadding: Style.spacing.controlPaddingY
+              tooltipText: "Open ~/.config/coolwatch/config.json in your editor (e)"
+              onClicked: root.editConfig()
+            }
           }
         }
       }
 
-      Text {
+      // The footer: the hint line with the Edit config cog at its right end (always there,
+      // `e`; no cursor ring, like the chips). The hints elide before the cog moves.
+      Item {
         id: footer
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
+        implicitHeight: Math.max(footerText.implicitHeight, configButton.implicitHeight)
+        Button {
+          id: configButton
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          bordered: false
+          iconText: Model.G.cog
+          horizontalPadding: Style.spacing.controlGap
+          verticalPadding: 0
+          width: implicitWidth
+          height: implicitHeight
+          foreground: root.dim
+          fontFamily: root.fontFamily
+          tooltipText: "Edit config (e)"
+          onClicked: root.editConfig()
+        }
+      Text {
+        id: footerText
+        anchors.left: parent.left
+        anchors.right: configButton.left
+        anchors.rightMargin: Style.spacing.sm
+        anchors.verticalCenter: parent.verticalCenter
         textFormat: Text.PlainText
+        elide: Text.ElideRight
         text: Model.footerHints(root.focusSection, root.currentRow,
                                 { expanded: !!root.currentRow && root.expandedKey === root.currentRow.key, actionFocus: root.actionFocus, moreOpen: root.moreOpen, confirmOpen: root.confirmOpen,
                                   filterFocus: filterField.activeFocus,
+                                  editConfig: !!root.callout && !!root.callout.edit,
                                   instances: svc ? svc.instances.length : 0,
                                   view: root.view ? { kind: root.view.kind, following: root.following, terminal: !!(root.liveRec && root.liveRec.terminal),
                                                       paused: !!(root.snapshot && root.snapshot.paused), hasUrl: !!root.view.url } : null })
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
-        wrapMode: Text.WordWrap
+      }
       }
 
       // ---- Phase 4 overlay: a view over the list, inside the catcher so it anchors to the
