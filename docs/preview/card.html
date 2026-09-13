@@ -1,0 +1,42 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Coolwatch preview</title>
+<style>
+@font-face{font-family:"InterD";src:url("@INTER@");font-weight:700}
+@font-face{font-family:"JBM";src:url("/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf");font-weight:400}
+@font-face{font-family:"JBM";src:url("/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Bold.ttf");font-weight:700}
+html,body{margin:0;width:2400px;height:1350px;overflow:hidden}
+body{background:#07080b;position:relative;font-family:"JBM",monospace;color:#f0b7ca}
+.glow{position:absolute;inset:0;background:
+  radial-gradient(1500px 1000px at 12% 18%, rgba(242,56,136,.16), rgba(242,56,136,0) 62%),
+  radial-gradient(1200px 900px at 90% 100%, rgba(242,56,136,.08), rgba(242,56,136,0) 60%)}
+.left{position:absolute;left:108px;top:238px;width:1400px}
+.eyebrow{font-size:21px;letter-spacing:.38em;color:#f23888;font-weight:700}
+h1{font-family:"InterD","Liberation Sans",sans-serif;font-weight:700;font-size:96px;line-height:1.04;color:#fff1f6;margin:44px 0 0;letter-spacing:-.012em}
+.tag{margin-top:40px;font-size:26px;line-height:1.62;color:#c9a1b0}
+ul{list-style:none;margin:64px 0 0;padding:0;display:grid;grid-template-columns:660px 660px;column-gap:60px;row-gap:42px}
+li{font-size:24px;color:#e8c4d1;padding-left:30px;position:relative;white-space:nowrap}
+li::before{content:"";position:absolute;left:0;top:11px;width:9px;height:9px;background:#f23888}
+.rule{position:absolute;left:108px;top:1124px;width:1380px;height:1px;background:rgba(240,183,202,.16)}
+.foot{position:absolute;left:108px;top:1166px;font-size:20px;color:#8f717d;letter-spacing:.02em}
+.panel{position:absolute;right:72px;top:41px;width:752px;height:1268px;box-shadow:0 0 120px rgba(242,56,136,.16), 0 30px 80px rgba(0,0,0,.6)}
+.panel img{display:block;width:752px;height:1268px}
+</style></head><body>
+<div class="glow"></div>
+<div class="left">
+  <div class="eyebrow">COOLWATCH / DANJONESIO</div>
+  <h1>Coolify in your<br>Omarchy bar.</h1>
+  <div class="tag">Servers, projects, resources and deployments.<br>Deploy, restart, stop and cancel without leaving the desktop.</div>
+  <ul>
+    <li>Cloud and self-hosted, several at once</li>
+    <li>Toasts when builds queue, finish or fail</li>
+    <li>Running and queued deployments, live</li>
+    <li>Deploy by tag, history per application</li>
+    <li>Deploy, redeploy, restart, stop, cancel</li>
+    <li>Group by project or server, type to filter</li>
+    <li>Build and container logs in the panel</li>
+    <li>Keyboard driven, native to the shell</li>
+  </ul>
+</div>
+<div class="rule"></div>
+<div class="foot">Coolify Cloud and self-hosted · REST API only · no daemon, no SSH</div>
+<div class="panel"><img src="panel.png" alt=""></div>
+</body></html>
