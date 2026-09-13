@@ -46,6 +46,12 @@ Panel {
   property string expandedKey: ""
   property string actionFocus: ""
   property bool moreOpen: false             // the strip's secondary line (Logs · History · Open) is shown
+  // Phase 4b type-to-filter: `/` opens the field, its text narrows resources and deployments
+  // (Model.panelRows `filter`). Panel-local, per monitor, cleared on close; never persisted.
+  // While the field has focus the key catcher is `blocked` (its documented inline-editor
+  // shape, as the weather panel's location search), so every key reaches the editor.
+  property bool filterOpen: false
+  property string filterText: ""
   property bool confirmOpen: false
   property var confirmAction: null          // immutable { verb, uuid, name } captured when the dialog opens
   property bool confirmArmed: false         // Enter resolves the dialog only after confirmArm fires
@@ -82,7 +88,8 @@ Panel {
   readonly property var snapshot: svc ? svc.snapshot : null
   readonly property var pending: svc && svc.pending ? svc.pending : ({})
   readonly property var rows: root.opened && root.snapshot
-    ? Model.panelRows(root.snapshot, { groupBy: root.groupBy, folded: root.folded, nowMs: root.ageMs, expandedKey: root.expandedKey, moreOpen: root.moreOpen, pending: root.pending }) : []
+    ? Model.panelRows(root.snapshot, { groupBy: root.groupBy, folded: root.folded, nowMs: root.ageMs, expandedKey: root.expandedKey, moreOpen: root.moreOpen, pending: root.pending, filter: root.filterText }) : []
+  readonly property int filterMatches: root.rowsModel.filter(function(r) { return r.type === "resource" || r.type === "deployment" }).length
   // Coarse clock for the one-hour age-out, so rows are not recomputed every second.
   readonly property double ageMs: Math.floor(root.nowMs / 60000) * 60000
   readonly property int selectedIndex: Model.indexOfKey(root.rowsModel, root.cursorKey)
@@ -93,7 +100,7 @@ Panel {
 
   onRowsChanged: applyRows()
   onOpenedChanged: {
-    if (!opened) { root.confirmOpen = false; root.confirmAction = null; root.confirmArmed = false; root.expandedKey = ""; root.actionFocus = ""; root.moreOpen = false; root.clearViews() }
+    if (!opened) { root.confirmOpen = false; root.confirmAction = null; root.confirmArmed = false; root.expandedKey = ""; root.actionFocus = ""; root.moreOpen = false; root.clearViews(); root.clearFilter(false) }
     if (!svc) return
     if (opened) svc.panelOpened(panelId)
     else svc.panelClosed(panelId)
@@ -348,8 +355,34 @@ Panel {
     root._lastLadderAt = now
     if (root.confirmOpen) { root.resolveConfirm(false); return }
     if (root.viewStack.length) { root.popView(); return }       // Phase 4: a view is the first rung
+    if (root.filterOpen) { root.clearFilter(true); return }      // Phase 4b: a live filter is the next
     if (root.expandedKey) { root.collapse(); return }
     root.close()
+  }
+
+  // ---- Phase 4b: type-to-filter ----------------------------------------------------------
+  function openFilter() {
+    if (root.view || root.confirmOpen) return
+    root.filterOpen = true
+    Qt.callLater(function() { if (root.filterOpen) filterField.forceActiveFocus() })
+  }
+  // Esc in the field, the ladder, or the panel closing: the text goes with the field. The
+  // catcher takes focus back on the next tick (the weather panel's cancelEditingLocation).
+  function clearFilter(refocus) {
+    root.filterOpen = false
+    root.filterText = ""
+    filterField.text = ""
+    if (refocus) Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus() })
+  }
+  // Enter, Tab or Down in the field: the text stays, the cursor lands on the first match
+  // (a deployment or a resource, never a server: the filter does not narrow those).
+  function leaveFilter() {
+    keyCatcher.forceActiveFocus()
+    var i = Model.firstMatchIndex(root.rowsModel)
+    if (i < 0) i = Model.nextSelectable(root.rowsModel, -1, 1)
+    if (i < 0) return
+    root.cursorActive = true; root.focusSection = "list"; root.cursorKey = root.rowsModel[i].key
+    Qt.callLater(root.scrollToSelection)
   }
 
   function scrollToSelection() {
@@ -604,6 +637,7 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      blocked: filterField.activeFocus              // Phase 4b: the filter field owns every key while focused (the catcher's inline-editor contract)
       onMoveRequested: function(dx, dy) {
         if (root.confirmOpen) { if (dx !== 0) confirm.selectedIndex = confirm.selectedIndex === 0 ? 1 : 0; return }
         // Phase 4: a view owns h/j/k/l before the cursor guard. h pops through the ladder; l is a no-op.
@@ -644,6 +678,7 @@ Panel {
         }
         if (t === "r" || t === "R") { root.refreshNow(); return }
         if (t === "g" || t === "G") { root.setGroupBy(root.groupBy === "project" ? "server" : "project"); return }
+        if (t === "/") { root.openFilter(); return }            // Phase 4b
         if (root.focusSection !== "list" || !root.currentRow) return
         var row = root.currentRow
         // d / D is the one deliberate case-sensitive pair: D is the no-cache rebuild.
@@ -726,6 +761,39 @@ Panel {
               tooltipText: modelData.trouble ? "Needs attention" : ""
               onClicked: if (svc) svc.selectInstance(modelData.id)
             }
+          }
+        }
+
+        // Phase 4b: the filter field, under the chips, hidden under a view. The count at the
+        // right is the narrowed resource + deployment rows.
+        Row {
+          id: filterRow
+          width: parent.width
+          visible: root.filterOpen && !root.view
+          spacing: Style.spacing.md
+          TextField {
+            id: filterField
+            width: filterRow.width - filterCount.width - filterRow.spacing
+            placeholderText: "Filter resources and deployments"
+            foreground: root.foreground
+            accent: root.accent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            verticalPadding: Style.spacing.controlPaddingY
+            onTextChanged: root.filterText = text
+            Keys.onPressed: function(event) {                   // the field's own handler, never the panel's (the weather panel's shape)
+              if (event.key === Qt.Key_Escape) { root.clearFilter(true); event.accepted = true }
+              else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Down || event.key === Qt.Key_Tab) { root.leaveFilter(); event.accepted = true }
+            }
+          }
+          Text {
+            id: filterCount
+            textFormat: Text.PlainText
+            text: root.filterText.trim().length ? root.filterMatches + (root.filterMatches === 1 ? " match" : " matches") : ""
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            anchors.verticalCenter: parent.verticalCenter
           }
         }
 
@@ -819,6 +887,7 @@ Panel {
         textFormat: Text.PlainText
         text: Model.footerHints(root.focusSection, root.currentRow,
                                 { expanded: !!root.currentRow && root.expandedKey === root.currentRow.key, actionFocus: root.actionFocus, moreOpen: root.moreOpen, confirmOpen: root.confirmOpen,
+                                  filterFocus: filterField.activeFocus,
                                   instances: svc ? svc.instances.length : 0,
                                   view: root.view ? { kind: root.view.kind, following: root.following, terminal: !!(root.liveRec && root.liveRec.terminal),
                                                       paused: !!(root.snapshot && root.snapshot.paused), hasUrl: !!root.view.url } : null })

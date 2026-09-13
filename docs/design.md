@@ -331,7 +331,7 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 | Cursor position | Hint |
 |---|---|
 | hero | `enter refresh · j down · r refresh · esc close` |
-| fold row | `j/k move · enter fold · g group · r refresh · esc close` |
+| fold row | `j/k move · enter fold · g group · / filter · r refresh · esc close` |
 | application row, running, collapsed | `enter actions · d redeploy · s stop · t restart · L logs · o open` |
 | application row, stopped, collapsed | `enter actions · d deploy · s start · o open` |
 | service/database row, collapsed | `enter actions · s stop · t restart · L logs · o open` (or `s start · o open`) |
@@ -345,14 +345,16 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 | container log | `j/k scroll · b newest · r refetch · o open · h back` |
 | history | `j/k move · enter log · o open · h back` |
 | container picker | `j/k move · enter logs · h back` |
-| row with no action and no page | `j/k move · g group · r refresh · esc close` |
+| row with no action and no page | `j/k move · g group · / filter · r refresh · esc close` |
 | confirm open | `h/l pick · enter confirm · esc cancel` |
 
 ## Keyboard map
 
 `PanelKeyCatcher` owns the keys: `x` arrives as `deleteRequested`, Esc as
 `closeRequested`, `h`/`l` as `moveRequested(±1, 0)`, Return as `returnRequested` then
-`activateRequested` (handle only the latter). Never add a `Keys.onPressed`.
+`activateRequested` (handle only the latter). Never add a `Keys.onPressed` to the panel; the
+filter `TextField` carries its own, which is the catcher's inline-editor shape (weather's
+location search) and only runs while `blocked` hands it the keys.
 
 | Key | Where | Action |
 |---|---|---|
@@ -374,6 +376,7 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 | `x` / `X` | terminal deployment row | dismiss: clears the row and everything older, no confirm (Phase 4b; the row's `×` and the strip's Dismiss do the same); a no-op elsewhere |
 | `o` / `O` | any row with a page | open in browser |
 | `g` | anywhere | toggle grouping |
+| `/` | list or hero | open the filter field (Phase 4b): the text narrows resources and deployments live, folds with a match open, folds without one hide, tags hide; Enter, Tab or Down leaves the field for the list with the first match (a deployment or resource, never a server) selected and the text kept; Esc in the field clears and closes it |
 | `r` | anywhere | refresh now |
 | `v` / `V` | server row | validate |
 | `L` | deployment row; running application/database/service row | the build log; the container log or picker (the catcher takes lowercase `l`) |
@@ -389,10 +392,17 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 | Space | history, picker | as Enter (the catcher fires `activateRequested` for both) |
 | `l`, Space in a log view, `g`, `x` | any view | nothing |
 | Tab / Shift+Tab | anywhere, confirm closed | neighbouring bar panel (pops every view first) |
-| Esc | anywhere | close confirm, else back one view, else collapse row, else close panel; one rung per 250 ms |
+| Esc | anywhere | close confirm, else back one view, else clear the filter, else collapse row, else close panel; one rung per 250 ms |
 
 Unavailable inside a view: `G` (bound to grouping with `g`), Home, End, PageUp and
-PageDown (`PanelKeyCatcher` does not emit them and the panel may not add a `Keys.onPressed`).
+PageDown (`PanelKeyCatcher` does not emit them and the panel may not add a `Keys.onPressed`),
+and `/` (the filter belongs to the list underneath).
+
+While the filter field has focus the catcher is `blocked` (its documented inline-editor
+contract), so every key, `j`/`k`/`x` included, is typed; the field's own `Keys.onPressed`
+handles Esc, Enter, Tab and Down (Tab switches bar panels only outside the field). The footer reads `type to narrow · enter list · esc clear`; a
+dim `N matches` count sits at the field's right. The filter is panel-local, per monitor,
+cleared when the panel closes, and never persisted.
 
 Mouse: hover moves the cursor (never colours from `containsMouse`); a left click on a
 leaf row opens its action strip (or closes the open one) and the strip's buttons are
