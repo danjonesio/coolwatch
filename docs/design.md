@@ -128,7 +128,9 @@ measured 2026-09-13; the hints elide before the cog moves). The callouts the fil
 unsafe, config readable by others, token command failed, token rejected;
 `Model.calloutEditable`) add a spelled-out bordered **Edit config** button under the body
 as the call to action. Either asks the service, which creates the directory (0700) and,
-only when no file exists, a sample file (0600, `Model.SAMPLE_CONFIG_FILE`), then runs
+only when no file exists, a sample file (0600, `Model.SAMPLE_CONFIG_FILE`: one Cloud
+entry with a placeholder token and a `_help` string showing a second instance and linking
+the README, since JSON has no comments and unknown keys are ignored), then runs
 `omarchy-launch-config-editor` on it: Omarchy's own low toast and default editor. The
 file watcher clears the callout on save. The hero hint carries `e config`; under a
 config callout the empty list reads `e edit config · …`.

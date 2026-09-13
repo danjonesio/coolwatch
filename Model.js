@@ -1123,8 +1123,10 @@ function failedName(s, uuid) {
 var SAMPLE_CONFIG = '{ "version": 1, "instances": [\n  { "id": "cloud", "name": "Coolify Cloud", "url": "https://app.coolify.io", "token": "67|…" } ] }'
 // The file "Edit config" creates when none exists (0600 in a 0700 directory, written by the
 // service): the same shape with a placeholder the user replaces. It parses, so the next
-// state is "token rejected", whose callout keeps the button.
-var SAMPLE_CONFIG_FILE = '{\n  "version": 1,\n  "instances": [\n    { "id": "cloud", "name": "Coolify Cloud", "url": "https://app.coolify.io", "token": "paste-your-token-here" }\n  ]\n}\n'
+// state is "token rejected", whose callout keeps the button. JSON has no comments, so the
+// second-instance example rides a `_help` string (normaliseConfig ignores unknown keys);
+// a real second entry would poll a made-up URL.
+var SAMPLE_CONFIG_FILE = '{\n  "version": 1,\n  "_help": "One object per Coolify. Add a second one to instances for a self-hosted server, e.g. { \\"id\\": \\"homelab\\", \\"name\\": \\"Homelab\\", \\"url\\": \\"http://10.0.0.5:8000\\", \\"token\\": \\"...\\" }. Full reference: https://github.com/danjonesio/coolwatch#configuration",\n  "instances": [\n    { "id": "cloud", "name": "Coolify Cloud", "url": "https://app.coolify.io", "token": "paste-your-token-here" }\n  ]\n}\n'
 // The footer's cog and `e` open the config at any time. The callouts the file can fix carry a
 // second, spelled-out "Edit config" button as the call to action: the file is missing,
 // unreadable, unsafe, readable by others, its token command failed or its token was
