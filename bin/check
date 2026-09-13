@@ -78,6 +78,12 @@ if [[ $nn -eq 1 ]]; then
 fi
 if grep -n 'omarchy-notification-send' "$root"/*.qml; then fail "SR16: the notifier is spawned only from Model.notifyPlan's argv, never from QML"; fi
 
+# Lint the four bin/ scripts with shellcheck. Required in CI (ubuntu-latest ships it); a local
+# machine without it skips with a note rather than blocking the dev loop.
+if command -v shellcheck >/dev/null; then shellcheck "$root"/bin/* || fail "shellcheck"
+elif [[ -n ${CI:-} ]]; then fail "missing tool: shellcheck"
+else echo "check: shellcheck not installed; skipped" >&2; fi
+
 [[ ${1:-} == --no-shell ]] && { echo ok; exit 0; }
 
 need omarchy; need rsync; need flock
