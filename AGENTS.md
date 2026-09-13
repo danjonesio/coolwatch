@@ -20,8 +20,10 @@ Read `docs/roadmap.md` before writing code.
   a **hard cut**: nothing reads `~/.config/omarify/` or `~/.local/state/omarify/`, and the old
   plugin dir must be removed by hand. The older omasnitch id used `danjones`; the GitHub
   handle is `danjonesio`.)
-- API first, SSH last. Anything the REST API can answer comes from the REST API. SSH
-  is only for Sentinel metrics, Phase 5, opt-in per server.
+- REST API only, no SSH. Anything the plugin shows comes from the REST API. Sentinel
+  metrics over SSH were dropped from the roadmap on 2026-09-13 (Dan): no SSH client,
+  agent, host key or tunnel inside the shell process. If Coolify ever exposes metrics
+  over the REST API, that is a normal read endpoint and feature-detected like any other.
 - Token abilities are per phase. **Phase 2: `read` + `deploy`.** Coolify's UI has no
   edit-abilities flow, so a new token is swapped in, not edited.
   `read:sensitive` is added in Phase 4 for the log viewer; it also makes
@@ -67,9 +69,10 @@ Read `docs/roadmap.md` before writing code.
   actions and notifications. The bar widget owns the icon and loads `Panel.qml`. No
   `panel`/`overlay` kind unless Phase 5 says so.
 - Data comes from the Coolify REST API only (`/api/v1`, Bearer token). No CLI, no MCP,
-  no webhooks, no WebSocket.
+  no webhooks, no WebSocket, no SSH.
 - **The API has no CPU/memory/disk numbers.** Do not invent utilisation. Phase 1 shows
-  none and says why. Sentinel-over-SSH is Phase 5 and opt-in.
+  none and says why. Sentinel-over-SSH was dropped on 2026-09-13; there is no plan to
+  read metrics from anywhere but the REST API.
 - **No push channel exists.** Every notification comes from polling and diffing.
   `GET /deployments` lists only `queued` + `in_progress`; a finished deployment vanishes
   from it, so track uuids and fetch `GET /deployments/{uuid}` when one disappears.

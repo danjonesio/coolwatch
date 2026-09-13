@@ -35,7 +35,7 @@ around them rather than pretending they are not there.
 | Servers list + status | `GET /servers` → `is_reachable`, `is_usable`, proxy status. No status string. | Derive **ready / unreachable / disabled / building-only** from those flags. |
 | Projects, environments, resources | `GET /projects`, `GET /projects/{uuid}/{env}` (has resources with status), `GET /servers/{uuid}/resources`, flat `GET /resources`. | Build the tree client-side. Apps carry only integer foreign keys, so the tree is assembled from the environment and server calls. |
 | Resource status | `"running:healthy"`, `"exited"`, `"degraded:unhealthy"` … refreshed by Coolify roughly once a minute. | Prefix-match on state. Show "pending" after an action until the string changes. |
-| CPU / memory / disk utilisation | **Not exposed by the REST API at all.** Sentinel collects it on the server and Coolify reads it over SSH for its own UI. Only a disk-usage boolean and webhook event exist. | Phase 1 shows **no** utilisation figures and says why. A later phase may read Sentinel over SSH from this machine (needs `read:sensitive` for the token and SSH access to each server). See open question 3. |
+| CPU / memory / disk utilisation | **Not exposed by the REST API at all.** Sentinel collects it on the server and Coolify reads it over SSH for its own UI. Only a disk-usage boolean and webhook event exist. | The panel shows **no** utilisation figures and says why. Reading Sentinel over SSH was considered and dropped (decision 3): the plugin never opens SSH. If Coolify adds a metrics endpoint to the REST API it is picked up by feature-detection like any other. |
 | Running and queued deployments | `GET /deployments` returns **only** `queued` + `in_progress`; finished ones vanish. `GET /deployments/{uuid}` gives any one by uuid. Per-app history at `GET /deployments/applications/{uuid}`. | Poll the active list, remember every uuid seen, fetch each tracked uuid once it disappears to learn the terminal state, and keep a local "recent" list. |
 | Notifications when a deployment builds | No push channel (no WebSocket, SSE or subscription). Outgoing webhooks exist but have **no "started" event** and cannot reach a laptop behind NAT. | Polling drives every notification. Webhooks are out of scope. |
 | Redeploy, restart, stop, start | `POST /deploy?uuid=…&force=…`, `POST /applications|services|databases/{uuid}/start|restart|stop`, `POST /deployments/{uuid}/cancel`, `POST /servers/{uuid}/validate`. Need the `deploy` ability (`write` for validate). | All wired. Restart of an app is itself a deployment and shows up as one. |
@@ -97,8 +97,6 @@ Phases are defined in `docs/roadmap.md`. Every feature below names the API it re
 
 ### Phase 5 — beyond the API (optional)
 
-- Utilisation via Sentinel over SSH (server and per-container CPU and memory) when the
-  user opts in per server.
 - Full-screen overlay "console" for wide screens, if the bar panel gets cramped.
 - Marketplace listing at plugins.omarchy.org.
 
@@ -110,6 +108,8 @@ Phases are defined in `docs/roadmap.md`. Every feature below names the API it re
 - Receiving webhooks. No listener, no tunnel, no relay.
 - Any second process. Everything runs inside `omarchy-shell` as a service plus a bar
   widget, following Omarchy's plugin contract.
+- SSH to any server, including for Sentinel metrics. No SSH client, agent, host key or
+  tunnel lives inside the shell process. Dropped 2026-09-13; see decision 3.
 - Supporting Coolify older than v4.3.x. Feature-detect where cheap, otherwise require
   current.
 
@@ -121,10 +121,13 @@ Phases are defined in `docs/roadmap.md`. Every feature below names the API it re
 2. **Token storage** supports both forms: `token` inline in the 0600 config file, or
    `tokenCommand` (for example `op read "op://Private/Coolify/credential"`). When both
    are present `tokenCommand` wins.
-3. **API first, SSH last.** Everything that the REST API can answer comes from the REST
-   API. SSH is used only for what the API cannot give (Sentinel metrics), in Phase 5,
-   opt-in per server. Servers are SSH-reachable from this machine, so that phase is
-   feasible.
+3. **REST API only, no SSH** (revised 2026-09-13; was "API first, SSH last" with
+   Sentinel metrics over SSH as an opt-in Phase 5 item). Everything the plugin shows
+   comes from the REST API. SSH was dropped because it would put an SSH client, agent
+   socket and host keys inside the shell process, add a failure domain that is not
+   Coolify, poll every server with no rate ceiling, and draw meters Coolify's own UI
+   already draws. Utilisation stays absent with a sentence saying why; a REST metrics
+   endpoint, if Coolify adds one, is feature-detected like any other.
 4. **Token abilities**, per phase (revised 2026-09-06 by the Phase 1 plan): Phase 1
    uses `read` only; `deploy` is added in Phase 2; `read:sensitive` in Phase 4 for build
    logs (it also makes every `GET /deployments` poll carry the full logs, so it is not

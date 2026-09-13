@@ -134,14 +134,16 @@ Acceptance
 
 ## Phase 5 — beyond the API (optional, each item its own decision)
 
-- Utilisation via SSH to each server and Sentinel's localhost API (server and
-  per-container CPU and memory, history meters). Opt-in per server in the config.
 - Overlay "console" for wide screens, summoned by keybinding.
 - Marketplace submission: README with install/usage/remove, `preview.png`, public repo,
   issue form at plugins.omarchy.org.
 
 ## Out of the plan
 
+- Utilisation via SSH to each server and Sentinel's localhost API. Dropped 2026-09-13:
+  it would put an SSH client, agent socket and host keys inside the shell process, add
+  a failure domain that is not Coolify, and poll N servers with no rate ceiling, for
+  meters Coolify's own UI already draws. The plugin reads the REST API only.
 - Editing env vars, creating or deleting resources or servers.
 - Webhook receiver.
 - Coolify older than v4.3.
