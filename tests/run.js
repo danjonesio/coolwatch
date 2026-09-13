@@ -1363,6 +1363,52 @@ test("Model.dismissRecent: clears the row and everything older, keeps newer, sam
   eq(M.actionFor({ type: "deployment", status: "failed" }, "cancel"), null)
 })
 
+test("Model.parseUi / serialiseUi / uiSet / uiFor: round trip, defaults, rejection, prune, cap, tags fold, re-pointed origin, unchanged guard (Phase 4b)", () => {
+  const O = "https://app.coolify.io"
+  const ids = ["cloud", "home-lab_2"]
+  let ui = M.uiSet({}, "cloud", O, { groupBy: "server" })
+  ui = M.uiSet(ui, "cloud", O, { folded: { "fold:p:abc123/production": true, "fold:tags": true, "fold:s:unassigned": true, "fold:s:srv1": false, "nope": true, "fold:p:x/": true } })
+  ui = M.uiSet(ui, "home-lab_2", "https://h.example", { folded: { "fold:s:srv9": true } })
+  eq(M.uiFor(ui, "cloud", O).groupBy, "server")
+  eq(Object.keys(M.uiFor(ui, "cloud", O).folded).sort().join(","), "fold:p:abc123/production,fold:p:x/,fold:s:unassigned,fold:tags", "false and malformed keys dropped; an empty environment name is a legal key")
+  eq(M.uiFor(ui, "home-lab_2", "https://h.example").groupBy, "project", "grouping defaults per instance")
+  eq(Object.keys(M.uiFor(ui, "cloud", "https://other").folded).length, 0, "a re-pointed id drops its folds")
+  eq(M.uiFor(ui, "cloud", "https://other").groupBy, "server", "and keeps its grouping")
+  eq(M.uiFor(ui, "ghost", O).groupBy, "project"); eq(Object.keys(M.uiFor(null, "cloud", O).folded).length, 0)
+  assert(M.uiSet(ui, "cloud", O, { groupBy: "server" }) === ui, "no change: same map back")
+  assert(M.uiSet(ui, "cloud", O, { groupBy: "bogus" }) === ui, "unknown grouping refused")
+  assert(M.uiSet(ui, "bad id!", O, { groupBy: "server" }) === ui, "bad instance id refused")
+  assert(M.uiSet(ui, "cloud", O, { folded: { "fold:tags": true } }) !== ui, "a changed fold set is a new map")
+  eq(M.uiSet(ui, "cloud", "https://other", { groupBy: "project" }).cloud.origin, "https://other", "a set on a new origin re-homes the entry")
+  const s = M.serialiseUi(ui, ids, NOW), file = JSON.parse(s.text)
+  eq(file.version, 1); eq(file.savedAt, NOW); eq(Object.keys(file.instances).join(","), "cloud,home-lab_2")
+  eq(file.instances.cloud.folded.join(","), "fold:p:abc123/production,fold:p:x/,fold:s:unassigned,fold:tags", "sorted, true keys only")
+  eq(M.serialiseUi(ui, ids, NOW + 1).key, s.key, "the key ignores savedAt")
+  eq(Object.keys(JSON.parse(M.serialiseUi(ui, ["cloud"], NOW).text).instances).join(","), "cloud", "unconfigured ids are pruned")
+  assert(s.text.endsWith("\n"), "trailing newline")
+  const back = M.parseUi(s.text, ids)
+  eq(back.loaded, true); eq(back.rejected, false)
+  eq(M.uiFor(back.ui, "cloud", O).groupBy, "server", "round trip"); eq(Object.keys(M.uiFor(back.ui, "cloud", O).folded).sort().join(","), Object.keys(M.uiFor(ui, "cloud", O).folded).sort().join(","), "round trip")
+  eq(M.serialiseUi(back.ui, ids, NOW).key, s.key, "round trip is key-stable")
+  eq(Object.keys(M.parseUi(s.text, ["cloud"]).ui).join(","), "cloud", "the parse keeps configured ids only")
+  for (const t of [null, "", undefined]) { const r = M.parseUi(t, ids); eq(r.loaded, false); eq(r.rejected, false); eq(Object.keys(r.ui).length, 0) }
+  for (const t of ["{", "[]", "null", "\"x\"", JSON.stringify({ version: 2, instances: {} }), JSON.stringify({ version: 1 }), JSON.stringify({ version: 1, instances: [] }), "x".repeat(70000)]) {
+    const r = M.parseUi(t, ids); eq(r.rejected, true, "rejects " + t.slice(0, 20)); eq(r.loaded, false)
+  }
+  const loose = M.parseUi(JSON.stringify({ version: 1, instances: { cloud: { origin: O, groupBy: "bogus", folded: ["fold:tags", "fold:tags", 7, "fold:p:../x", "fold:s:a b", "fold:p:abc/\u0007bell"] }, "bad id": { groupBy: "server" }, other: 3 } }), ids)
+  eq(loose.rejected, false); eq(loose.ui.cloud.groupBy, "project", "an unknown grouping falls back, the file survives")
+  eq(Object.keys(loose.ui.cloud.folded).join(","), "fold:tags", "duplicates, non-strings and malformed keys dropped; a control char in an env name is refused")
+  eq(Object.keys(loose.ui).join(","), "cloud")
+  const many = {}; for (let i = 0; i < 600; i++) many["fold:s:u" + i] = true
+  eq(JSON.parse(M.serialiseUi(M.uiSet({}, "cloud", O, { folded: many }), ["cloud"], NOW).text).instances.cloud.folded.length, 500, "fold cap on write")
+  const big = JSON.stringify({ version: 1, instances: { cloud: { origin: O, groupBy: "project", folded: Object.keys(many) } } })
+  eq(Object.keys(M.parseUi(big, ids).ui.cloud.folded).length, 500, "fold cap on read")
+  // The tags fold's flag means "opened" (panelRows); the file carries the flag, not the meaning.
+  const rows = M.panelRows(snap({ tags: ["a"] }), { groupBy: "project", folded: M.uiFor(back.ui, "cloud", O).folded, nowMs: NOW })
+  const tagRow = rows.filter(r => r.key === "fold:tags")[0]
+  assert(tagRow && tagRow.open === true, "a persisted fold:tags flag reopens the tags fold")
+})
+
 test("Model.nextAction: clamps; h from the first returns to the row; a vanished id counts as the first", () => {
   const acts = [{ id: "deploy" }, { id: "start" }, { id: "open" }]
   eq(M.nextAction(acts, "deploy", 1), "start"); eq(M.nextAction(acts, "open", 1), "open")

@@ -341,6 +341,29 @@ byServer:  { serverUuid: [resourceUuid…] }
   rename, so the file is umask-mode and the 0700 directory (created **and chmod'ed** by
   `mkdirProc` before the first write) is the control. Coolify uuids are not
   charset-validated at normalise; `Model.uuid8` filters them before any log line.
+- Grouping and the folded set (Phase 4b) are the service's: `root.ui` is
+  `{ <instance id>: { origin, groupBy, folded: { <fold key>: true } } }`, `activeUi` is
+  `Model.uiFor` of the active instance (the entry's grouping; its folds only while the entry's
+  `origin` matches, so a re-pointed id drops them), and every monitor's panel binds `groupBy`
+  and `folded` to it, so two monitors agree. A gesture calls `setUiGroupBy` /
+  `toggleUiFold`; `Model.uiSet` returns the same map when nothing changed, otherwise the map
+  is replaced, `_uiDirty` set and `uiFlush` (a one-second single-shot, restarted per gesture)
+  writes `~/.local/state/coolwatch/ui.json`: `{ version: 1, savedAt, instances: { <id>:
+  { origin, groupBy, folded: [key, ...] } } }`, one file for all instances, umask-mode in the
+  same 0700 directory. The writer is `uiFlush` only: never the click, never `_resetStore`
+  (which does not touch `root.ui`), never before the file was read once (a flush that runs
+  first stays dirty and is re-armed by the load); an unchanged stamp-free key skips the
+  write; entries for ids no longer configured are pruned on write. The file is untrusted
+  input: `Model.parseUi` bounds the text at 65 536 chars, requires `version 1` and an
+  `instances` object, keeps configured ids only, accepts `groupBy` from `{project, server}`
+  (anything else falls back to project without rejecting the file), and keeps a fold key only
+  when it matches one of the three shapes `panelRows` emits (`fold:tags`,
+  `fold:s:<uuid|unassigned>`, `fold:p:<uuid>/<environment name, ≤ 64 chars, no control
+  characters>`), 500 per instance; a bad shape rejects the file, which then reads as empty
+  and is replaced by the next gesture. `folded` lists the keys whose flag is true, so the
+  tags fold (whose flag means "opened") round-trips without the file knowing. A rejected or
+  missing file never changes anything else; `status.ui` carries `{ loaded, rejected, entries,
+  dirty }`, counts only.
 - Panels never build state: the service builds the snapshot once per poll; a panel
   flattens it into rows only while open. `rowsModel` (a plain array) is the index space
   for the cursor; the ListView renders a `ListModel` (`rowsList`, roles `key` and `row`)
@@ -661,5 +684,6 @@ refused after three consecutive ability failures until a 2xx or a config change.
 | `~/.config/coolwatch/config.json` | instances, tokens, poll and notify settings (0600 in a 0700 directory) |
 | `~/.local/state/coolwatch/recent.json` | recent terminal deployments of `instances[0]`, survives restarts; the directory is created and chmod'ed 0700 by the service (`mkdir -m` is create-only), the file is umask-mode |
 | `~/.local/state/coolwatch/recent-<id>.json` | the same for every further instance (Phase 4); a removed instance's file is left in place |
+| `~/.local/state/coolwatch/ui.json` | grouping and folded set per instance id, one file for all instances (Phase 4b); a removed instance's entry is pruned on the next write |
 | `~/.config/omarchy/plugins/io.github.danjonesio.coolwatch/` | installed plugin files |
 | `~/.config/omarchy/shell.json` | bar placement and display-only widget settings |
