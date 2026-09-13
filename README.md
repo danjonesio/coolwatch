@@ -1,5 +1,9 @@
 # Coolwatch
 
+<p align="center">
+  <img src="preview.png" alt="Coolwatch: Coolify in your Omarchy bar. The panel with a build in progress, a finished deployment, a server and resources grouped by project">
+</p>
+
 Coolify in the Omarchy bar. One icon, one panel: your servers, applications, services and
 databases with their live status, the deployments running and queued, and the buttons to
 deploy, redeploy, restart, stop, start and cancel. Toasts when a build queues, finishes or
