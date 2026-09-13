@@ -192,18 +192,23 @@ write-out = "\n<RS>%{exitcode} %{http_code} %{time_total} %{size_download} %{err
 ## Polling schedule
 
 Budget is 200 requests per minute per token; the acceptance bar is under 20/min idle with the panel closed (≈ 20 with a panel open: measured 18 and 20 on 2026-09-07)
-and under 60/min with one deployment. Idle is ≈17/min at 3 projects and 3 servers.
+and under 60/min with one deployment. Idle is ≈11/min at 3 projects and 3 servers (≈17/min
+before the deployments poll idled at 8 s on 2026-09-13).
 
 | Kind | Idle | Any panel open | Deployment active | Purpose |
 |---|---|---|---|---|
-| `GET /deployments` | 4 s | 4 s | 2 s | queued and in-progress |
+| `GET /deployments` | 8 s (or `deploymentsSec` if larger) | `deploymentsSec` (4 s) | 2 s | queued and in-progress |
 | `GET /deployments/{uuid}` | once per uuid that vanished from the list | | | terminal state; never polled while active |
 | `GET /resources` | 60 s | 30 s | 15 s | every app/service/db with status and `environment_id` |
 | `GET /servers` | 120 s | 120 s | 120 s | reachability |
 | topology, batched | `topologySec` ≥ 600 s | on first open, then as idle | as idle | `GET /projects`, then `GET /projects/{uuid}` × P and `GET /servers/{uuid}/resources` × S |
 | `GET /version` | on config load | | | hero detail |
 
-- A kind's interval is the minimum across every applicable column. Timers use
+- A kind's interval is the minimum across every applicable column, except that the
+  deployments poll idles at 8 s with every panel closed and nothing deploying
+  (`Model.IDLE_DEPLOYMENTS_SEC`; `deploymentsSec` only lowers the panel-open cadence and
+  raises the idle one when set above 8). A toast for a change made elsewhere therefore
+  arrives within about 8 s with the panel closed and 4 s with it open. Timers use
   `triggeredOnStart: false` and an explicit `primeAll()` (config load, token resolve,
   `refresh`, first panel open, at most once per 2 s), because changing a running
   `Timer`'s `interval` restarts it; after an interval change a kind whose last poll is

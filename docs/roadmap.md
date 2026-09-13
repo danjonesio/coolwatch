@@ -158,6 +158,10 @@ Done
   written by `uiFlush` a second after the last gesture, never the click or `_resetStore`;
   every monitor's panel mirrors the same entry, and an instance switch shows that
   instance's own grouping. Was item 5.
+- The deployments poll idles at 8 s with every panel closed and nothing deploying
+  (`Model.IDLE_DEPLOYMENTS_SEC`); `deploymentsSec` (4 s) applies with a panel open and the
+  2 s byte-stepped cadence while a build runs. Idle cost drops from ≈17 to ≈11 req/min per
+  instance (Dan, 2026-09-13).
 - Row polish: a running resource's caption is its health word alone (`healthy`, never
   `running · healthy`; the dot carries the state), which hands the name the width back;
   a name or deployment that still elides shows the full label in a `PanelToolTip` on the

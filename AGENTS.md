@@ -162,7 +162,10 @@ Read `docs/roadmap.md` before writing code.
 - Look native or do not ship: only `qs.Ui` + `qs.Commons`, no hardcoded colours, sizes,
   radii or font families. `docs/design.md` is the spec, `docs/omarchy-shell-reference.md`
   the component reference.
-- Rate limit is 200 req/min per token. Idle polling is â17/min (deployments 4 s,
+- Rate limit is 200 req/min per token. Idle polling is ≈11/min (deployments 8 s with
+  every panel closed and nothing deploying, `deploymentsSec` = 4 s with a panel open, the
+  byte-stepped 2 s cadence while a build runs; the 17/min figures below predate the 8 s
+  idle of 2026-09-13; `Model.IDLE_DEPLOYMENTS_SEC`),
   resources 60 s, servers 120 s, topology one block per 40 s from a â¥600 s cycle, or one
   per 10 s while a panel is open and the first drain has not completed; the 65 s
   `/projects` kick is skipped once it has), â36/min
