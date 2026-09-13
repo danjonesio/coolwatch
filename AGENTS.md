@@ -396,7 +396,12 @@ bin/record-fixture deployments-active /deployments
 - Don't create your own `PanelWindow` for the bar popup; `KeyboardPanel` exists.
 - Don't edit `/usr/share/omarchy`.
 - Don't call create/delete/env-var endpoints. Read, deploy, lifecycle, validate only.
-- Don't commit fixtures with real tokens; uuids and names are fine.
+- Don't commit anything from a real account except uuids: no tokens, and no resource,
+  project, server or team names, hostnames, domains, IPs, repository paths or commit
+  messages (the repo is public; the history was rewritten on 2026-09-13 after a server IP
+  shipped in the fixtures). `bin/record-fixture` scrubs secrets only, so rename by hand
+  before committing: servers `hetzner-1` / `203.0.113.10`, apps `api`, `storefront`,
+  `landing`, domains under `example.net`, team `Example Team`.
 - Don't route an action result through `_fail` (not even its 429 arm), and don't store
   objects in `_requestLog` (both filters subtract bare timestamps).
 - Don't route a view fetch (`buildlog`, `containerlog`, `service`, `history`, `tags`)
