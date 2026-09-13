@@ -521,8 +521,10 @@ test("Model.diffDeployments: vanished carried over, first poll yields no events,
   eq(r1.events[0].event, "restarting")
   eq(M.diffDeployments([dep({ status: "queued", restartOnly: true })], [dep({ status: "in_progress", restartOnly: true })], false).events.length, 0, "restart never yields started")
   eq(M.diffDeployments([], [dep({ status: "in_progress", restartOnly: true })], false).events[0].event, "restarting")
-  const big = []; for (let i = 0; i < 2000; i++) big.push(dep({ uuid: "u" + i, status: "in_progress" }))
-  const t0 = Date.now(); M.diffDeployments(big.map(d => dep({ uuid: d.uuid })), big, false); assert(Date.now() - t0 < 50, "O(N) diff")
+  // O(N) guard: 20 000 rows run in a few ms; a quadratic diff would take seconds. The bound
+  // is loose on purpose (a 50 ms bound on 2 000 rows failed on a shared CI runner, 2026-09-13).
+  const big = []; for (let i = 0; i < 20000; i++) big.push(dep({ uuid: "u" + i, status: "in_progress" }))
+  const t0 = Date.now(); M.diffDeployments(big.map(d => dep({ uuid: d.uuid })), big, false); assert(Date.now() - t0 < 1500, "O(N) diff")
 })
 
 test("Model.terminalEvent / hasTerminal: finished, restarted, failed, cancelled, in_progress -> null", () => {
