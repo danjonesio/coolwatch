@@ -84,7 +84,7 @@ Card padding is the `KeyboardPanel` default. Column spacing `Style.space(12)`.
 │ ───────────────────────────────────────────────── │
 │ RESOURCES              [by project][by server]    │  header + ButtonGroup toggle
 │ ▾ storefront / production                    │  project / environment fold
-│   ● api        running · healthy                  │  resource row
+│   ● api        healthy                            │  resource row
 │   ● postgres   running                            │
 │   ○ worker     exited                             │  exited → dim
 │   󱎖 web        restarting                         │  degraded/restarting → urgent
@@ -106,7 +106,9 @@ already has the spin; `PanelActionButton` does not) with `hasCursor` bound to th
 cursor and `onHovered` focusing it, so `k` from the first row lands somewhere visible.
 
 Hero `meta` per state (mixed case; the component uppercases): healthy
-"3 servers · 14 resources · 1 deploying" (zero clauses dropped); empty account
+"3 servers · 14 resources · 1 deploying · 1 stopped · 1 unhealthy" (zero clauses dropped;
+stopped = exited or paused, unhealthy = running:unhealthy or degraded; the bar tooltip
+carries the same line); empty account
 "No resources on this team"; starting "Loading"; then per error kind: "Not configured",
 "Config error", "Config unsafe", "Token unavailable", "Waiting for token",
 "Token rejected", "API disabled", "IP not allowed", "Offline · retrying",
@@ -265,7 +267,10 @@ minute or so with a panel open, five with it closed). Resource rows:
   `○` exited/paused (dim), `◌` unknown. `◐` U+25D0 is not in JetBrainsMono Nerd Font.
 - Name bold body, through `Model.appLabel` (Phase 4b: `storefront`, never Coolify's
   `storefront:main-h0wx…`; an unnamed app shows its uuid's first 8; deployment rows
-  the same), status words in caption: "running · healthy", "exited", "restarting",
+  the same; a name that still elides shows the full label in a `PanelToolTip` while the
+  row has the cursor, deployment rows too), status words in caption: the health word
+  alone on a running resource ("healthy", "unhealthy"; the dot carries the state, bare
+  "running" only when Coolify sends no health word), otherwise "exited", "restarting",
   or the pending verb in accent with the half glyph: "deploying…", "rebuilding…",
   "restarting…", "stopping…", "starting…" ("stopping… · still pending" after 150 s).
 - Kind hint on the right in caption dim: `app`, `service`, `postgres`, `redis`.

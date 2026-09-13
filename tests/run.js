@@ -990,7 +990,7 @@ test("Model.panelRows: group by project with folds, fold open/closed, Ungrouped 
   eq(closed.filter(r => r.type === "resource").length, 5)
   eq(closed.filter(r => r.type === "fold")[0].open, false)
   const res = open.find(r => r.type === "resource")
-  eq(res.indent, 1); assert(res.statusWords === "running · healthy" || res.statusWords === "exited"); assert(M.GLYPHS.indexOf(res.dot) >= 0)
+  eq(res.indent, 1); assert(res.statusWords === "healthy" || res.statusWords === "exited"); assert(M.GLYPHS.indexOf(res.dot) >= 0)
 })
 
 test("Model.panelRows: group by server uses byServer; leftovers go to Unassigned", () => {
@@ -1221,7 +1221,7 @@ test("Model.withPending: resource replaces statusWords; deployment and server ap
   const app = rowOf(s, APP), srv = rowOf(s, SRV), dep = rowOf(s, s.deployments[0].uuid)
   const pa = M.withPending(app, { verb: "stop", stale: false })
   eq(pa.statusWords, "stopping…"); eq(pa.tone, "accent"); eq(pa.dot, M.G.half); eq(pa.pendingVerb, "stopping…")
-  eq(app.statusWords, "running · healthy", "original row untouched")
+  eq(app.statusWords, "healthy", "original row untouched")
   const ps = M.withPending(srv, { verb: "validate", stale: true })
   assert(ps.sub.indexOf(srv.sub) === 0 && ps.sub.endsWith(" · validating… · still pending"), ps.sub)
   const pd = M.withPending(dep, { verb: "cancel" })
@@ -2012,6 +2012,33 @@ test("notifyCopy: the body names the instance when ctx.instanceLabel is set, esc
   assert(base.argvs[0][8].indexOf("Homelab") < 0)
   const c = M.notifyPlan([{ kind: "deployment", event: "cancelled", uuid: "d1" }], snap({ recent: [{ uuid: "d1", appName: "api", status: "cancelled-by-user" }] }), { notify: M.notifyDefaults(), origin: "", now: NOW, pluginId: "p", instanceLabel: "Homelab" })
   eq(c.argvs[0][8], "Homelab", "an otherwise empty body is just the instance")
+})
+
+test("statusWords / countsLine / heroMeta / barState: the dot carries the state, the counts carry the trouble (Phase 4b)", () => {
+  const sw = (status) => M.statusWords(Object.assign({ status }, M.parseStatus(status)))
+  eq(sw("running:healthy"), "healthy")
+  eq(sw("running:unhealthy"), "unhealthy")
+  eq(sw("running"), "running", "no health word: the state stays so the caption is never empty")
+  eq(sw("exited"), "exited"); eq(sw("exited:unhealthy"), "exited")
+  eq(sw("restarting:unhealthy"), "restarting"); eq(sw("paused"), "paused"); eq(sw("degraded"), "degraded")
+  eq(sw("weird"), "weird", "unknown state shows the raw status")
+  const s = loadedSnap()
+  const nx = s.resources.filter(r => r.state === "exited").length
+  assert(nx >= 1, "the resources fixture holds a stopped app")
+  const line = M.heroMeta(s)
+  assert(line.endsWith(" · " + nx + " stopped"), line)
+  assert(line.indexOf("unhealthy") < 0, "no unhealthy clause when none")
+  eq(M.barState(s).tooltip, "Coolify Cloud — " + M.countsLine(s), "the bar tooltip carries the same counts")
+  const r = s.resources.map(x => Object.assign({}, x))
+  r.find(x => x.state === "running").health = "unhealthy"
+  r.find(x => x.state === "running" && x.health !== "unhealthy").state = "degraded"
+  r.find(x => x.state === "exited").state = "paused"
+  const s2 = snap({ servers: s.servers, resources: r })
+  const l2 = M.countsLine(s2)
+  assert(l2.endsWith(" · " + nx + " stopped · 2 unhealthy"), l2)
+  const clean = snap({ servers: s.servers, resources: s.resources.filter(x => x.state === "running") })
+  assert(M.countsLine(clean).indexOf("stopped") < 0 && M.countsLine(clean).indexOf("unhealthy") < 0, "zero clauses drop")
+  eq(M.countsLine(snap({ deployments: [{ status: "in_progress" }], resources: [{ state: "exited" }] })), "1 resource · 1 deploying · 1 stopped", "order: totals, deploying, stopped, unhealthy")
 })
 
 console.log(passed + " passed, " + failed + " failed")

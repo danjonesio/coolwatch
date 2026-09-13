@@ -98,6 +98,12 @@ Read `docs/roadmap.md` before writing code.
   deployments section never goes blank while an undismissed terminal entry exists: the
   newest stays past the hour window. Row names pass `Model.appLabel` (resources and
   deployments), so the panel and the toasts agree.
+- Row polish (Phase 4b): a running resource's status words are its health word alone
+  (`Model.statusWords`; the dot carries the state); a name that still elides shows a
+  `PanelToolTip` on the cursor row (resources and deployments), bound to `Text.truncated`
+  and `rowDelegate.selected`, never `containsMouse`. `Model.countsLine` appends `· N stopped`
+  (exited, paused) and `· N unhealthy` (running:unhealthy, degraded) so the hero meta and
+  the bar tooltip agree.
 - Type-to-filter (Phase 4b): `/` opens a field whose text narrows resources and deployments
   (`Model.panelRows` `filter`, `Model.filterTerms` / `rowMatches`: space-separated terms all
   match, case-insensitive, against name, status, kind and caption words). Folds with a match
