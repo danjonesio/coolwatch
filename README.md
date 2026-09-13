@@ -118,7 +118,10 @@ last 200 lines of its container; on a service it first asks which container.
 **History** lists an application's deployments ten at a time; Enter on one opens that
 build's log.
 
-<!-- PLACEHOLDER: screenshot of a failed build's log inside the panel (docs/images/build-log.png) -->
+<p align="center">
+  <img src="docs/images/build-log.png" width="380" alt="A failed build's log inside the panel, with the failing docker step and error lines">
+</p>
+
 <!-- PLACEHOLDER: screenshot of an application row with its strip open (docs/images/strip.png) -->
 <!-- PLACEHOLDER: screenshot of the filter field narrowing the list (docs/images/filter.png) -->
 
