@@ -1064,6 +1064,10 @@ function barState(s) {
   r.tooltip = name + " — " + (counts || "no resources")
   return r
 }
+// The Coolify mark (Mark.qml) stands in for the filled cloud and the deploying glyph; the
+// trouble glyphs (alert, off, outline, failed) stay, since the bar has only colour and
+// opacity to tell states apart. `glyph` is kept beside it for the status output.
+function barMark(b) { return !!b && (b.glyph === G.cloud || b.glyph === G.progress) }
 
 // ---- instances (Phase 4) ------------------------------------------------------------------
 // `list` is the service's per-instance summary: [{ id, name, error, failed, down }] (error = the

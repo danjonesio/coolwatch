@@ -23,7 +23,13 @@ panels. `docs/omarchy-shell-reference.md` is the component reference.
 
 ## Bar icon
 
-`BarIconButton` with a Nerd Font glyph. The configured, healthy icon is the filled
+`BarIconButton`. The configured states (idle, partial, starting, rate limited, waiting for
+the token, deploying) show the Coolify mark, `Mark.qml`: a cloud with the "C" cut out, one
+`Shape` path in a 100 × 77 box scaled to the slot, coloured by the button's own rule
+(active → `activeColor`, else `foreground`; `dimmed` is the button's opacity), the same
+way the Dropbox plugin draws its icon (`Model.barMark`; the hero shows the same mark at its
+icon size). The trouble states keep their glyphs, because the bar has only colour and
+opacity to tell states apart. Before the mark (until 2026-09-13) the configured icon was the filled
 Material cloud `󰅟` (U+F015F, `md-cloud`); the outline `󰅣` (U+F0163) is the
 "not configured" ghost. A Coolify mark as a `Shape` (`Mark.qml`, like omasnitch) can
 replace it later if the glyph reads badly at 13 px. The bar has one accent colour

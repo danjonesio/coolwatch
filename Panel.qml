@@ -722,16 +722,10 @@ Panel {
           fontFamily: root.fontFamily
           iconOpacity: root.snapshot && root.snapshot.error ? 0.45 : 1
           iconComponent: Component {
-            Text {
-              width: hero.iconSize
+            Item {
+              width: hero.iconSize * 1.1              // the hero's loader does not size children; a wider slot elides the counts line
               height: hero.iconSize
-              text: Model.G.cloud
-              textFormat: Text.PlainText
-              color: hero.foreground
-              font.family: root.fontFamily
-              font.pixelSize: hero.iconSize
-              horizontalAlignment: Text.AlignHCenter
-              verticalAlignment: Text.AlignVCenter
+              Mark { anchors.centerIn: parent; size: parent.width; color: hero.foreground }
             }
           }
           // One trailing control: a second icon button here elides the counts line (measured

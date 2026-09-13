@@ -49,11 +49,25 @@ BarWidget {
     }
   }
 
+  // The Coolify mark for the configured states; colour follows the button's own rule for
+  // a glyph (active → activeColor, else foreground) so dimmed and active read the same.
+  Component {
+    id: markComponent
+    Item {
+      Mark {
+        anchors.centerIn: parent
+        size: parent.width                 // the canvas is square; the mark fills its width and sits centred
+        color: button.active && button.useActiveColor ? button.activeColor : button.foreground
+      }
+    }
+  }
+
   BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.svc ? root.svc.bar.glyph : Model.G.cloudOutline
+    text: root.svc && Model.barMark(root.svc.bar) ? "" : (root.svc ? root.svc.bar.glyph : Model.G.cloudOutline)
+    iconComponent: root.svc && Model.barMark(root.svc.bar) ? markComponent : null
     keepSpace: true
     dimmed: root.svc ? root.svc.bar.dimmed : true
     active: root.svc ? root.svc.bar.active : false
