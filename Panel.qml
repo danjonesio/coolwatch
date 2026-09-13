@@ -7,8 +7,10 @@ import "Model.js" as Model
 import "Api.js" as Api
 
 // One instance per monitor. Reads the service snapshot; never polls. Rows are
-// flattened by Model.panelRows only while open and the ListView model is only
-// reassigned when Model.sameRows says they changed. The cursor is a row key.
+// flattened by Model.panelRows only while open; `rowsModel` (a plain array) is the index
+// space for the cursor and `rowsList` (a ListModel) is what the ListView renders, patched
+// in place by key so the scroll position and the delegates survive a change (a wholesale
+// model swap resets contentY to 0 and rebuilds every row). The cursor is a row key.
 Panel {
   id: root
   moduleName: "io.github.danjonesio.coolwatch"
@@ -41,6 +43,7 @@ Panel {
   // button (an id, never an index, so a shrinking set keeps focus), and the confirm.
   property string expandedKey: ""
   property string actionFocus: ""
+  property bool moreOpen: false             // the strip's secondary line (Logs · History · Open) is shown
   property bool confirmOpen: false
   property var confirmAction: null          // immutable { verb, uuid, name } captured when the dialog opens
   property bool confirmArmed: false         // Enter resolves the dialog only after confirmArm fires
@@ -77,7 +80,7 @@ Panel {
   readonly property var snapshot: svc ? svc.snapshot : null
   readonly property var pending: svc && svc.pending ? svc.pending : ({})
   readonly property var rows: root.opened && root.snapshot
-    ? Model.panelRows(root.snapshot, { groupBy: root.groupBy, folded: root.folded, nowMs: root.ageMs, expandedKey: root.expandedKey, pending: root.pending }) : []
+    ? Model.panelRows(root.snapshot, { groupBy: root.groupBy, folded: root.folded, nowMs: root.ageMs, expandedKey: root.expandedKey, moreOpen: root.moreOpen, pending: root.pending }) : []
   // Coarse clock for the one-hour age-out, so rows are not recomputed every second.
   readonly property double ageMs: Math.floor(root.nowMs / 60000) * 60000
   readonly property int selectedIndex: Model.indexOfKey(root.rowsModel, root.cursorKey)
@@ -88,7 +91,7 @@ Panel {
 
   onRowsChanged: applyRows()
   onOpenedChanged: {
-    if (!opened) { root.confirmOpen = false; root.confirmAction = null; root.confirmArmed = false; root.expandedKey = ""; root.actionFocus = ""; root.clearViews() }
+    if (!opened) { root.confirmOpen = false; root.confirmAction = null; root.confirmArmed = false; root.expandedKey = ""; root.actionFocus = ""; root.moreOpen = false; root.clearViews() }
     if (!svc) return
     if (opened) svc.panelOpened(panelId)
     else svc.panelClosed(panelId)
@@ -98,7 +101,7 @@ Panel {
   // the row: the rows underneath belong to the new instance now.
   Connections {
     target: root.svc
-    function onActiveIdChanged() { root.clearViews(); root.expandedKey = ""; root.actionFocus = "" }
+    function onActiveIdChanged() { root.clearViews(); root.expandedKey = ""; root.actionFocus = ""; root.moreOpen = false }
   }
 
   Timer {
@@ -111,6 +114,9 @@ Panel {
   // Arms the confirm 250 ms after it opens: an Enter that opened it (and its auto-repeat)
   // cannot also resolve it, and a pointer already over the Confirm cell is re-overridden.
   Timer { id: confirmArm; interval: 250; repeat: false; running: false; onTriggered: { root.confirmArmed = true; confirm.selectedIndex = 0 } }
+  // Two roles, fixed from the first insert: `key` and the plain row object (a variant map,
+  // so a nested `actions` array reaches the delegate as an array). Patched by applyRows only.
+  ListModel { id: rowsList }
 
   function open() { root.controller.show() }
   function close() { root.controller.hide() }
@@ -134,7 +140,14 @@ Panel {
     if (Model.sameRows(root.rowsModel, next)) return
     var prev = root.selectedIndex
     root.reflowing = true
+    var ops = Model.listPatch(root.rowsModel, next)
     root.rowsModel = next
+    for (var o = 0; o < ops.length; o++) {
+      var op = ops[o]
+      if (op.op === "remove") rowsList.remove(op.i, op.n)
+      else if (op.op === "set") rowsList.set(op.i, { key: op.row.key, row: op.row })
+      else for (var r = 0; r < op.rows.length; r++) rowsList.insert(op.i + r, { key: op.rows[r].key, row: op.rows[r] })
+    }
     Qt.callLater(function() { root.reflowing = false })
     var i = Model.indexOfKey(next, root.cursorKey)
     if (i < 0 && next.length) {
@@ -256,13 +269,23 @@ Panel {
   // focuses its first button, and pulls the strip into view after the parent.
   function expand(row) {
     if (!row || !Model.actionsFor(row).length) return
+    root.moreOpen = false
     root.expandedKey = row.key
     var ar = root.actionsRowFor(row.key)
     root.actionFocus = ar ? ar.actions[0].id : ""
     Qt.callLater(function() { root.scrollToKey("act:" + row.key) })
   }
 
-  function collapse() { root.expandedKey = ""; root.actionFocus = "" }
+  function collapse() { root.expandedKey = ""; root.actionFocus = ""; root.moreOpen = false }
+
+  // More/Less is a panel toggle, never a verb: it re-emits the strip with or without its
+  // secondary line and keeps the ring on the toggle (the id survives the re-emit).
+  function toggleMore(key) {
+    if (root.expandedKey !== key) return
+    root.moreOpen = !root.moreOpen
+    root.actionFocus = Model.MORE_ID
+    Qt.callLater(function() { root.scrollToKey("act:" + key) })
+  }
 
   // A left click on a leaf row places the cursor and opens its action strip (or closes
   // it when it is the expanded one); the strip's buttons are themselves clickable.
@@ -280,6 +303,7 @@ Panel {
     var i = Model.indexOfKey(root.rowsModel, key)
     var row = i >= 0 ? root.rowsModel[i] : null
     if (!row) return
+    if (verb === Model.MORE_ID) { root.toggleMore(key); return }
     var a = Model.actionFor(row, verb)
     if (!a) return
     if (a.id === "open") { root.openRow(row); return }
@@ -796,7 +820,7 @@ Panel {
         anchors.bottom: parent.bottom
         textFormat: Text.PlainText
         text: Model.footerHints(root.focusSection, root.currentRow,
-                                { expanded: !!root.currentRow && root.expandedKey === root.currentRow.key, actionFocus: root.actionFocus, confirmOpen: root.confirmOpen,
+                                { expanded: !!root.currentRow && root.expandedKey === root.currentRow.key, actionFocus: root.actionFocus, moreOpen: root.moreOpen, confirmOpen: root.confirmOpen,
                                   instances: svc ? svc.instances.length : 0,
                                   view: root.view ? { kind: root.view.kind, following: root.following, terminal: !!(root.liveRec && root.liveRec.terminal),
                                                       paused: !!(root.snapshot && root.snapshot.paused), hasUrl: !!root.view.url } : null })
@@ -1076,7 +1100,7 @@ Panel {
         boundsBehavior: Flickable.StopAtBounds
         flickableDirection: Flickable.VerticalFlick
         spacing: Style.space(6)
-        model: root.rowsModel
+        model: rowsList
         reuseItems: false
         visible: root.view === null          // the overlay replaces the list, it does not float over it
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
@@ -1084,13 +1108,14 @@ Panel {
         // One Loader per row: a row builds only its own variant's subtree.
         delegate: Item {
           id: rowDelegate
-          required property var modelData
+          required property string key
+          required property var row              // the Model.panelRows object, updated in place on a rev change
           required property int index
           width: listView.width
           implicitHeight: rowLoader.item ? rowLoader.item.implicitHeight : 0
           height: implicitHeight
-          readonly property string rowType: modelData.type
-          readonly property bool selected: root.cursorActive && root.focusSection === "list" && root.cursorKey === modelData.key
+          readonly property string rowType: row.type
+          readonly property bool selected: root.cursorActive && root.focusSection === "list" && root.cursorKey === key
 
           Loader {
             id: rowLoader
@@ -1113,11 +1138,12 @@ Panel {
           Component {
             id: actionsComp
             Item {
-              implicitHeight: actRow.implicitHeight + Style.space(6)
-              // A Flow, not a Row: a running application now offers six buttons (Phase 4 adds
-              // Logs and History), which wrap to a second line inside the card.
-              Flow {
-                id: actRow
+              implicitHeight: actCol.implicitHeight + Style.space(6)
+              // Two lines: the lifecycle verbs with a More/Less toggle, then the secondaries
+              // (Logs · History · Open) only while More is open. A strip of four or fewer
+              // buttons has no toggle and an empty second line (Model.stripFor).
+              Column {
+                id: actCol
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.leftMargin: Style.space(8) + Style.space(22) + Style.space(8)
@@ -1125,19 +1151,28 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Style.spacing.md
                 Repeater {
-                  model: rowDelegate.modelData.actions
-                  Button {
+                  model: [rowDelegate.row.primary, rowDelegate.row.secondary]
+                  Flow {
                     required property var modelData
-                    bordered: true
-                    focusable: false
-                    text: modelData.label
-                    fontSize: Style.font.bodySmall
-                    fontFamily: root.fontFamily
-                    foreground: modelData.destructive ? root.urgent : root.foreground
-                    accent: root.accent
-                    hasCursor: root.expandedKey === rowDelegate.modelData.parentKey && root.actionFocus === modelData.id
-                    onHovered: function(on) { if (on) root.hoverAction(rowDelegate.modelData.parentKey, modelData.id) }
-                    onClicked: root.runAction(modelData.id, rowDelegate.modelData.parentKey)
+                    width: actCol.width
+                    visible: modelData.length > 0
+                    spacing: Style.spacing.md
+                    Repeater {
+                      model: modelData
+                      Button {
+                        required property var modelData
+                        bordered: true
+                        focusable: false
+                        text: modelData.label
+                        fontSize: Style.font.bodySmall
+                        fontFamily: root.fontFamily
+                        foreground: modelData.destructive ? root.urgent : modelData.id === Model.MORE_ID ? root.dim : root.foreground
+                        accent: root.accent
+                        hasCursor: root.expandedKey === rowDelegate.row.parentKey && root.actionFocus === modelData.id
+                        onHovered: function(on) { if (on) root.hoverAction(rowDelegate.row.parentKey, modelData.id) }
+                        onClicked: root.runAction(modelData.id, rowDelegate.row.parentKey)
+                      }
+                    }
                   }
                 }
               }
@@ -1151,7 +1186,7 @@ Panel {
               implicitHeight: Math.max(sectionHeader.implicitHeight, groupToggle.item ? groupToggle.item.implicitHeight : 0)
               PanelSectionHeader {
                 id: sectionHeader
-                text: rowDelegate.modelData.title || ""
+                text: rowDelegate.row.title || ""
                 foreground: root.foreground
                 fontFamily: root.fontFamily
                 anchors.left: parent.left
@@ -1161,7 +1196,7 @@ Panel {
               // topPadding for Nerd Font overshoot (the network panel's band header idiom).
               Loader {
                 id: groupToggle
-                active: rowDelegate.modelData.control === "groupBy"
+                active: rowDelegate.row.control === "groupBy"
                 anchors.right: parent.right
                 anchors.verticalCenter: sectionHeader.verticalCenter
                 anchors.verticalCenterOffset: Math.round(sectionHeader.topPadding / 2)
@@ -1188,7 +1223,7 @@ Panel {
             id: noteComp
             Text {
               textFormat: Text.PlainText
-              text: rowDelegate.modelData.text || ""
+              text: rowDelegate.row.text || ""
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
@@ -1205,11 +1240,11 @@ Panel {
               hasCursor: rowDelegate.selected
               foreground: root.foreground
               accent: root.accent
-              HoverHandler { onHoveredChanged: if (hovered) root.hoverCursor(rowDelegate.modelData.key) }
+              HoverHandler { onHoveredChanged: if (hovered) root.hoverCursor(rowDelegate.row.key) }
               MouseArea {
                 anchors.fill: parent
                 cursorShape: Qt.PointingHandCursor
-                onClicked: { root.setCursor(rowDelegate.modelData.key); root.toggleFold(rowDelegate.modelData.key) }
+                onClicked: { root.setCursor(rowDelegate.row.key); root.toggleFold(rowDelegate.row.key) }
               }
               Row {
                 id: foldRow
@@ -1222,7 +1257,7 @@ Panel {
                 Text {
                   width: Style.space(14)
                   textFormat: Text.PlainText
-                  text: rowDelegate.modelData.open ? Model.G.foldOpen : Model.G.foldClosed
+                  text: rowDelegate.row.open ? Model.G.foldOpen : Model.G.foldClosed
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -1231,7 +1266,7 @@ Panel {
                 Text {
                   width: parent.width - Style.space(14) - foldCount.implicitWidth - parent.spacing * 2
                   textFormat: Text.PlainText
-                  text: String(rowDelegate.modelData.title || "").toUpperCase()
+                  text: String(rowDelegate.row.title || "").toUpperCase()
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -1243,7 +1278,7 @@ Panel {
                 Text {
                   id: foldCount
                   textFormat: Text.PlainText
-                  text: String(rowDelegate.modelData.count === undefined ? "" : rowDelegate.modelData.count)
+                  text: String(rowDelegate.row.count === undefined ? "" : rowDelegate.row.count)
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -1258,15 +1293,15 @@ Panel {
             id: deploymentComp
             CursorSurface {
               implicitHeight: depRow.implicitHeight + Style.spacing.rowPaddingX
-              hasCursor: rowDelegate.selected && !(root.actionFocus && root.expandedKey === rowDelegate.modelData.key)
-              current: rowDelegate.selected && !!root.actionFocus && root.expandedKey === rowDelegate.modelData.key
+              hasCursor: rowDelegate.selected && !(root.actionFocus && root.expandedKey === rowDelegate.row.key)
+              current: rowDelegate.selected && !!root.actionFocus && root.expandedKey === rowDelegate.row.key
               foreground: root.foreground
               accent: root.accent
-              HoverHandler { onHoveredChanged: if (hovered) root.hoverCursor(rowDelegate.modelData.key) }
+              HoverHandler { onHoveredChanged: if (hovered) root.hoverCursor(rowDelegate.row.key) }
               MouseArea {
                 anchors.fill: parent
                 acceptedButtons: Qt.LeftButton | Qt.RightButton
-                onClicked: function(m) { if (m.button === Qt.RightButton) root.openRow(rowDelegate.modelData); else root.clickRow(rowDelegate.modelData) }
+                onClicked: function(m) { if (m.button === Qt.RightButton) root.openRow(rowDelegate.row); else root.clickRow(rowDelegate.row) }
               }
               Row {
                 id: depRow
@@ -1279,8 +1314,8 @@ Panel {
                 Text {
                   width: Style.space(22)
                   textFormat: Text.PlainText
-                  text: rowDelegate.modelData.glyph || ""
-                  color: root.toneColor(rowDelegate.modelData.tone)
+                  text: rowDelegate.row.glyph || ""
+                  color: root.toneColor(rowDelegate.row.tone)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.title
                   horizontalAlignment: Text.AlignHCenter
@@ -1293,8 +1328,8 @@ Panel {
                   Text {
                     width: parent.width
                     textFormat: Text.PlainText
-                    text: rowDelegate.modelData.name || ""
-                    color: rowDelegate.modelData.tone === "urgent" ? root.urgent : root.foreground
+                    text: rowDelegate.row.name || ""
+                    color: rowDelegate.row.tone === "urgent" ? root.urgent : root.foreground
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.body
                     elide: Text.ElideRight
@@ -1303,8 +1338,8 @@ Panel {
                     width: parent.width
                     visible: text.length > 0
                     textFormat: Text.PlainText
-                    text: rowDelegate.modelData.sub || ""
-                    color: rowDelegate.modelData.pendingVerb ? root.toneColor(rowDelegate.modelData.tone) : root.dim
+                    text: rowDelegate.row.sub || ""
+                    color: rowDelegate.row.pendingVerb ? root.toneColor(rowDelegate.row.tone) : root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                     elide: Text.ElideRight
@@ -1314,7 +1349,7 @@ Panel {
                   id: depTime
                   textFormat: Text.PlainText
                   // The only delegate that reads nowMs: rows carry timestamps, not strings.
-                  text: rowDelegate.modelData.terminal ? Model.age(rowDelegate.modelData.updatedAt, root.nowMs) : Model.elapsed(rowDelegate.modelData.createdAt, root.nowMs)
+                  text: rowDelegate.row.terminal ? Model.age(rowDelegate.row.updatedAt, root.nowMs) : Model.elapsed(rowDelegate.row.createdAt, root.nowMs)
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
@@ -1329,15 +1364,15 @@ Panel {
             id: serverComp
             CursorSurface {
               implicitHeight: srvRow.implicitHeight + Style.spacing.rowPaddingX
-              hasCursor: rowDelegate.selected && !(root.actionFocus && root.expandedKey === rowDelegate.modelData.key)
-              current: rowDelegate.selected && !!root.actionFocus && root.expandedKey === rowDelegate.modelData.key
+              hasCursor: rowDelegate.selected && !(root.actionFocus && root.expandedKey === rowDelegate.row.key)
+              current: rowDelegate.selected && !!root.actionFocus && root.expandedKey === rowDelegate.row.key
               foreground: root.foreground
               accent: root.accent
-              HoverHandler { onHoveredChanged: if (hovered) root.hoverCursor(rowDelegate.modelData.key) }
+              HoverHandler { onHoveredChanged: if (hovered) root.hoverCursor(rowDelegate.row.key) }
               MouseArea {
                 anchors.fill: parent
                 acceptedButtons: Qt.LeftButton | Qt.RightButton
-                onClicked: function(m) { if (m.button === Qt.RightButton) root.openRow(rowDelegate.modelData); else root.clickRow(rowDelegate.modelData) }
+                onClicked: function(m) { if (m.button === Qt.RightButton) root.openRow(rowDelegate.row); else root.clickRow(rowDelegate.row) }
               }
               Row {
                 id: srvRow
@@ -1350,8 +1385,8 @@ Panel {
                 Text {
                   width: Style.space(22)
                   textFormat: Text.PlainText
-                  text: rowDelegate.modelData.dot || ""
-                  color: root.toneColor(rowDelegate.modelData.tone)
+                  text: rowDelegate.row.dot || ""
+                  color: root.toneColor(rowDelegate.row.tone)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                   horizontalAlignment: Text.AlignHCenter
@@ -1362,8 +1397,8 @@ Panel {
                   // The name elides; the caption keeps at least Style.space(150) so "unreachable" stays visible.
                   width: Math.min(implicitWidth, parent.width - Style.space(22) - parent.spacing * 2 - Math.min(srvSub.implicitWidth, Style.space(150)))
                   textFormat: Text.PlainText
-                  text: rowDelegate.modelData.name || ""
-                  color: rowDelegate.modelData.dim ? root.dim : root.foreground
+                  text: rowDelegate.row.name || ""
+                  color: rowDelegate.row.dim ? root.dim : root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                   elide: Text.ElideRight
@@ -1373,8 +1408,8 @@ Panel {
                   id: srvSub
                   width: parent.width - Style.space(22) - parent.spacing * 2 - srvName.width
                   textFormat: Text.PlainText
-                  text: rowDelegate.modelData.sub || ""
-                  color: rowDelegate.modelData.pendingVerb ? root.toneColor(rowDelegate.modelData.tone) : (rowDelegate.modelData.tone === "urgent" ? root.urgent : root.dim)
+                  text: rowDelegate.row.sub || ""
+                  color: rowDelegate.row.pendingVerb ? root.toneColor(rowDelegate.row.tone) : (rowDelegate.row.tone === "urgent" ? root.urgent : root.dim)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   elide: Text.ElideRight
@@ -1389,12 +1424,12 @@ Panel {
             id: tagComp
             CursorSurface {
               implicitHeight: tagRow.implicitHeight + Style.spacing.rowPaddingX
-              hasCursor: rowDelegate.selected && !(root.actionFocus && root.expandedKey === rowDelegate.modelData.key)
-              current: rowDelegate.selected && !!root.actionFocus && root.expandedKey === rowDelegate.modelData.key
+              hasCursor: rowDelegate.selected && !(root.actionFocus && root.expandedKey === rowDelegate.row.key)
+              current: rowDelegate.selected && !!root.actionFocus && root.expandedKey === rowDelegate.row.key
               foreground: root.foreground
               accent: root.accent
-              HoverHandler { onHoveredChanged: if (hovered) root.hoverCursor(rowDelegate.modelData.key) }
-              MouseArea { anchors.fill: parent; onClicked: root.clickRow(rowDelegate.modelData) }
+              HoverHandler { onHoveredChanged: if (hovered) root.hoverCursor(rowDelegate.row.key) }
+              MouseArea { anchors.fill: parent; onClicked: root.clickRow(rowDelegate.row) }
               Row {
                 id: tagRow
                 anchors.left: parent.left
@@ -1406,8 +1441,8 @@ Panel {
                 Text {
                   width: Style.space(22)
                   textFormat: Text.PlainText
-                  text: rowDelegate.modelData.dot || ""
-                  color: rowDelegate.modelData.pendingVerb ? root.toneColor(rowDelegate.modelData.tone) : root.dim
+                  text: rowDelegate.row.dot || ""
+                  color: rowDelegate.row.pendingVerb ? root.toneColor(rowDelegate.row.tone) : root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                   horizontalAlignment: Text.AlignHCenter
@@ -1416,7 +1451,7 @@ Panel {
                 Text {
                   width: parent.width - Style.space(22) - tagSub.implicitWidth - parent.spacing * 2
                   textFormat: Text.PlainText
-                  text: rowDelegate.modelData.name || ""
+                  text: rowDelegate.row.name || ""
                   color: root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
@@ -1427,8 +1462,8 @@ Panel {
                 Text {
                   id: tagSub
                   textFormat: Text.PlainText
-                  text: rowDelegate.modelData.sub || ""
-                  color: rowDelegate.modelData.pendingVerb ? root.toneColor(rowDelegate.modelData.tone) : root.dim
+                  text: rowDelegate.row.sub || ""
+                  color: rowDelegate.row.pendingVerb ? root.toneColor(rowDelegate.row.tone) : root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   anchors.verticalCenter: parent.verticalCenter
@@ -1442,29 +1477,29 @@ Panel {
             id: resourceComp
             CursorSurface {
               implicitHeight: resRow.implicitHeight + Style.spacing.rowPaddingX
-              hasCursor: rowDelegate.selected && !(root.actionFocus && root.expandedKey === rowDelegate.modelData.key)
-              current: rowDelegate.selected && !!root.actionFocus && root.expandedKey === rowDelegate.modelData.key
+              hasCursor: rowDelegate.selected && !(root.actionFocus && root.expandedKey === rowDelegate.row.key)
+              current: rowDelegate.selected && !!root.actionFocus && root.expandedKey === rowDelegate.row.key
               foreground: root.foreground
               accent: root.accent
-              HoverHandler { onHoveredChanged: if (hovered) root.hoverCursor(rowDelegate.modelData.key) }
+              HoverHandler { onHoveredChanged: if (hovered) root.hoverCursor(rowDelegate.row.key) }
               MouseArea {
                 anchors.fill: parent
                 acceptedButtons: Qt.LeftButton | Qt.RightButton
-                onClicked: function(m) { if (m.button === Qt.RightButton) root.openRow(rowDelegate.modelData); else root.clickRow(rowDelegate.modelData) }
+                onClicked: function(m) { if (m.button === Qt.RightButton) root.openRow(rowDelegate.row); else root.clickRow(rowDelegate.row) }
               }
               Row {
                 id: resRow
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.leftMargin: Style.space(8) + Style.space(14) * (rowDelegate.modelData.indent || 0)
+                anchors.leftMargin: Style.space(8) + Style.space(14) * (rowDelegate.row.indent || 0)
                 anchors.rightMargin: Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Style.space(8)
                 Text {
                   width: Style.space(22)
                   textFormat: Text.PlainText
-                  text: rowDelegate.modelData.dot || ""
-                  color: root.toneColor(rowDelegate.modelData.tone)
+                  text: rowDelegate.row.dot || ""
+                  color: root.toneColor(rowDelegate.row.tone)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                   horizontalAlignment: Text.AlignHCenter
@@ -1473,8 +1508,8 @@ Panel {
                 Text {
                   width: parent.width - Style.space(22) - resStatus.implicitWidth - resKind.implicitWidth - parent.spacing * 3
                   textFormat: Text.PlainText
-                  text: rowDelegate.modelData.name || ""
-                  color: rowDelegate.modelData.dim ? root.dim : root.foreground
+                  text: rowDelegate.row.name || ""
+                  color: rowDelegate.row.dim ? root.dim : root.foreground
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                   font.bold: true
@@ -1484,8 +1519,8 @@ Panel {
                 Text {
                   id: resStatus
                   textFormat: Text.PlainText
-                  text: rowDelegate.modelData.statusWords || ""
-                  color: rowDelegate.modelData.pendingVerb ? root.toneColor(rowDelegate.modelData.tone) : (rowDelegate.modelData.tone === "urgent" ? root.urgent : root.dim)
+                  text: rowDelegate.row.statusWords || ""
+                  color: rowDelegate.row.pendingVerb ? root.toneColor(rowDelegate.row.tone) : (rowDelegate.row.tone === "urgent" ? root.urgent : root.dim)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   anchors.verticalCenter: parent.verticalCenter
@@ -1493,7 +1528,7 @@ Panel {
                 Text {
                   id: resKind
                   textFormat: Text.PlainText
-                  text: rowDelegate.modelData.kindHint || ""
+                  text: rowDelegate.row.kindHint || ""
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption

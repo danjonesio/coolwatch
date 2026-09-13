@@ -109,7 +109,10 @@ Read `docs/roadmap.md` before writing code.
 - One deploy button follows the state: Deploy on a stopped application, Redeploy on a
   running one (both `POST /deploy`; `d` and IPC `deploy` resolve the same way). Only
   applications get it (`POST /deploy` accepts services and databases but that is Start
-  under another name). A left click on a row opens its strip; the buttons are clickable. Open targets the resource's
+  under another name). A left click on a row opens its strip; the buttons are clickable. A strip of more than four
+  buttons folds: the lifecycle verbs plus **More** on the first line, Logs · History · Open beneath once More is open
+  (`Model.stripFor`; More is panel state, never a verb; text keys reach a folded button). The ListView model is a
+  `ListModel` patched in place by key (`Model.listPatch`), never reassigned: a swap resets the scroll. Open targets the resource's
   Coolify page, built from the instance origin; never `fqdn`. No page â no Open button.
 - No compensating polls after an action. Pending is a service-owned map applied at
   render time and cleared per verb (deploy/redeploy/restart: the created deployment

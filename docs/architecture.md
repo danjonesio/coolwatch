@@ -339,8 +339,15 @@ byServer:  { serverUuid: [resourceUuid…] }
   `mkdirProc` before the first write) is the control. Coolify uuids are not
   charset-validated at normalise; `Model.uuid8` filters them before any log line.
 - Panels never build state: the service builds the snapshot once per poll; a panel
-  flattens it into rows only while open and reassigns its ListView model only when
-  `Model.sameRows` says the rows changed. The cursor is a row key, not an index.
+  flattens it into rows only while open. `rowsModel` (a plain array) is the index space
+  for the cursor; the ListView renders a `ListModel` (`rowsList`, roles `key` and `row`)
+  that `applyRows` patches in place with `Model.listPatch` (keyed remove / insert / set)
+  only when `Model.sameRows` says the rows changed. A wholesale model swap would reset
+  the scroll to the top and rebuild every delegate (measured 2026-09-13: contentY 910 →
+  0 → 946 on one inserted row), which was the "flick" on opening a strip. The nested
+  `actions`, `primary` and `secondary` lists reach the delegate as QVariantList
+  sequences (`length` works, `Array.isArray` is false). The cursor is a row key, not an
+  index.
 
 ## Change detection and notifications
 

@@ -1228,7 +1228,12 @@ test("Model.panelRows with expandedKey: the actions row follows its parent, is n
   const rows = M.panelRows(s, { expandedKey: "res:" + APP })
   const i = M.indexOfKey(rows, "res:" + APP)
   eq(rows[i + 1].type, "actions"); eq(rows[i + 1].key, "act:res:" + APP); eq(rows[i + 1].parentKey, "res:" + APP); eq(rows[i + 1].uuid, APP)
-  eq(rows[i + 1].actions.map(a => a.id).join(","), "redeploy,restart,stop,logs,history,open")
+  eq(rows[i + 1].actions.map(a => a.id).join(","), "redeploy,restart,stop,more", "six buttons fold behind More")
+  eq(rows[i + 1].primary.map(a => a.id).join(","), "redeploy,restart,stop,more"); eq(rows[i + 1].secondary.length, 0)
+  const open = M.panelRows(s, { expandedKey: "res:" + APP, moreOpen: true })
+  eq(open[i + 1].actions.map(a => a.id).join(","), "redeploy,restart,stop,more,logs,history,open", "More open: the secondaries follow in h/l order")
+  eq(open[i + 1].primary.map(a => a.label).join(","), "Redeploy,Restart,Stop,Less"); eq(open[i + 1].secondary.map(a => a.id).join(","), "logs,history,open")
+  assert(!M.sameRows(rows, open), "rowRev notices More opening")
   eq(rows[i + 1].targetType, "resource"); assert(rows[i + 1].name.length > 0)
   assert(M.nextSelectable(rows, i, 1) !== i + 1, "actions row is skipped by j")
   assert(M.nextSelectable(rows, i + 2, -1) !== i + 1, "and by k")
@@ -1245,8 +1250,72 @@ test("Model.panelRows with expandedKey: the actions row follows its parent, is n
   assert(!M.sameRows(a1, b), "rowRev changes when the action id list changes")
   const noUrl = actSnap({ instance: Object.assign({}, s.instance, { url: "" }) })
   const c = M.panelRows(noUrl, { expandedKey: "res:" + APP })
-  eq(c[M.indexOfKey(c, "res:" + APP) + 1].actions.map(a => a.id).join(","), "redeploy,restart,stop,logs,history", "no Open without a url")
+  eq(c[M.indexOfKey(c, "res:" + APP) + 1].actions.map(a => a.id).join(","), "redeploy,restart,stop,more", "no Open without a url: still five, still folded")
+  eq(M.panelRows(noUrl, { expandedKey: "res:" + APP, moreOpen: true })[M.indexOfKey(c, "res:" + APP) + 1].secondary.map(a => a.id).join(","), "logs,history")
   assert(!M.sameRows(a1, c), "url presence is in rowRev")
+})
+
+test("Model.stripFor: four or fewer buttons never fold; only a mix of primary and secondary folds; More/Less label; primary flags", () => {
+  const ids = st => st.actions.map(a => a.id).join(",")
+  const app = { type: "resource", kind: "application", state: "running", url: "u" }
+  eq(ids(M.stripFor(app, false)), "redeploy,restart,stop,more"); eq(ids(M.stripFor(app, true)), "redeploy,restart,stop,more,logs,history,open")
+  eq(M.stripFor(app, false).actions[3].label, "More"); eq(M.stripFor(app, true).actions[3].label, "Less")
+  assert(!M.stripFor(app, false).actions[3].confirm && !M.stripFor(app, false).actions[3].destructive)
+  const stopped = { type: "resource", kind: "application", state: "exited", url: "u" }
+  eq(ids(M.stripFor(stopped, false)), "deploy,start,history,open", "four fit on one line: no More"); eq(M.stripFor(stopped, true).secondary.length, 0)
+  eq(ids(M.stripFor({ type: "resource", kind: "service", state: "running", url: "u" }, false)), "restart,stop,logs,open")
+  eq(ids(M.stripFor({ type: "deployment", status: "queued", url: "u" }, false)), "logs,cancel,open")
+  eq(ids(M.stripFor({ type: "server", url: "u" }, false)), "validate,open")
+  eq(ids(M.stripFor({ type: "fold" }, false)), "")
+  const prim = M.actionsFor(app).filter(a => a.primary).map(a => a.id).join(",")
+  eq(prim, "redeploy,restart,stop", "rebuild is keyboard-only and never primary; logs/history/open are secondary")
+  eq(M.actionsFor(stopped).filter(a => a.primary).map(a => a.id).join(","), "deploy,start")
+  eq(M.actionFor(app, "more"), null, "more is a panel toggle, never a verb")
+  eq(M.actionFor(app, "logs").id, "logs", "text keys still reach a folded secondary")
+})
+
+test("Model.listPatch: keyed in-place edits reproduce next; set only on a rev change; reorder, duplicate and empty cases; coalesced ops", () => {
+  const R = (k, v) => ({ type: "resource", key: k, name: v || k })
+  function apply(prev, ops) {
+    const cur = prev.slice()
+    for (const o of ops) {
+      if (o.op === "remove") cur.splice(o.i, o.n)
+      else if (o.op === "insert") cur.splice(o.i, 0, ...o.rows)
+      else if (o.op === "set") cur[o.i] = o.row
+      else throw new Error("bad op " + o.op)
+      assert(o.i >= 0 && o.i <= cur.length, "index in range at application time")
+    }
+    return cur
+  }
+  const same = (a, b) => a.length === b.length && a.every((r, i) => r.key === b[i].key && M.rowRev(r) === M.rowRev(b[i]))
+  const a = [R("a"), R("b"), R("c"), R("d")]
+  eq(M.listPatch(a, a).length, 0, "identical: no ops")
+  eq(M.listPatch([], []).length, 0)
+  let ops = M.listPatch(a, [R("a"), R("b"), R("act:b"), R("c"), R("d")])
+  eq(JSON.stringify(ops.map(o => [o.op, o.i, o.n || o.rows.length])), '[["insert",2,1]]', "expand: one insert, nothing else touched")
+  ops = M.listPatch([R("a"), R("b"), R("act:b"), R("c"), R("d")], a)
+  eq(JSON.stringify(ops.map(o => [o.op, o.i, o.n])), '[["remove",2,1]]', "collapse: one remove")
+  ops = M.listPatch(a, [R("a"), R("b", "B2"), R("c"), R("d")])
+  eq(JSON.stringify(ops.map(o => [o.op, o.i])), '[["set",1]]', "a rev change is a set in place")
+  ops = M.listPatch(a, [])
+  eq(JSON.stringify(ops), '[{"op":"remove","i":0,"n":4}]', "consecutive removes coalesce")
+  ops = M.listPatch([], a)
+  eq(ops.length, 1); eq(ops[0].op, "insert"); eq(ops[0].rows.length, 4, "consecutive inserts coalesce")
+  for (const [prev, next] of [
+    [a, [R("d"), R("c"), R("b"), R("a")]],
+    [a, [R("x"), R("b"), R("y"), R("d"), R("z")]],
+    [[R("a"), R("a"), R("b")], [R("a"), R("b")]],
+    [[R("a"), R("b")], [R("b"), R("a"), R("a")]],
+    [a, [R("c")]], [[R("c")], a],
+  ]) assert(same(apply(prev, M.listPatch(prev, next)), next), "reproduces " + next.map(r => r.key).join(","))
+  // Random churn: every patch reproduces its target and never indexes out of range.
+  let seed = 7; const rnd = n => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) % n
+  const keys = ["a", "b", "c", "d", "e", "f", "g", "h"]
+  for (let t = 0; t < 300; t++) {
+    const gen = () => keys.filter(() => rnd(3) > 0).sort(() => rnd(3) - 1).map(k => R(k, rnd(2) ? k : k + "!"))
+    const prev = gen(), next = gen()
+    assert(same(apply(prev, M.listPatch(prev, next)), next), "random " + t)
+  }
 })
 
 test("Model.nextAction: clamps; h from the first returns to the row; a vanished id counts as the first", () => {

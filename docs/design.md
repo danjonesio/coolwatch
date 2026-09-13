@@ -256,20 +256,29 @@ minute or so with a panel open, five with it closed). Resource rows:
 
 Enter (or `l`) on a leaf row emits a non-selectable action strip under it. Actions that
 do not apply are hidden, not disabled: applications running → Redeploy · Restart ·
-Stop · Open (the no-cache rebuild is keyboard-only, `D`, and confirms); applications
-stopped → Deploy · Start · Open (Deploy brings it up, Redeploy rebuilds a running one;
-both are `POST /deploy`); services and databases → Restart · Stop · Open or Start ·
-Open; unknown state → Open;
+Stop · More, with Logs · History · Open on a second line once More is open (the no-cache
+rebuild is keyboard-only, `D`, and confirms); applications stopped → Deploy · Start ·
+History · Open (Deploy brings it up, Redeploy rebuilds a running one; both are
+`POST /deploy`); services and databases → Restart · Stop · Logs · Open or Start · Open;
+unknown state → History · Open or Open;
 servers → Validate · Open; active deployments → Cancel · Open; terminal → Open. Open is
 present only when a Coolify page URL can be built (it arrives with the topology, about
 a minute after start).
 
 ### Action row (Phase 2)
 
-`Flow` of `Button { bordered: true; focusable: false; fontSize: Style.font.bodySmall }`
-with content-derived widths (a running application offers six buttons since Phase 4,
-which wrap to a second line). `h`/`l` move between them (an id, not an index, so a
-button that disappears hands focus to the first); Enter runs. While a button is ringed
+A `Column` of two `Flow`s of `Button { bordered: true; focusable: false; fontSize:
+Style.font.bodySmall }` with content-derived widths. Four buttons fit one line of the
+fitted card; a strip of four or fewer shows all of them and nothing else. Above four
+(`Model.STRIP_FIT`), the first line holds the lifecycle verbs (`primary` in
+`Model.actionsFor`: Redeploy/Deploy, Restart, Stop/Start) and a **More** toggle painted
+`root.dim`; the second line (Logs · History · Open) appears only while More is open and
+the toggle reads **Less** (`Model.stripFor`). More is panel state (`moreOpen`, reset on
+collapse, expand, close and an instance switch), never a verb: Enter or a click on it
+re-emits the strip and keeps the ring on the toggle; the text keys (`L`, `o`) reach a
+folded secondary regardless. `h`/`l` move through primary, More, then the revealed
+secondaries (an id, not an index, so a button that disappears hands focus to the
+first); Enter runs. While a button is ringed
 the parent row paints `CursorSurface.current`. Destructive buttons (Stop, Cancel,
 Redeploy) use `foreground: root.urgent`, which tints the label and the hover fill;
 `Button` has no hover-colour property.
@@ -336,6 +345,7 @@ Caption, dim: the most useful keys for the current cursor position (`Model.foote
 | `h` / `l` | fold row | fold / unfold |
 | `l` | collapsed leaf row | expand and focus the first action |
 | `h` / `l` | action button | previous / next button; `h` on the first returns to the row |
+| Enter, Space | More / Less button | show / hide the strip's second line (Logs · History · Open); the footer reads `enter more` / `enter less` |
 | `h` | expanded row, no button focused | collapse |
 | Enter, Space | fold row | expand / collapse |
 | Enter, Space | hero | refresh |
@@ -369,7 +379,10 @@ PageDown (`PanelKeyCatcher` does not emit them and the panel may not add a `Keys
 
 Mouse: hover moves the cursor (never colours from `containsMouse`); a left click on a
 leaf row opens its action strip (or closes the open one) and the strip's buttons are
-clickable; a click on a fold row folds; right-click on a row opens it in the browser.
+clickable, More included; a click on a fold row folds; right-click on a row opens it in
+the browser. Opening a strip never moves the list: the ListView's model is patched in
+place by key (`Model.listPatch`), so the rows above keep their place and the strip is
+only scrolled into view when it would fall below the card.
 
 ## Loading, empty and error states
 

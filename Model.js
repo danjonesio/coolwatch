@@ -1178,9 +1178,26 @@ function withPending(row, entry) {
 // THE table: which buttons a row offers, in order. Hidden, never disabled. Every other
 // applicability decision (keys, IPC, the confirm) is a lookup over this list (SR3).
 
-function act(id, label, destructive, confirm, button) { return { id: id, label: label, destructive: !!destructive, confirm: !!confirm, button: button !== false } }
+// `primary` marks the lifecycle verbs that stay on the strip's first line when it folds
+// behind More (Redeploy/Deploy, Restart, Stop/Start); everything else is secondary.
+function act(id, label, destructive, confirm, button, primary) { return { id: id, label: label, destructive: !!destructive, confirm: !!confirm, button: button !== false, primary: !!primary } }
 var OPEN = act("open", "Open", false, false)
 function buttons(list) { return list.filter(function (a) { return a.button }) }
+
+// The strip folds only when it would wrap: STRIP_FIT buttons sit on one line of the
+// fitted card. Above that, the primary verbs plus a More toggle make the first line and
+// the rest appear beneath when More is open. `actions` is the h/l order (primary, more,
+// then the revealed secondaries); `primary`/`secondary` are the two rendered lines.
+var STRIP_FIT = 4
+var MORE_ID = "more"
+function stripFor(row, moreOpen) {
+  var list = buttons(actionsFor(row))
+  var primary = list.filter(function (a) { return a.primary }), secondary = list.filter(function (a) { return !a.primary })
+  if (list.length <= STRIP_FIT || !primary.length || !secondary.length) return { actions: list, primary: list, secondary: [] }
+  var more = act(MORE_ID, moreOpen ? "Less" : "More", false, false)
+  var shown = moreOpen ? secondary : []
+  return { actions: primary.concat([more], shown), primary: primary.concat([more]), secondary: shown }
+}
 
 function actionsFor(row) {
   if (!row) return []
@@ -1192,11 +1209,11 @@ function actionsFor(row) {
       // rebuilds a running one (both POST /deploy). The no-cache rebuild (`D`) is
       // keyboard-only and confirms.
       if (row.kind === "application") {
-        if (running) { out.push(act("redeploy", "Redeploy")); out.push(act("rebuild", "Rebuild", true, true, false)) }
-        else out.push(act("deploy", "Deploy"))
+        if (running) { out.push(act("redeploy", "Redeploy", false, false, true, true)); out.push(act("rebuild", "Rebuild", true, true, false)) }
+        else out.push(act("deploy", "Deploy", false, false, true, true))
       }
-      if (running) { out.push(act("restart", "Restart")); out.push(act("stop", "Stop", true, true)) }
-      else out.push(act("start", "Start"))
+      if (running) { out.push(act("restart", "Restart", false, false, true, true)); out.push(act("stop", "Stop", true, true, true, true)) }
+      else out.push(act("start", "Start", false, false, true, true))
       // Phase 4: the container tail needs a running container (a stopped one is 404).
       if (running) out.push(act("logs", "Logs"))
     }
@@ -1354,11 +1371,47 @@ function spliceActions(rows, ui) {
   var i = indexOfKey(rows, ui.expandedKey)
   if (i < 0) return rows
   var row = rows[i]
-  var list = buttons(actionsFor(row))
-  if (!list.length) return rows
+  var strip = stripFor(row, !!ui.moreOpen)
+  if (!strip.actions.length) return rows
   rows.splice(i + 1, 0, { type: "actions", key: "act:" + row.key, parentKey: row.key, uuid: row.uuid,
-                          targetType: targetTypeOf(row), name: row.name, actions: list })
+                          targetType: targetTypeOf(row), name: row.name, actions: strip.actions, primary: strip.primary, secondary: strip.secondary })
   return rows
+}
+
+// In-place edits that take a ListModel holding `prev` (by key) to `next`, in order:
+// { op: "remove", i, n } | { op: "insert", i, rows } | { op: "set", i, row }. A row whose
+// key survives is `set` only when its rowRev changed; a reorder is a remove and a later
+// insert. Indices are valid at the moment each op is applied, in sequence. Replacing the
+// model wholesale would reset the ListView's scroll and rebuild every delegate.
+function listPatch(prev, next) {
+  var cur = (prev || []).slice(), ops = [], i = 0
+  var pos = {}
+  for (var j = 0; j < next.length; j++) pos[next[j].key] = j
+  function remove(at, n) {
+    var last = ops.length ? ops[ops.length - 1] : null
+    if (last && last.op === "remove" && last.i === at) last.n += n
+    else ops.push({ op: "remove", i: at, n: n })
+    cur.splice(at, n)
+  }
+  for (j = 0; j < next.length; j++) {
+    var row = next[j], key = row.key
+    // Old rows here that are gone, or belong earlier (a duplicate already placed), go first.
+    while (i < cur.length && cur[i].key !== key && !(pos[cur[i].key] > j)) remove(i, 1)
+    if (i < cur.length && cur[i].key === key) {
+      if (rowRev(cur[i]) !== rowRev(row)) { ops.push({ op: "set", i: i, row: row }); cur[i] = row }
+      i++
+      continue
+    }
+    var k = -1
+    for (var m = i + 1; m < cur.length; m++) if (cur[m].key === key) { k = m; break }
+    if (k > i) { remove(i, k - i); ops.push({ op: "set", i: i, row: row }); cur[i] = row; i++; continue }
+    var last = ops.length ? ops[ops.length - 1] : null
+    if (last && last.op === "insert" && last.i + last.rows.length === i) last.rows.push(row)
+    else ops.push({ op: "insert", i: i, rows: [row] })
+    cur.splice(i, 0, row); i++
+  }
+  if (i < cur.length) remove(i, cur.length - i)
+  return ops
 }
 
 function panelRows(s, ui) {
@@ -1506,6 +1559,7 @@ function footerHints(focusSection, row, ui) {
   if (ui.view) return viewHints(ui.view)
   if (focusSection === "hero") return (ui.instances > 1 ? "h/l instance · " : "") + "enter refresh · j down · r refresh · esc close"
   if (row && row.type === "fold") return "j/k move · enter fold · g group · r refresh · esc close"
+  if (ui.expanded && ui.actionFocus === MORE_ID) return "h/l pick · enter " + (ui.moreOpen ? "less" : "more") + " · esc collapse"
   if (ui.expanded && ui.actionFocus) return "h/l pick · enter run · esc collapse"
   if (ui.expanded) return "l pick · enter collapse · esc collapse"
   var list = buttons(actionsFor(row))
