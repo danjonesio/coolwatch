@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # bin/record-fixture <name> <api-path>      e.g. bin/record-fixture servers /servers
 # Records a Coolify response into tests/fixtures/<name>.json with secret-bearing
-# values replaced. The token reaches curl via the shell builtin printf on stdin,
-# never argv, never a temp file.
+# values replaced and the identity values the public-repo rule forbids (AGENTS.md;
+# bin/check SR39) rewritten to placeholders: URL hosts in fqdn/domains/urls become
+# placeholder.example.net, IPs 203.0.113.10, repository slugs example/<repo>, commit
+# messages the marker. Resource, project, server and team names and descriptions are
+# free text the script cannot tell from placeholders: rename those by hand (api,
+# storefront, landing, hetzner-1, Example Team) before committing. The token reaches
+# curl via the shell builtin printf on stdin, never argv, never a temp file.
 set -euo pipefail
 [[ $# -eq 2 ]] || { echo "usage: record-fixture <name> <api-path>" >&2; exit 2; }
 name=$1; apipath=$2
@@ -20,8 +25,15 @@ body=$(printf 'url = "%s"\nsilent\nheader = "Authorization: Bearer %s"\nheader =
 if [[ $apipath == /version ]]; then
   printf '%s\n' "$body" > "$root/tests/fixtures/$name.txt"
 else
-  printf '%s' "$body" | jq --arg deny "$deny" \
-    'walk(if type == "object" then with_entries(if (.key | test($deny)) and .value != null then .value = "«scrubbed»" else . end) else . end)' \
+  printf '%s' "$body" | jq --arg deny "$deny" '
+    def host: sub("(?<s>https?:(//|\\\\/\\\\/))[^/:\\\\\"]+"; "\(.s)placeholder.example.net"; "g");   # also the https:\/\/ inside an escaped-JSON string
+    def ident:
+      if   (.key | test("^(fqdn|domains|docker_compose_domains|sentinel_custom_url|deployment_url|source_url)$")) and (.value | type == "string") then .value |= host
+      elif .key == "ip" and (.value | type == "string") then .value = "203.0.113.10"
+      elif .key == "git_repository" and (.value | type == "string") and (.value | test("^(example/|coollabsio/coolify$)") | not) then .value = "example/" + (.value | split("/") | last)
+      elif (.key | test("^(commit_message|commitMessage)$")) and (.value | type == "string") then .value = "«scrubbed»"
+      else . end;
+    walk(if type == "object" then with_entries(if (.key | test($deny)) and .value != null then .value = "«scrubbed»" else ident end) else . end)' \
     > "$root/tests/fixtures/$name.json"
 fi
 echo "wrote tests/fixtures/$name.*"

@@ -210,7 +210,7 @@ tests/fixtures/    recorded API responses, secrets replaced, uuids kept
 bin/check          node tests + omarchy plugin validate + qmllint
 bin/dev-sync       copy plugin files into ~/.config/omarchy/plugins/<id>/
 bin/dev-watch      inotify loop around dev-sync (runs tests on a .js save)
-bin/record-fixture curl one endpoint into tests/fixtures/ with secret values scrubbed
+bin/record-fixture curl one endpoint into tests/fixtures/ with secrets scrubbed and hosts/IPs/repos/commit messages replaced
 docs/              product, architecture, design, roadmap, API + shell references
 docs/preview/      card.html + panel.png + build: regenerates preview.png (the marketplace card; panel.png is a
                    scale-2 capture with every real name redrawn as a placeholder, never a raw capture)
@@ -401,9 +401,15 @@ bin/record-fixture deployments-active /deployments
 - Don't commit anything from a real account except uuids: no tokens, and no resource,
   project, server or team names, hostnames, domains, IPs, repository paths or commit
   messages (the repo is public; the history was rewritten on 2026-09-13 after a server IP
-  shipped in the fixtures). `bin/record-fixture` scrubs secrets only, so rename by hand
-  before committing: servers `hetzner-1` / `203.0.113.10`, apps `api`, `storefront`,
-  `landing`, domains under `example.net`, team `Example Team`.
+  shipped in the fixtures; three hostnames, a commit message and a repository path
+  survived that rewrite and were found by the 2026-09-13 security review). `bin/check`
+  SR39 fails on any fixture URL host, IPv4, repository slug or commit-message slug that
+  is not a placeholder (`example.net`/`.com`/`.org` and subdomains, `app.coolify.io`,
+  `203.0.113.x`, RFC 1918, `example/<repo>`). `bin/record-fixture` scrubs secrets and
+  rewrites those same fields (`placeholder.example.net`, `203.0.113.10`, `example/<repo>`,
+  commit messages to the marker); names and descriptions are free text it cannot tell
+  apart, so rename those by hand before committing: servers `hetzner-1`, apps `api`,
+  `storefront`, `landing`, team `Example Team`.
 - Don't route an action result through `_fail` (not even its 429 arm), and don't store
   objects in `_requestLog` (both filters subtract bare timestamps).
 - Don't route a view fetch (`buildlog`, `containerlog`, `service`, `history`, `tags`)
