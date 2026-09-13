@@ -212,6 +212,8 @@ bin/dev-sync       copy plugin files into ~/.config/omarchy/plugins/<id>/
 bin/dev-watch      inotify loop around dev-sync (runs tests on a .js save)
 bin/record-fixture curl one endpoint into tests/fixtures/ with secret values scrubbed
 docs/              product, architecture, design, roadmap, API + shell references
+docs/preview/      card.html + panel.png + build: regenerates preview.png (the marketplace card; panel.png is a
+                   scale-2 capture with every real name redrawn as a placeholder, never a raw capture)
 ```
 
 Installed plugin: `~/.config/omarchy/plugins/io.github.danjonesio.coolwatch/`
