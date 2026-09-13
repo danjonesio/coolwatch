@@ -102,8 +102,21 @@ Panel {
   onOpenedChanged: {
     if (!opened) { root.confirmOpen = false; root.confirmAction = null; root.confirmArmed = false; root.expandedKey = ""; root.actionFocus = ""; root.moreOpen = false; root.clearViews(); root.clearFilter(false) }
     if (!svc) return
-    if (opened) svc.panelOpened(panelId)
+    if (opened) { svc.panelOpened(panelId); root.takeRequest() }
     else svc.panelClosed(panelId)
+  }
+  // Phase 4b item 6: the IPC verb `log <uuid>` parks a request on the service and summons
+  // the panel; whichever panel is open takes it once (a request left by no panel goes
+  // stale in 5 s). The row goes through openLogsFor, so a held, active or unheld log
+  // resolves exactly as `L` on the row does.
+  function takeRequest() {
+    if (!root.opened || !svc || !svc.viewRequest) return
+    var r = svc.takeViewRequest()
+    if (!r) return
+    var row = Model.logRequestRow(root.snapshot, r.uuid, root.snapshot && root.snapshot.instance ? root.snapshot.instance.url : "")
+    if (!row) return
+    root.clearViews(); root.confirmOpen = false; root.confirmAction = null; root.clearFilter(false)
+    root.openLogsFor(row)
   }
   Component.onDestruction: if (svc) svc.panelClosed(panelId)
   // Phase 4: an instance switch (chip, h/l, middle-click, IPC) pops every view and collapses
@@ -111,6 +124,7 @@ Panel {
   Connections {
     target: root.svc
     function onActiveIdChanged() { root.clearViews(); root.expandedKey = ""; root.actionFocus = ""; root.moreOpen = false }
+    function onViewRequestChanged() { root.takeRequest() }
   }
 
   Timer {

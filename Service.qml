@@ -39,6 +39,10 @@ Item {
   property string _stamp: ""           // "inode mtime" of the config the contexts were built from
   property bool _acceptStamp: false    // the reload in flight owns the next stamp
   property var _panels: ({})           // panelId -> last alive ms
+  // Phase 4b item 6: the IPC verb `log <uuid>` (a failed toast's click) parks the uuid here
+  // and summons the panel; the panel that is open takes it (takeViewRequest), once. Never
+  // a payload through summon (a bar-widget drops it) and never a panel reference here.
+  property var viewRequest: null       // { uuid, at } | null
   property var _panelCandidates: ({})  // panelId -> first alive ms seen while unregistered
   property int _openPanels: 0
   readonly property bool _panelOpen: root._openPanels > 0
@@ -493,6 +497,28 @@ Item {
     console.log("coolwatch ipc " + verb + " " + u.slice(0, 8) + " -> " + token.split(" ")[0])
     return token
   }
+  // The one verb that looks past the active instance: a deployment uuid names exactly one
+  // Coolify, so a toast from another instance switches to it (SR38 stays for the actions).
+  function _ipcLog(uuid) {
+    var u = String(uuid === undefined || uuid === null ? "" : uuid).replace(/[\r\n\t]/g, " ").trim()
+    if (!u) return "usage: log <uuid>"
+    if (!Model.UUID_RE.test(u)) { console.log("coolwatch ipc log -> invalid"); return "invalid uuid" }
+    var owner = root._ctxs.filter(function(c) { return c.holdsDeployment(u) })
+    var target = owner.filter(function(c) { return c === root._active })[0] || owner[0] || null
+    if (target && target !== root._active) root.selectInstance(target.instId)
+    root.viewRequest = { uuid: u, at: Date.now() }
+    var opened = root.shell && typeof root.shell.isPluginOpen === "function" && root.shell.isPluginOpen(root.pluginId) === true
+    var summoned = opened ? "open" : root.shell && typeof root.shell.summon === "function" && root.shell.summon(root.pluginId, "") ? "summoned" : "no panel"
+    console.log("coolwatch ipc log " + u.slice(0, 8) + " -> " + summoned + (target ? " " + target.instId : " unknown"))
+    return "log " + u.slice(0, 8)
+  }
+  // The open panel's pickup; a request older than 5 s is stale (no panel came).
+  function takeViewRequest() {
+    var r = root.viewRequest
+    if (!r) return null
+    root.viewRequest = null
+    return Date.now() - r.at <= 5000 ? r : null
+  }
   function _ipcInstances() {
     return root._instanceIds.map(function(id) { return id + (id === root._activeId ? " (active)" : "") }).join(", ")
   }
@@ -512,6 +538,7 @@ Item {
     function start(uuid: string): string { return root._ipcAct("start", uuid) }
     function instances(): string { return root._ipcInstances() }
     function instance(id: string): string { return root._ipcInstance(id) }
+    function log(uuid: string): string { return root._ipcLog(uuid) }
   }
 
   // ---- InstanceCtx: everything that is per Coolify instance --------------------------------
@@ -935,7 +962,8 @@ Item {
                 origin: ctx._instance ? Model.origin(ctx._instance.url) : "",
                 dnd: root._dnd(), pending: ctx._pending, actionAt: ctx._actionAt,
                 lastNotified: ctx._lastNotified, sentLastMin: root._notifiedLastMin(), now: now, pluginId: root.pluginId,
-                instanceLabel: root._ctxs.length > 1 && ctx._instance ? ctx._instance.name : "" }   // Phase 4: the body names the instance when there are several
+                instanceLabel: root._ctxs.length > 1 && ctx._instance ? ctx._instance.name : "",   // Phase 4: the body names the instance when there are several
+                logClick: ctx._sensitive !== "no" }                                                  // Phase 4b item 6: a failed toast opens the log unless the token has no read:sensitive
       var out = Model.notifyPlan(q, ctx.snapshot, c)
       out.notified.forEach(function(n) { ctx._lastNotified[n.key] = n.at }); ctx._lastNotified = ctx._lastNotified
       out.log.forEach(function(l) { console.log("coolwatch notify " + l) })          // event + uuid8 only, at intent
@@ -1248,6 +1276,9 @@ Item {
       ctx._launch(logReq, Api.reqBuildLog(uuid), 12)
     }
     function closeView(panelId) { ctx._setLogTarget(String(panelId), "") }
+    function holdsDeployment(uuid) {
+      return ctx._deployments.some(function(d) { return d.uuid === uuid }) || ctx._recent.some(function(d) { return d.uuid === uuid }) || !!ctx._buildLogs[uuid]
+    }
 
     function fetchContainerLog(kind, uuid, label) {
       uuid = String(uuid || ""); label = String(label || "")

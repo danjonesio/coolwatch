@@ -469,7 +469,7 @@ name>` (`Deployed api` / `21s · main · Coolify Cloud`); the headline never cha
 | restarting (`restart_only`) | deploymentStarted | `󰦖` | Restarting A | server | low | deployment |
 | finished | deploymentFinished | `󰄬` | Deployed A | dur · branch | normal | deployment |
 | restarted (`restart_only`) | deploymentFinished | `󰄬` | Restarted A | dur | normal | deployment |
-| failed | deploymentFailed | `󰅙` | Deployment failed: A (Restart failed: A) | dur · click to open in Coolify (dur · branch without a page) | **critical** | deployment |
+| failed | deploymentFailed | `󰅙` | Deployment failed: A (Restart failed: A) | dur · click for the log (dur · click to open in Coolify when the token has no `read:sensitive`; dur · branch without a page) | **critical** | the build log in the panel |
 | cancelled | deploymentFinished | `󰜺` | Cancelled A | | low | deployment |
 | resource stopped | resourceStateChanged | `󰅙` | A stopped | server · exited | normal | resource page, once topology has loaded |
 | resource degraded | resourceStateChanged | `󱎖` | A degraded | server · degraded | normal | resource |
@@ -494,7 +494,12 @@ shown (see `docs/architecture.md`). Critical toasts never expire, and the notifi
 plugin replays one still on screen after a shell restart.
 
 Click action is `omarchy-launch-browser <url>` with the URL from `Model.openUrl`, passed
-as the notifier's `--exec` tail; no URL, no `--exec`.
+as the notifier's `--exec` tail; no URL, no `--exec`. The one exception is a failed build
+(Phase 4b item 6): its tail is `omarchy-shell io.github.danjonesio.coolwatch log <uuid>`,
+the IPC verb that opens the panel on that build's log (the failing step visible, as `L` on
+the row shows it), so a replayed critical toast after a shell restart still works. The
+browser tail stays when the instance's token has no `read:sensitive` (the log would be
+the ability message); the body says which.
 
 ## Sizes and tokens used
 

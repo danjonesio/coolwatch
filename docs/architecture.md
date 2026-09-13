@@ -441,6 +441,22 @@ is never capped or summarised. Each argv is exactly
  <headline>[, <body>][, "--exec", "omarchy-launch-browser", <url>]]
 ```
 
+or, for a failed build whose instance holds `read:sensitive` (`ctx.logClick`, a boolean the
+service reads from the context's `_sensitive`, never Coolify data):
+
+```
+[…, <headline>, <body>, "--exec", "omarchy-shell", <plugin id>, "log", <deployment uuid>]
+```
+
+The `log <uuid>` IPC verb (Phase 4b item 6) validates the uuid against `UUID_RE`, finds the
+context holding it (the active one first; a hit elsewhere switches the instance, the one
+verb that looks past the active one, since a deployment uuid names exactly one Coolify; no
+hit still opens on the active context and the fetch reports in-view), parks
+`root.viewRequest = {uuid, at}` and, unless a panel is open, summons the bar widget through
+the scoped shell (a bar-widget summon carries no payload, so the request lives on the
+service). The open panel takes it once (`takeViewRequest`, stale after 5 s) and hands
+`Model.logRequestRow` to `openLogsFor`, so a held, active or unheld log resolves as `L` does.
+
 built in `Model.js` (so `tests/run.js` covers it; `bin/check` SR16 pins both program
 strings there and bans the notifier from QML) and handed to `Util.execArgv` unchanged.
 The body is omitted when empty; the `--exec` triple is omitted when `Model.openUrl`
@@ -574,8 +590,10 @@ refused after three consecutive ability failures until a 2xx or a config change.
     `omarchy-notification-send` (argv literal head) and `omarchy-launch-browser` (the
     `--exec` tail with one identifier) to at most one occurrence each in `Model.js` and
     bans the notifier from every `.qml`; the SR9 QML gate is unchanged.
-19. (plan SR17) `--exec` is last, holds one URL element, and is absent when there is no
-    page; an empty body is omitted, never passed as `""`.
+19. (plan SR17) `--exec` is last, holds one URL element (or, for a failed build, the shell
+    CLI, the plugin id, `log` and one uuid element that passed `UUID_RE`), and is absent
+    when there is no page; an empty body is omitted, never passed as `""`. `bin/check` pins
+    `"omarchy-shell"` to one occurrence in `Model.js` with that tail shape.
 20. (plan SR18) `recent.json` is untrusted input (see State model); loading never notifies.
 21. (plan SR19) No secret or credential reaches a toast, the state file, the shell's
     history or the log: `redact` on every persisted and displayed string, `Model.origin`

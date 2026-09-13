@@ -163,6 +163,14 @@ Done
   a name or deployment that still elides shows the full label in a `PanelToolTip` on the
   cursor row. The hero meta and the bar tooltip append `· N stopped` / `· N unhealthy`
   after the totals (`Model.countsLine`; zero clauses drop). Was items 2 and 3.
+- Toast click opens the log: a failed build's toast runs the new IPC verb
+  `log <deployment uuid>` (`--exec omarchy-shell io.github.danjonesio.coolwatch log <uuid>`,
+  last in argv, the uuid through `UUID_RE` and `notifySafe`), which summons the panel on
+  that build's log with the failing step visible; the browser tail stays when the token has
+  no `read:sensitive`. The verb is the one that looks past the active instance (a uuid names
+  one Coolify) and switches to the holder. Verified by the verb against a recorded failed
+  api build with the panel closed and open; the live toast click and a toast from a
+  non-active instance are needs-human. Was item 6.
 
 Quick wins
 
@@ -174,12 +182,7 @@ Quick wins
 
 Medium
 
-6. **Toast click opens the log.** A failed-build toast runs `--exec omarchy-launch-browser
-   <url>`. Run `omarchy-shell io.github.danjonesio.coolwatch log <deployment uuid>`
-   instead: a new IPC verb that opens the panel on that build's log (the panel is a
-   bar-widget, so `summon` drops payloads; IPC is the only channel). Acceptance: click the
-   Failed toast, the log view opens with the failing step visible. Every positional still
-   passes `Model.notifySafe`; `--exec` stays last.
+6. Done above (a failed toast's click runs `log <uuid>`, which opens the panel on the log).
 7. Done above (type-to-filter through the catcher's inline-editor contract).
 
 Left alone, on purpose

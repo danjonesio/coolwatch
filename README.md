@@ -71,7 +71,7 @@ Notifications land in Omarchy's notification history and respect Do Not Disturb,
 one exception: a failed deployment or an unreachable server while DND is on is sent
 under the app name `omarchy-action`, the only sender the shell shows through DND, so it
 is listed as that sender in history. Click a toast to open the deployment, resource or
-server in Coolify. Recent terminal deployments are kept in
+server in Coolify; a failed build's toast opens the panel on its log instead. Recent terminal deployments are kept in
 `~/.local/state/coolwatch/recent.json` (a directory the plugin creates as 0700; the file
 holds names, branches, commit messages and the instance URL, never the token) so the
 panel's Recent section survives a shell restart; the panel shows the last hour. Create the token in Coolify under
@@ -87,8 +87,10 @@ into the same shell.
 From the command line, `omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid>`
 queues the action without a confirmation (typing the verb is the confirmation) and
 prints `queued <verb> <uuid>` or the reason it was refused; `… status | jq .lastAction`
-shows the outcome. Any local process can call these, and any plugin loaded into the
-same shell can call the service directly, so treat the machine as the trust boundary.
+shows the outcome. `… log <deployment uuid>` opens the panel on that build's log; it is
+what a failed build's toast runs when clicked. Any local process can call these, and any
+plugin loaded into the same shell can call the service directly, so treat the machine as
+the trust boundary.
 
 In the panel, `L` on a deployment row (or **Logs**, the first button in its strip) opens
 the build log: it follows the newest line until you scroll up (`k` or the wheel), `b`
