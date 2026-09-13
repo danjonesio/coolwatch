@@ -669,8 +669,9 @@ Item {
     readonly property int _activeCount: ctx._deployments.filter(function(d) { return d.status === "queued" || d.status === "in_progress" }).length
     readonly property bool _deploying: ctx._activeCount > 0
 
-    // Byte-aware cadence (SR30): 2 s while deploying unless the last body was large.
-    readonly property int _deploymentsSec: Model.deploymentsInterval(ctx._deploying, root._cfg ? root._cfg.poll.deploymentsSec : 4, ctx._deploymentsBytes)
+    // Byte-aware cadence (SR30): 2 s while deploying unless the last body was large; 8 s idle
+    // with every panel closed, `deploymentsSec` with one open (the interval flip runs _catchUp).
+    readonly property int _deploymentsSec: Model.deploymentsInterval(ctx._deploying, root._cfg ? root._cfg.poll.deploymentsSec : 4, ctx._deploymentsBytes, root._panelOpen)
     on_DeployingChanged: if (!ctx._deploying) ctx._deploymentsBytes = 0
     readonly property int _resourcesSec: Math.min(root._cfg ? root._cfg.poll.resourcesSec : 60, ctx._deploying ? 15 : 100000, root._panelOpen ? 30 : 100000)
     readonly property int _serversSec: root._cfg ? root._cfg.poll.serversSec : 120

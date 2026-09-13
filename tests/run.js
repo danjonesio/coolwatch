@@ -1752,8 +1752,15 @@ test("Model.sensitiveState: yes with a string, no only on a terminal row without
   eq(M.sensitiveState(null), "unknown")
 })
 
-test("Model.deploymentsInterval: 2 s while deploying, stepping up at 256 KB, 1 MB, 4 MB; the config value when idle (SR30)", () => {
-  eq(M.deploymentsInterval(false, 4, 9999999), 4)
+test("Model.deploymentsInterval: 2 s while deploying, stepping up at 256 KB, 1 MB, 4 MB; 8 s idle with the panel closed, the config value with one open (SR30)", () => {
+  eq(M.deploymentsInterval(false, 4, 9999999), 8)
+  eq(M.deploymentsInterval(false, 4, 9999999, false), 8)
+  eq(M.deploymentsInterval(false, 4, 0, true), 4)
+  eq(M.deploymentsInterval(false, 15, 0, false), 15)
+  eq(M.deploymentsInterval(false, 15, 0, true), 15)
+  eq(M.deploymentsInterval(false, 2, 0, true), 2)
+  eq(M.deploymentsInterval(true, 4, 0, false), 2)
+  eq(M.deploymentsInterval(true, 4, 0, true), 2)
   eq(M.deploymentsInterval(true, 4, 0), 2)
   eq(M.deploymentsInterval(true, 4, 262144), 2)
   eq(M.deploymentsInterval(true, 4, 262145), 4)

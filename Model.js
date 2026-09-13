@@ -1956,9 +1956,12 @@ function sensitiveState(raw) {
 }
 
 // The deployments cadence with a byte-aware guard: 2 s while a build runs unless the last
-// body was large (SR30). Steps at 256 KB, 1 MB, 4 MB.
-function deploymentsInterval(deploying, cfgSec, lastBytes) {
-  if (!deploying) return cfgSec
+// body was large (SR30). Steps at 256 KB, 1 MB, 4 MB. With every panel closed and nothing
+// deploying the poll idles at IDLE_DEPLOYMENTS_SEC (or `deploymentsSec` when that is
+// larger); a panel open runs at `deploymentsSec` (Dan, 2026-09-13).
+var IDLE_DEPLOYMENTS_SEC = 8
+function deploymentsInterval(deploying, cfgSec, lastBytes, panelOpen) {
+  if (!deploying) return panelOpen ? cfgSec : Math.max(cfgSec, IDLE_DEPLOYMENTS_SEC)
   var b = Number(lastBytes) || 0
   if (b > 4194304) return 15
   if (b > 1048576) return 8
