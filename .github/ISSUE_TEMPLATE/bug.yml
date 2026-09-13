@@ -1,0 +1,45 @@
+name: Bug report
+description: Something shows wrong, does not update, or an action misbehaves
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never paste a token, a build log or your config file. The status output below carries none of those by design.
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Omarchy, Coolify (from the panel hero) and Coolwatch (manifest)
+      placeholder: Omarchy 4.0.0, Coolify 4.3.19, Coolwatch 1.0.0
+    validations:
+      required: true
+  - type: dropdown
+    id: instance
+    attributes:
+      label: Coolify
+      options:
+        - Cloud (app.coolify.io)
+        - Self-hosted
+        - Both, several instances configured
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you saw
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: Status output
+      description: "`omarchy-shell io.github.danjonesio.coolwatch status | jq` (no token, no log text)"
+      render: json
+  - type: textarea
+    id: log
+    attributes:
+      label: Shell log lines
+      description: "`quickshell log -p /usr/share/omarchy/shell --tail 300 | grep coolwatch`, with any hostname or resource name replaced"
+      render: text

@@ -293,6 +293,7 @@ rm -r ~/.config/coolwatch ~/.local/state/coolwatch   # your config and state, if
 - [Roadmap](docs/roadmap.md)
 - [Coolify API reference](docs/coolify-api.md)
 - [Omarchy shell reference](docs/omarchy-shell-reference.md)
+- [Contributing](CONTRIBUTING.md) and [Security](SECURITY.md)
 
 ## License
 

@@ -1,0 +1,23 @@
+name: Feature request
+description: Something the panel, the bar icon or a toast should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check `docs/roadmap.md` first: it lists what is planned and what is out (metrics, SSH, env-var editing, webhooks). Everything shown comes from the Coolify REST API, so a request the API cannot serve cannot be built.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: How you would like it to work
+  - type: input
+    id: endpoint
+    attributes:
+      label: Coolify endpoint that carries the data, if you know it
+      placeholder: GET /api/v1/…

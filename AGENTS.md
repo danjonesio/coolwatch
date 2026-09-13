@@ -212,6 +212,8 @@ bin/dev-sync       copy plugin files into ~/.config/omarchy/plugins/<id>/
 bin/dev-watch      inotify loop around dev-sync (runs tests on a .js save)
 bin/record-fixture curl one endpoint into tests/fixtures/ with secrets scrubbed and hosts/IPs/repos/commit messages replaced
 docs/              product, architecture, design, roadmap, API + shell references
+CONTRIBUTING.md    the newcomer page: points here, dev loop, PR rules, the two rules that trip people
+SECURITY.md        private reporting (GitHub advisories), scope, known boundaries; .github/ISSUE_TEMPLATE/ has bug + feature forms
 docs/preview/      card.html + panel.png + build: regenerates preview.png (the marketplace card; panel.png is a
                    scale-2 capture with every real name redrawn as a placeholder, never a raw capture)
 ```
