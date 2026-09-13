@@ -1,5 +1,5 @@
 # The CI-able subset of bin/check: node tests, the fixture-secret gates (SR31), the
-# PlainText/font counters and the console greps. qmllint and `omarchy plugin validate`
+# PlainText/font counters, the console greps and shellcheck over bin/. qmllint and `omarchy plugin validate`
 # need Omarchy/Qt and stay local (`bin/check` without the flag).
 # actions/checkout is pinned by SHA (v7.0.1); Dependabot's github-actions lane moves it.
 name: check
@@ -14,5 +14,5 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: node --version && jq --version
+      - run: node --version && jq --version && shellcheck --version
       - run: bin/check --no-shell
