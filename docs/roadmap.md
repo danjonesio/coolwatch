@@ -162,6 +162,9 @@ Done
   (`Model.IDLE_DEPLOYMENTS_SEC`); `deploymentsSec` (4 s) applies with a panel open and the
   2 s byte-stepped cadence while a build runs. Idle cost drops from ≈17 to ≈11 req/min per
   instance (Dan, 2026-09-13).
+- The Coolify mark: `Mark.qml`, a `Shape` of the cloud with the "C" cut out, is the bar icon
+  for the configured states (`Model.barMark`) and the hero icon; trouble states keep their
+  glyphs (Dan, 2026-09-13).
 - Edit config: a cog at the footer's right end, `e` anywhere in the list, and an
   **Edit config** button on the config-class callouts create the directory and a 0600
   sample file when none exists and open the file with `omarchy-launch-config-editor`

@@ -204,7 +204,7 @@ BarWidget.qml      bar icon states + Panel loader (serviceFor lookup)
 Panel.qml          KeyboardPanel: hero, chips, deployments, servers, resources, actions
 Model.js           pure: parse/normalise/diff/group/label/format (.pragma library)
 Api.js             pure: curl config text per endpoint, response splitting
-Mark.qml           (later) Coolify mark as a Shape, if the glyph reads badly
+Mark.qml           the Coolify mark as a Shape (bar icon for the configured states, hero icon)
 tests/run.js       node vm runner for Model.js + Api.js
 tests/fixtures/    recorded API responses, secrets replaced, uuids kept
 bin/check          node tests + omarchy plugin validate + qmllint
