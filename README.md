@@ -288,10 +288,6 @@ rm -r ~/.config/coolwatch ~/.local/state/coolwatch   # your config and state, if
 - [Coolify API reference](docs/coolify-api.md)
 - [Omarchy shell reference](docs/omarchy-shell-reference.md)
 
-Coolwatch was called Omarify until 2026-09-12. If you ran it under that name:
-`omarchy plugin remove io.github.danjonesio.omarify`, move `~/.config/omarify/config.json`
-to `~/.config/coolwatch/config.json`, then install again.
-
 ## License
 
 MIT. See [LICENSE](LICENSE).
