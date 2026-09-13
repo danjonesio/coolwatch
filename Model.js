@@ -870,6 +870,94 @@ function mergeRecent(memory, loaded) {
   return out.slice(0, RECENT_CAP)
 }
 
+// ---- ui.json: grouping and folds (Phase 4b) ------------------------------------------------
+// One file for every instance, keyed by instance id: { version, savedAt, instances: { <id>:
+// { origin, groupBy, folded: [key, ...] } } }. Preference data, so a rejected file simply
+// yields the defaults and the next gesture replaces it. `folded` lists the keys whose flag
+// is true, so the tags fold (whose flag means "opened") round-trips unchanged and the
+// meaning stays in panelRows. Every key must match one of the three shapes panelRows emits.
+var UI_FILE_VERSION = 1
+var UI_FILE_MAX_CHARS = 65536
+var UI_FOLD_CAP = 500
+var UI_GROUP_BY = { project: true, server: true }
+var UI_FOLD_KEY_RE = /^fold:(tags|s:(unassigned|[A-Za-z0-9]{1,64})|p:[A-Za-z0-9]{1,64}\/[^\x00-\x1f\x7f]{0,64})$/
+
+function uiDefaults() { return { groupBy: "project", folded: {} } }
+
+// -> { groupBy, folded } for one instance: the entry's values when they were saved for the
+// same origin, the defaults otherwise (a re-pointed id keeps its grouping, drops its folds).
+function uiFor(ui, id, instanceOrigin) {
+  var out = uiDefaults(), e = ui && ui[id]
+  if (!e) return out
+  if (UI_GROUP_BY[e.groupBy]) out.groupBy = e.groupBy
+  if (!instanceOrigin || e.origin === instanceOrigin) for (var k in e.folded) if (e.folded[k] === true) out.folded[k] = true
+  return out
+}
+
+// A new map with one instance's entry replaced by `patch` ({ groupBy } and/or { folded }); the
+// same map back when nothing changed, so an idle toggle never dirties the file.
+function uiSet(ui, id, instanceOrigin, patch) {
+  if (!id || !ID_RE.test(String(id)) || !patch) return ui
+  var cur = uiFor(ui, id, instanceOrigin), next = { origin: instanceOrigin || "", groupBy: cur.groupBy, folded: {} }
+  for (var k in cur.folded) next.folded[k] = true
+  if (patch.groupBy !== undefined) { if (!UI_GROUP_BY[patch.groupBy]) return ui; next.groupBy = patch.groupBy }
+  if (patch.folded !== undefined) { next.folded = {}; for (var f in patch.folded) if (patch.folded[f] === true && UI_FOLD_KEY_RE.test(f)) next.folded[f] = true }
+  var prev = ui && ui[id]
+  if (prev && prev.origin === next.origin && prev.groupBy === next.groupBy && sameKeys(prev.folded, next.folded)) return ui
+  var out = {}; for (var i in ui || {}) out[i] = ui[i]; out[id] = next
+  return out
+}
+
+function sameKeys(a, b) {
+  var ka = Object.keys(a || {}).sort(), kb = Object.keys(b || {}).sort()
+  if (ka.length !== kb.length) return false
+  for (var i = 0; i < ka.length; i++) if (ka[i] !== kb[i]) return false
+  return true
+}
+
+// -> { ui, loaded, rejected }. `ids` (the configured instance ids) filters the entries; an
+// unknown groupBy or a malformed key drops that value, never the file. Bad shape rejects.
+function parseUi(text, ids) {
+  var out = { ui: {}, loaded: false, rejected: false }
+  if (text === undefined || text === null || text === "") return out
+  if (typeof text !== "string" || text.length > UI_FILE_MAX_CHARS) { out.rejected = true; return out }
+  var p = parseJson(text), v = p.ok ? p.value : null
+  if (!v || typeof v !== "object" || Array.isArray(v) || v.version !== UI_FILE_VERSION || !v.instances || typeof v.instances !== "object" || Array.isArray(v.instances)) {
+    out.rejected = true; return out
+  }
+  var want = bare(); (ids || []).forEach(function (i) { want[String(i)] = true })
+  for (var id in v.instances) {
+    if (!want[id] || !ID_RE.test(id)) continue
+    var e = v.instances[id]
+    if (!e || typeof e !== "object" || Array.isArray(e)) continue
+    var entry = { origin: typeof e.origin === "string" ? elide(e.origin, 400) : "", groupBy: UI_GROUP_BY[e.groupBy] ? e.groupBy : "project", folded: {} }
+    var n = 0
+    if (Array.isArray(e.folded)) for (var i = 0; i < e.folded.length && n < UI_FOLD_CAP; i++) {
+      var k = e.folded[i]
+      if (typeof k !== "string" || !UI_FOLD_KEY_RE.test(k) || entry.folded[k]) continue
+      entry.folded[k] = true; n++
+    }
+    out.ui[id] = entry
+  }
+  out.loaded = true
+  return out
+}
+
+// -> { text, key }: `key` omits savedAt so an unchanged map is a no-op write. Entries for ids
+// no longer configured are pruned, so the file mirrors the config.
+function serialiseUi(ui, ids, nowMs) {
+  var inst = {}
+  ;(ids || []).forEach(function (id) {
+    var e = ui && ui[String(id)]
+    if (!e) return
+    var keys = Object.keys(e.folded || {}).filter(function (k) { return e.folded[k] === true && UI_FOLD_KEY_RE.test(k) }).sort().slice(0, UI_FOLD_CAP)
+    inst[String(id)] = { origin: String(e.origin || ""), groupBy: UI_GROUP_BY[e.groupBy] ? e.groupBy : "project", folded: keys }
+  })
+  var keyObj = { version: UI_FILE_VERSION, instances: inst }
+  var textObj = { version: UI_FILE_VERSION, savedAt: nowMs || Date.now(), instances: inst }
+  return { text: JSON.stringify(textObj, null, 2) + "\n", key: JSON.stringify(keyObj) }
+}
+
 // ---- bar + hero + callout ---------------------------------------------------------------
 
 function activeDeployments(s) { return (s && s.deployments ? s.deployments : []).filter(function (d) { return ACTIVE[d.status] }) }

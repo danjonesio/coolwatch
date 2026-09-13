@@ -98,6 +98,14 @@ Read `docs/roadmap.md` before writing code.
   deployments section never goes blank while an undismissed terminal entry exists: the
   newest stays past the hour window. Row names pass `Model.appLabel` (resources and
   deployments), so the panel and the toasts agree.
+- Grouping and folds are the service's, not the panel's (Phase 4b): `root.ui` keyed by
+  instance id, mirrored by every monitor's panel through `activeUi`, persisted to
+  `~/.local/state/coolwatch/ui.json` (one file for all instances; `Model.parseUi` /
+  `serialiseUi`; a rejected file yields the defaults and the next gesture replaces it). A
+  gesture (`g`, the toggle, a fold row) calls `setUiGroupBy` / `toggleUiFold`, which mark the
+  map dirty; `uiFlush` writes it one second after the last gesture, never the click itself,
+  never `_resetStore`, never before the load settled. Entries for ids no longer configured
+  are pruned on write; a re-pointed id keeps its grouping and drops its folds (origin check).
 - HTTP is `curl -q -S -K -` in a `Quickshell.Io.Process` with the config on **stdin**;
   nothing else is in argv (`-q` first ignores `~/.curlrc`). Every per-transfer option
   (`max-time`, `max-filesize`, `proto`, headers, `write-out`) lives in every config
@@ -177,7 +185,7 @@ docs/              product, architecture, design, roadmap, API + shell reference
 
 Installed plugin: `~/.config/omarchy/plugins/io.github.danjonesio.coolwatch/`
 Config: `~/.config/coolwatch/config.json`
-State: `~/.local/state/coolwatch/recent.json`
+State: `~/.local/state/coolwatch/recent.json`, `ui.json`
 Shell source (read only, never edit): `/usr/share/omarchy/shell`
 
 Files that ship into the plugin dir: `manifest.json LICENSE README.md Service.qml
@@ -212,6 +220,7 @@ omarchy-shell shell toggle io.github.danjonesio.coolwatch
 omarchy-shell io.github.danjonesio.coolwatch refresh
 omarchy-shell io.github.danjonesio.coolwatch status
 omarchy-shell io.github.danjonesio.coolwatch status | jq '{baseline, notify, recentPersisted, recentRejected, terminalQueue, drainRetries}'   # Phase 3 fields
+omarchy-shell io.github.danjonesio.coolwatch status | jq .ui   # Phase 4b: {loaded, rejected, entries, dirty} for ui.json; the log says "coolwatch ui loaded N" or "coolwatch ui rejected"
 omarchy-shell io.github.danjonesio.coolwatch status | jq '{logView, buildLogsHeld, history, tags, sensitive, dep: (.perKind.deployments | {lastBytes, bytesLastMin, skipped})}'   # Phase 4 fields, counts only
 quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch (notify|recent|drain|logview) '   # unanchored: the log prefixes "DEBUG qml:"
 quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [A-Za-z0-9_-]+/(buildlog|containerlog|service|history|tags) '   # the view fetches ("<instance id>/<kind>" since Phase 4); a failure logs "<id>/<kind> view failed: <kind> http=<n>"

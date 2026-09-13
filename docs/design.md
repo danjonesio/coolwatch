@@ -254,8 +254,10 @@ servers poll (the API exposes no result).
 Header row pairs `PanelSectionHeader "RESOURCES"` with a right-aligned
 `ButtonGroup { options: [by project, by server]; focusable: false }` (the network
 panel's header-plus-control pairing, with the `topPadding / 2` vertical offset). `g`
-toggles the same property. Grouping folds are `▾ / ▸` rows like omasnitch's System
-fold; a resource whose environment is unknown lands in an "Ungrouped" fold, titled
+toggles the same property. The grouping and the folded set are remembered per instance
+across shell restarts and shared by every monitor's panel (Phase 4b, `ui.json`); switching
+instance shows that instance's own grouping and folds. Grouping folds are `▾ / ▸` rows like
+omasnitch's System fold; a resource whose environment is unknown lands in an "Ungrouped" fold, titled
 "Ungrouped · loading" while the topology blocks are still arriving after a start (a
 minute or so with a panel open, five with it closed). Resource rows:
 

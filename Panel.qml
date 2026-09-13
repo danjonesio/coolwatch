@@ -31,8 +31,10 @@ Panel {
 
   readonly property string panelId: String(Date.now()) + "-" + Math.random().toString(36).slice(2)
   property double nowMs: Date.now()
-  property string groupBy: "project"
-  property var folded: ({})
+  // Phase 4b: grouping and folds are the service's (ui.json, per instance, shared by every
+  // monitor's panel); the panel mirrors the active instance's entry and calls the setters.
+  readonly property string groupBy: svc && svc.activeUi ? svc.activeUi.groupBy : "project"
+  readonly property var folded: svc && svc.activeUi ? svc.activeUi.folded : ({})
   property bool cursorActive: false
   property string focusSection: "list"      // "hero" | "list"
   property string cursorKey: ""
@@ -168,12 +170,12 @@ Panel {
     }
   }
 
-  // The rows binding re-evaluates synchronously on groupBy, so by the time this
-  // returns rowsModel already holds the new grouping and the cursor can be placed.
+  // The rows binding re-evaluates synchronously on groupBy (through svc.activeUi), so by
+  // the time this returns rowsModel already holds the new grouping and the cursor can be placed.
   function setGroupBy(v) {
-    if (v !== "project" && v !== "server") return
+    if (v !== "project" && v !== "server" || !svc) return
     root.expandedKey = ""; root.actionFocus = ""
-    root.groupBy = v
+    svc.setUiGroupBy(svc.activeId, v)
     var r = Model.firstSelectableInSection(root.rowsModel, "RESOURCES")
     if (r >= 0) { root.cursorActive = true; root.focusSection = "list"; root.cursorKey = root.rowsModel[r].key; Qt.callLater(root.scrollToSelection) }
   }
@@ -251,12 +253,7 @@ Panel {
     root.expand(row)
   }
 
-  function toggleFold(key) {
-    var f = {}
-    for (var k in root.folded) f[k] = root.folded[k]
-    f[key] = !f[key]
-    root.folded = f
-  }
+  function toggleFold(key) { if (svc) svc.toggleUiFold(svc.activeId, key) }
 
   // ---- Phase 2: expansion, actions, confirm --------------------------------------------
 

@@ -45,6 +45,17 @@ Item {
   readonly property string pluginId: "io.github.danjonesio.coolwatch"
   property var _notifyLog: []          // bare timestamps: the ≤ 12 non-critical toasts a minute is per shell, charged through _chargeNotify
   property bool _stateDirReady: false
+  // ui.json (Phase 4b): grouping and folds, shell-wide and keyed by instance id, so every
+  // monitor's panel shows the same thing. The panel mirrors `activeUi` and calls the two
+  // setters; a gesture marks the map dirty and uiFlush (one arm, one second after the last
+  // gesture) writes it: never the click itself, never _resetStore, never before the load settled.
+  readonly property string uiPath: root.stateDirPath + "/ui.json"
+  property var ui: ({})                // { <id>: { origin, groupBy, folded: {key: true} } }
+  property bool _uiLoaded: false
+  property bool _uiRejected: false
+  property bool _uiDirty: false
+  property string _lastUiKey: ""
+  readonly property var activeUi: Model.uiFor(root.ui, root._activeId, root._active && root._active._instance ? Model.origin(root._active._instance.url) : "")
   readonly property string sensitiveMessage: "Logs need the read:sensitive ability. Create a new token under Security → API Tokens with read, read:sensitive and deploy, and swap it in."
 
   // Contexts. `_instanceIds` is the config order (recentPath reads an id's index); the
@@ -135,6 +146,26 @@ Item {
   }
   function openBuildLog(panelId, uuid) { if (root._active) root._active.openBuildLog(panelId, uuid) }
   function dismissRecent(uuid) { if (root._active) root._active.dismissRecent(uuid) }   // Phase 4b: local, no request
+  // Phase 4b: the panel's grouping and fold gestures, against the instance the panel shows.
+  function setUiGroupBy(id, v) { root._uiPatch(id, { groupBy: v }) }
+  function toggleUiFold(id, key) {
+    var cur = Model.uiFor(root.ui, id, root._uiOrigin(id)), f = {}
+    for (var k in cur.folded) f[k] = true
+    if (f[key]) delete f[key]; else f[key] = true
+    root._uiPatch(id, { folded: f })
+  }
+  function _uiOrigin(id) {
+    var c = root._ctxs.filter(function(x) { return x.instId === id })[0]
+    return c && c._instance ? Model.origin(c._instance.url) : ""
+  }
+  function _uiPatch(id, patch) {
+    if (root._instanceIds.indexOf(id) < 0) return
+    var next = Model.uiSet(root.ui, id, root._uiOrigin(id), patch)
+    if (next === root.ui) return
+    root.ui = next
+    root._uiDirty = true
+    uiFlush.restart()
+  }
   function refetchBuildLog(uuid) { if (root._active) root._active.refetchBuildLog(uuid) }
   function closeView(panelId) { root._ctxs.forEach(function(c) { c.closeView(panelId) }) }   // every context: a view survives no instance switch
   function fetchContainerLog(kind, uuid, label) { if (root._active) root._active.fetchContainerLog(kind, uuid, label) }
@@ -178,6 +209,46 @@ Item {
     // so only re-stat; _applyStat reloads when the config's inode or mtime changed.
     onFileChanged: root._stat()
   }
+  // Write-only shape, like the recent files: no watch on a file this service writes.
+  FileView {
+    id: uiFile
+    path: ""
+    watchChanges: false
+    atomicWrites: true
+    printErrors: false
+    onLoaded: root._loadUi(text())
+    onLoadFailed: function(err) { root._loadUi(null) }
+    onSaveFailed: function(err) { console.log("coolwatch ui save failed") }
+  }
+  Timer {
+    id: uiFlush
+    interval: 1000
+    repeat: false
+    running: false
+    onTriggered: { if (root._uiDirty && root._saveUi()) root._uiDirty = false }   // a flush before the load settled stays dirty
+  }
+  // Called from mkdirProc.onExited and from _configText (the ids filter the parse); needs both.
+  function _armUi() {
+    if (!root._stateDirReady || !root._instanceIds.length) return
+    if (uiFile.path === root.uiPath) { if (root._uiLoaded) uiFile.reload(); return }
+    uiFile.path = root.uiPath
+  }
+  // Idempotent (onLoaded may fire twice). The in-memory entry wins over the file's: a gesture
+  // between the arm and the load is newer than anything on disk.
+  function _loadUi(text) {
+    var r = Model.parseUi(text, root._instanceIds), merged = r.ui
+    for (var id in root.ui) merged[id] = root.ui[id]
+    root.ui = merged; root._uiRejected = r.rejected; root._uiLoaded = true
+    root._lastUiKey = r.rejected ? "" : Model.serialiseUi(r.ui, root._instanceIds, 0).key   // the file's key, so a gesture made before the load still writes; a rejected file is replaced by the next gesture
+    console.log(r.rejected ? "coolwatch ui rejected" : "coolwatch ui loaded " + Object.keys(r.ui).length)
+    if (root._uiDirty) uiFlush.restart()
+  }
+  function _saveUi() {                 // called from uiFlush only; false while the write cannot happen yet
+    if (!root._uiLoaded || !root._stateDirReady || !root._instanceIds.length) return false
+    var out = Model.serialiseUi(root.ui, root._instanceIds, Date.now())
+    if (out.key !== root._lastUiKey) { root._lastUiKey = out.key; uiFile.setText(out.text) }
+    return true
+  }
   Process {
     id: mkdirProc
     running: false
@@ -191,6 +262,7 @@ Item {
       root._stateDirReady = code === 0             // a failed mkdir/chmod means no read and no write: the 0700 dir is the control
       if (code !== 0) console.warn("coolwatch state dir unavailable (mkdir exit " + code + ")")
       root._ctxs.forEach(function(c) { c._armRecent() })
+      root._armUi()
       Qt.callLater(function() { if (!root._cfg) configFile.reload(); root._stat() })
     }
   }
@@ -251,6 +323,7 @@ Item {
     if (root._configError && root._configError.kind !== "unsafe") root._configError = null
     root._setInstanceIds(c.instances.map(function(i) { return i.id }))
     root._ctxs.forEach(function(x) { x._configApplied() })
+    root._armUi()
     root._stat()                       // token resolution continues in _applyStat
   }
   // The Instantiator's model is a ListModel edited in place (a reassigned JS array would
@@ -388,6 +461,7 @@ Item {
     s.instances = all
     var total = 0; all.forEach(function(x) { total += x.requestsLastMin || 0 })
     s.requestsTotalLastMin = total
+    s.ui = { loaded: root._uiLoaded, rejected: root._uiRejected, entries: Object.keys(root.ui).length, dirty: root._uiDirty }   // Phase 4b: counts only, never the keys
     s.bar = { glyph: "U+" + root.bar.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: root.bar.dimmed, active: root.bar.active, tooltip: root.bar.tooltip }   // the shell-wide bar: with the trouble suffix
     return s
   }

@@ -149,6 +149,11 @@ Done
   looked like nothing happened); local, persisted as `dismissed` in the recent file on the
   next poll; the file window is seven days. Was item 4 below.
 - Resource and deployment rows pass `Model.appLabel`, as toasts already did. Was item 1.
+- Grouping and folds survive a shell restart: the service owns them per instance in
+  `~/.local/state/coolwatch/ui.json` (`Model.parseUi` / `serialiseUi` / `uiSet` / `uiFor`),
+  written by `uiFlush` a second after the last gesture, never the click or `_resetStore`;
+  every monitor's panel mirrors the same entry, and an instance switch shows that
+  instance's own grouping. Was item 5.
 
 Quick wins
 
@@ -163,10 +168,7 @@ Quick wins
    today); the bar tooltip gets the same. Acceptance: stop one resource, the hero and
    tooltip say so within one resources poll.
 4. Done above (last deployment stays, with Dismiss).
-5. **Remember grouping and folds.** `groupBy` and the folded set reset on every shell
-   restart. Persist them per instance to `~/.local/state/coolwatch/ui.json` (0700 dir,
-   same write discipline as `recent.json`; never from `_resetStore`). Acceptance: fold a
-   project, switch to by-server, restart the shell, both survive.
+5. Done above (grouping and folds persist to `ui.json`).
 
 Medium
 
