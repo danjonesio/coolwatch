@@ -916,9 +916,9 @@ test("Model.callout: every error and warning kind has a body; healthy is null; s
   assert(M.callout(snap({ warning: { kind: "plaintext" } })).edit === false, "plaintext not editable")
   assert(M.calloutEditable(null) === false && M.calloutEditable(snap({})) === false)
   assert(JSON.parse(M.SAMPLE_CONFIG_FILE).instances[0].token === "paste-your-token-here", "the sample file parses")
-  assert(/^e edit config · /.test(M.footerHints("hero", null, { editConfig: true })), "hero hint")
-  assert(/^e edit config · /.test(M.footerHints("list", null, { editConfig: true })), "empty list hint")
-  assert(!/edit config/.test(M.footerHints("hero", null, {})), "no hint without the button")
+  assert(/ · e config · /.test(M.footerHints("hero", null, {})), "hero hint names e at any time")
+  assert(/^e edit config · /.test(M.footerHints("list", null, { editConfig: true })), "empty list hint under a config callout")
+  assert(!/config/.test(M.footerHints("list", null, {})), "no list hint without the callout")
   const p = M.callout(snap({ warning: { kind: "plaintext" } }))
   assert(/http:\/\//.test(p.body))
   const both = M.callout(snap({ error: M.makeError("auth"), warning: { kind: "plaintext" } }))
@@ -1519,9 +1519,9 @@ test("Model.GLYPHS: the pending dot and every glyph a pending row can emit are i
 })
 
 test("Model.footerHints: every cursor position; no o open without a url", () => {
-  eq(M.footerHints("hero", null), "enter refresh · j down · r refresh · esc close")
-  eq(M.footerHints("hero", null, { instances: 1 }), "enter refresh · j down · r refresh · esc close")
-  eq(M.footerHints("hero", null, { instances: 2 }), "h/l instance · enter refresh · j down · r refresh · esc close")   // Phase 4 chips
+  eq(M.footerHints("hero", null), "enter refresh · j down · r refresh · e config · esc close")
+  eq(M.footerHints("hero", null, { instances: 1 }), "enter refresh · j down · r refresh · e config · esc close")
+  eq(M.footerHints("hero", null, { instances: 2 }), "h/l instance · enter refresh · j down · r refresh · e config · esc close")   // Phase 4 chips
   eq(M.footerHints("list", { type: "fold" }), "j/k move · enter fold · g group · / filter · r refresh · esc close")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }), "enter actions · d redeploy · s stop · t restart · L logs · o open")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "exited", url: "u" }), "enter actions · d deploy · s start · o open")

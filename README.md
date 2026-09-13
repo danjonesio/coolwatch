@@ -38,8 +38,9 @@ omarchy plugin add https://github.com/danjonesio/coolwatch.git --enable
 ```
 
 Then create `~/.config/coolwatch/config.json` (mode 0600; the plugin creates the
-directory as 0700). The easiest way is to open the panel and press **Edit config** (or
-`e`): it creates the file with the shape below and opens it in your editor.
+directory as 0700). The easiest way is to open the panel and press the cog at the
+bottom right (or `e`): it creates the file with the shape below and opens it in your
+editor.
 
 ```json
 {

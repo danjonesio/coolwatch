@@ -22,6 +22,7 @@ var G = {
   cancelled: cp(0xF073A),      // md-cancel
   half: cp(0xF1396),           // md-circle_half_full: starting / restarting / degraded
   refresh: cp(0xF0450),        // md-refresh
+  cog: cp(0xF0493),            // md-cog: the footer's Edit config button
   dotOn: "●",             // ●
   dotOff: "○",            // ○
   dotUnknown: "◌",        // ◌
@@ -1124,9 +1125,10 @@ var SAMPLE_CONFIG = '{ "version": 1, "instances": [\n  { "id": "cloud", "name": 
 // service): the same shape with a placeholder the user replaces. It parses, so the next
 // state is "token rejected", whose callout keeps the button.
 var SAMPLE_CONFIG_FILE = '{\n  "version": 1,\n  "instances": [\n    { "id": "cloud", "name": "Coolify Cloud", "url": "https://app.coolify.io", "token": "paste-your-token-here" }\n  ]\n}\n'
-// The callouts the config file can fix carry an "Edit config" button (`e`): the file is
-// missing, unreadable, unsafe, readable by others, its token command failed or its token
-// was rejected. Network, rate-limit and ability problems are not the file's.
+// The footer's cog and `e` open the config at any time. The callouts the file can fix carry a
+// second, spelled-out "Edit config" button as the call to action: the file is missing,
+// unreadable, unsafe, readable by others, its token command failed or its token was
+// rejected. Network, rate-limit and ability problems are not the file's.
 var EDITABLE_ERRORS = { noconfig: true, configerror: true, unsafe: true, tokencmd: true, auth: true }
 function calloutEditable(s) {
   if (!s) return false
@@ -1753,9 +1755,8 @@ function footerHints(focusSection, row, ui) {
   if (ui.confirmOpen) return "h/l pick · enter confirm · esc cancel"
   if (ui.view) return viewHints(ui.view)
   if (ui.filterFocus) return "type to narrow · enter list · esc clear"
-  var edit = ui.editConfig ? "e edit config · " : ""
-  if (focusSection === "hero") return edit + (ui.instances > 1 ? "h/l instance · " : "") + "enter refresh · j down · r refresh · esc close"
-  if (ui.editConfig && !row) return edit + "enter refresh · r refresh · esc close"
+  if (focusSection === "hero") return (ui.instances > 1 ? "h/l instance · " : "") + "enter refresh · j down · r refresh · e config · esc close"
+  if (ui.editConfig && !row) return "e edit config · enter refresh · r refresh · esc close"
   if (row && row.type === "fold") return "j/k move · enter fold · g group · / filter · r refresh · esc close"
   if (ui.expanded && ui.actionFocus === MORE_ID) return "h/l pick · enter " + (ui.moreOpen ? "less" : "more") + " · esc collapse"
   if (ui.expanded && ui.actionFocus) return "h/l pick · enter run · esc collapse"

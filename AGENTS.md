@@ -48,12 +48,13 @@ Read `docs/roadmap.md` before writing code.
   slices (`views`, beside `snapshot`) and the panel's overlay model only; it never enters
   `snapshot`, `_status()`, `recent.json`, a `console.*` line or a toast (SR26).
 - Config accepts `token` and `tokenCommand`; `tokenCommand` wins when both are set.
-- Edit config (Phase 5 prep): the callout's button and `e` call the service's
-  `editConfig()`, the one place the service writes the config file, and only when none
-  exists (umask 077, `Model.SAMPLE_CONFIG_FILE` with a placeholder token); then
-  `omarchy-launch-config-editor` through `Util.execArgv`. Shown only on the callouts the
-  file can fix (`Model.calloutEditable`: noconfig, configerror, unsafe, tokencmd, auth,
-  the permissions warning). No settings UI: polling and toggles stay in the file.
+- Edit config (Phase 5 prep): the footer's cog, `e`, and a spelled-out button on the
+  callouts the file can fix (`Model.calloutEditable`: noconfig, configerror, unsafe,
+  tokencmd, auth, the permissions warning) call the service's `editConfig()`, the one
+  place the service writes the config file, and only when none exists (umask 077,
+  `Model.SAMPLE_CONFIG_FILE` with a placeholder token); then `omarchy-launch-config-editor`
+  through `Util.execArgv`. The cog is always there (Dan, 2026-09-13); the callout button is
+  the call to action. No settings UI: polling and toggles stay in the file.
 - `instances[]` may hold several Coolifys (Phase 4). Each `id` is one path segment
   (`[A-Za-z0-9_-]{1,32}`, unique) because it names a state file and an IPC argument; a
   URL with credentials is a config error; the same origin twice is a warning, not an
