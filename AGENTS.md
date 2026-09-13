@@ -98,6 +98,12 @@ Read `docs/roadmap.md` before writing code.
   deployments section never goes blank while an undismissed terminal entry exists: the
   newest stays past the hour window. Row names pass `Model.appLabel` (resources and
   deployments), so the panel and the toasts agree.
+- Type-to-filter (Phase 4b): `/` opens a field whose text narrows resources and deployments
+  (`Model.panelRows` `filter`, `Model.filterTerms` / `rowMatches`: space-separated terms all
+  match, case-insensitive, against name, status, kind and caption words). Folds with a match
+  are forced open without touching the persisted flag, folds without one hide, tags hide,
+  servers are untouched, an emptied section shows "No match.". Panel-local, per monitor,
+  cleared on close, never in `ui.json`.
 - Grouping and folds are the service's, not the panel's (Phase 4b): `root.ui` keyed by
   instance id, mirrored by every monitor's panel through `activeUi`, persisted to
   `~/.local/state/coolwatch/ui.json` (one file for all instances; `Model.parseUi` /
@@ -332,7 +338,11 @@ bin/record-fixture deployments-active /deployments
 - `Util.execArgv` for anything containing data; `bar.run` only for literal strings.
 - `PanelKeyCatcher` owns keys: `x` reaches the panel as `deleteRequested`, Esc as
   `closeRequested`, `h`/`l` as `moveRequested(Â±1, 0)`; Return fires both
-  `returnRequested` and `activateRequested`. Never add a `Keys.onPressed`.
+  `returnRequested` and `activateRequested`. Never add a `Keys.onPressed` to the panel. The
+  one exception is the shell's own inline-editor contract: the filter `TextField` (Phase 4b)
+  has its own `Keys.onPressed` for Esc, Enter, Tab and Down and the catcher is
+  `blocked: filterField.activeFocus` while it holds focus, exactly as the weather panel's
+  location search does.
 - `bar.barForeground` for anything painted in the bar strip, `bar.foreground` in panels.
 - `ConfirmDialog` is driven from `PanelKeyCatcher` signals (`handleKey` needs a raw
   `KeyEvent` from a `Keys.onPressed`); it preselects Confirm and moves selection on

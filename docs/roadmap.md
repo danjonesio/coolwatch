@@ -149,6 +149,10 @@ Done
   looked like nothing happened); local, persisted as `dismissed` in the recent file on the
   next poll; the file window is seven days. Was item 4 below.
 - Resource and deployment rows pass `Model.appLabel`, as toasts already did. Was item 1.
+- Type-to-filter: `/` opens a field under the chips; its text narrows resources and
+  deployments live (folds with a match open, without one hide; tags hide; servers stay).
+  The key catcher's `blocked` contract lets the field own the keys, so `j`/`k`/`x` type.
+  Enter or Down lands on the first match, Esc clears. Was item 7.
 - Grouping and folds survive a shell restart: the service owns them per instance in
   `~/.local/state/coolwatch/ui.json` (`Model.parseUi` / `serialiseUi` / `uiSet` / `uiFor`),
   written by `uiFlush` a second after the last gesture, never the click or `_resetStore`;
@@ -178,10 +182,7 @@ Medium
    bar-widget, so `summon` drops payloads; IPC is the only channel). Acceptance: click the
    Failed toast, the log view opens with the failing step visible. Every positional still
    passes `Model.notifySafe`; `--exec` stays last.
-7. **Type-to-filter.** A `/` filter narrowing resources and deployments by name, Esc
-   clears. Depends on whether `PanelKeyCatcher` hands plain text keys to the panel (read
-   `/usr/share/omarchy/shell` first; the panel may not add a `Keys.onPressed`). Hold until
-   a user with a large account asks or the catcher is known to allow it.
+7. Done above (type-to-filter through the catcher's inline-editor contract).
 
 Left alone, on purpose
 

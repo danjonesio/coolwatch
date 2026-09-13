@@ -921,6 +921,46 @@ test("Model.panelRows: deployments render active plus newest 5 recent only", () 
   eq(fresh.filter(r => r.type === "deployment").length, 5)
 })
 
+test("Model.filterTerms / rowMatches / panelRows filter: empty filter is identical; terms AND; folds forced open or hidden; deployments narrowed; servers untouched; tags hidden; no-match notes (Phase 4b)", () => {
+  eq(M.filterTerms("  Uma  Prod ").join("|"), "uma|prod"); eq(M.filterTerms("").length, 0); eq(M.filterTerms(null).length, 0)
+  eq(M.filterTerms(new Array(20).fill("a").join(" ")).length, 8, "term cap"); eq(M.filterTerms("x".repeat(200))[0].length, 64, "term length cap")
+  const row = { name: "umami-prod", statusWords: "running · healthy", kindHint: "service", status: "running:healthy" }
+  assert(M.rowMatches(row, M.filterTerms("uma"))); assert(M.rowMatches(row, M.filterTerms("UMA healthy"))); assert(!M.rowMatches(row, M.filterTerms("uma exited")))
+  assert(M.rowMatches(row, []), "no terms matches everything"); assert(M.rowMatches({ name: "" }, M.filterTerms("")))
+  const recent = [{ uuid: "r0", appName: "umami-prod", status: "finished", commitMessage: "bump", branch: "main", updatedAt: new Date(NOW - 60000).toISOString() },
+                  { uuid: "r1", appName: "landing", status: "failed", commitMessage: "fix login", branch: "main", updatedAt: new Date(NOW - 120000).toISOString() }]
+  const base = loadedSnap({ recent, tags: ["blue"] })
+  const plain = M.panelRows(base, { groupBy: "project", folded: {}, nowMs: NOW })
+  eq(JSON.stringify(M.panelRows(base, { groupBy: "project", folded: {}, nowMs: NOW, filter: "" })), JSON.stringify(plain), "an empty filter changes nothing")
+  eq(JSON.stringify(M.panelRows(base, { groupBy: "project", folded: {}, nowMs: NOW, filter: "   " })), JSON.stringify(plain), "whitespace is an empty filter")
+  assert(plain.some(r => r.key === "sec:tags"), "tags section present without a filter")
+  const names = plain.filter(r => r.type === "resource").map(r => r.name)
+  assert(names.length > 1, "fixture has several resources: " + names.join(","))
+  const pick = names[0]
+  const f = M.panelRows(base, { groupBy: "project", folded: {}, nowMs: NOW, filter: pick.toUpperCase() })
+  const fres = f.filter(r => r.type === "resource")
+  assert(fres.length >= 1 && fres.every(r => r.name.toLowerCase().indexOf(pick.toLowerCase()) >= 0), "only matching resources: " + fres.map(r => r.name).join(","))
+  assert(f.filter(r => r.type === "fold").every(r => r.open === true && r.count === f.filter(x => x.type === "resource").length), "folds with a match are open and count the matches")
+  assert(!f.some(r => r.key === "sec:tags"), "tags hide while filtering")
+  eq(f.filter(r => r.type === "server").length, plain.filter(r => r.type === "server").length, "servers untouched")
+  const folded = {}; plain.filter(r => r.type === "fold").forEach(r => { folded[r.key] = true })   // every group closed
+  const forced = M.panelRows(base, { groupBy: "project", folded, nowMs: NOW, filter: pick })
+  assert(forced.filter(r => r.type === "fold").every(r => r.open === true), "a folded group with a match is forced open")
+  assert(M.panelRows(base, { groupBy: "project", folded, nowMs: NOW }).filter(r => r.type === "fold" && r.key !== "fold:tags").every(r => r.open === false), "and the fold flag itself is untouched (the tags flag means opened)")
+  const deps = M.panelRows(base, { groupBy: "project", folded: {}, nowMs: NOW, filter: "login" }).filter(r => r.type === "deployment")
+  eq(deps.map(r => r.uuid).join(","), "r1", "deployments match on the caption too")
+  eq(M.panelRows(base, { groupBy: "project", folded: {}, nowMs: NOW, filter: "failed" }).filter(r => r.type === "deployment").map(r => r.uuid).join(","), "r1", "and on the status word")
+  const none = M.panelRows(base, { groupBy: "project", folded: {}, nowMs: NOW, filter: "zzzz-nothing" })
+  eq(none.filter(r => r.type === "resource").length, 0); eq(none.filter(r => r.type === "fold").length, 0); eq(none.filter(r => r.type === "deployment").length, 0)
+  eq(none.filter(r => r.type === "note").map(r => r.text).join("|"), "No match.|No match.", "one note per narrowed section; servers keep their rows")
+  const byServer = M.panelRows(base, { groupBy: "server", folded: {}, nowMs: NOW, filter: pick })
+  assert(byServer.filter(r => r.type === "resource").length >= 1 && byServer.filter(r => r.type === "fold").every(r => r.open), "the same by server")
+  assert(M.footerHints("list", null, { filterFocus: true }).indexOf("type to narrow") === 0)
+  eq(f[M.firstMatchIndex(f)].type, "resource", "Enter from the field lands on the first match, past the servers")
+  eq(M.firstMatchIndex(M.panelRows(base, { groupBy: "project", folded: {}, nowMs: NOW, filter: "login" })), M.panelRows(base, { groupBy: "project", folded: {}, nowMs: NOW, filter: "login" }).findIndex(r => r.type === "deployment"))
+  eq(M.firstMatchIndex(none), -1, "nothing matches: no landing row")
+})
+
 test("Model.panelRows: the leftover fold reads 'Ungrouped · loading' until the topology is complete; same key", () => {
   const base = loadedSnap({ topologyFetched: false })
   const rows0 = M.panelRows(base, {})
@@ -1430,7 +1470,7 @@ test("Model.footerHints: every cursor position; no o open without a url", () => 
   eq(M.footerHints("hero", null), "enter refresh · j down · r refresh · esc close")
   eq(M.footerHints("hero", null, { instances: 1 }), "enter refresh · j down · r refresh · esc close")
   eq(M.footerHints("hero", null, { instances: 2 }), "h/l instance · enter refresh · j down · r refresh · esc close")   // Phase 4 chips
-  eq(M.footerHints("list", { type: "fold" }), "j/k move · enter fold · g group · r refresh · esc close")
+  eq(M.footerHints("list", { type: "fold" }), "j/k move · enter fold · g group · / filter · r refresh · esc close")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "running", url: "u" }), "enter actions · d redeploy · s stop · t restart · L logs · o open")
   eq(M.footerHints("list", { type: "resource", kind: "application", state: "exited", url: "u" }), "enter actions · d deploy · s start · o open")
   eq(M.footerHints("list", { type: "resource", kind: "service", state: "running", url: "u" }), "enter actions · s stop · t restart · L logs · o open")

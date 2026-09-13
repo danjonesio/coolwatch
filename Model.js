@@ -1154,9 +1154,28 @@ function callout(s, nowMs) {
   return { title: title, body: body }
 }
 
-var NOTES = { deployments: "Nothing deploying.", servers: "No servers on this team.", resources: "No resources on this team." }
+var NOTES = { deployments: "Nothing deploying.", servers: "No servers on this team.", resources: "No resources on this team.", nomatch: "No match." }
 var NOT_LOADED = "Not loaded yet."
 function noteFor(s, section) { return (s.error || !s.baselineDone) && (s.lastPollAt || {})[section] === 0 ? NOT_LOADED : NOTES[section] }
+
+// ---- type-to-filter (Phase 4b) --------------------------------------------------------------
+// `/` opens a field; its text narrows resources and deployments (never servers; tags hide).
+// Space-separated terms all match (the shell menu's convention), case-insensitive, against
+// the row's display name plus its status, kind and caption words. Panel-local, never persisted.
+var FILTER_MAX_TERMS = 8
+var FILTER_MAX_TERM = 64
+
+function filterTerms(text) {
+  return String(text || "").toLowerCase().trim().split(/\s+/).filter(function (t) { return t.length > 0 })
+    .slice(0, FILTER_MAX_TERMS).map(function (t) { return t.slice(0, FILTER_MAX_TERM) })
+}
+
+function rowMatches(row, terms) {
+  if (!terms || !terms.length) return true
+  var hay = [row.name, row.statusWords, row.kindHint, row.sub, row.status].filter(function (x) { return !!x }).join(" ").toLowerCase()
+  for (var i = 0; i < terms.length; i++) if (hay.indexOf(terms[i]) < 0) return false
+  return true
+}
 
 // ---- panel rows -----------------------------------------------------------------------------
 
@@ -1529,6 +1548,7 @@ function panelRows(s, ui) {
   var folded = ui.folded || {}
   var groupBy = ui.groupBy === "server" ? "server" : "project"
   var pending = ui.pending || {}
+  var terms = filterTerms(ui.filter), filtering = terms.length > 0
   var rows = []
   s = s || {}
   var o = origin(s.instance && s.instance.url)
@@ -1546,9 +1566,10 @@ function panelRows(s, ui) {
   // active and nothing under an hour old, the newest undismissed terminal deployment stays,
   // whatever its age, until `x` / Dismiss hides it.
   if (!active.length && !recent.length && kept.length) recent = [kept[0]]
-  if (!active.length && !recent.length) rows.push({ type: "note", key: "note:deployments", text: noteFor(s, "deployments") })
-  active.forEach(function (d) { rows.push(pend(deploymentRow(d, o))) })
-  recent.forEach(function (d) { rows.push(pend(deploymentRow(d, o))) })
+  var depRows = active.concat(recent).map(function (d) { return pend(deploymentRow(d, o)) })
+  if (filtering) depRows = depRows.filter(function (r) { return rowMatches(r, terms) })
+  if (!depRows.length) rows.push({ type: "note", key: "note:deployments", text: filtering ? NOTES.nomatch : noteFor(s, "deployments") })
+  depRows.forEach(function (r) { rows.push(r) })
   rows.push({ type: "separator", key: "sep:" + (++sep) })
   // SERVERS
   rows.push({ type: "section", key: "sec:servers", title: "SERVERS", control: null })
@@ -1560,7 +1581,7 @@ function panelRows(s, ui) {
   // resources. Placed here so both returns below carry it.
   function tagsSection() {
     var tags = s.tags || []
-    if (!tags.length) return
+    if (!tags.length || filtering) return                  // a filter narrows resources and deployments; tags step aside
     rows.push({ type: "separator", key: "sep:" + (++sep) })
     rows.push({ type: "section", key: "sec:tags", title: "TAGS", control: null })
     var open = folded["fold:tags"] === true      // closed by default, so for this one fold the flag means "opened" (toggleFold flips undefined -> true)
@@ -1573,10 +1594,18 @@ function panelRows(s, ui) {
   if (!resources.length) { rows.push({ type: "note", key: "note:resources", text: noteFor(s, "resources") }); tagsSection(); return spliceActions(rows, ui) }
   var byUuid = {}
   resources.forEach(function (r) { byUuid[r.uuid] = r })
+  var foldsShown = 0
   function fold(key, title, uuids, indent) {
     var open = !folded[key]
-    rows.push({ type: "fold", key: key, title: title, open: open, count: uuids.length, indent: indent || 0 })
-    if (open) uuids.forEach(function (u) { if (byUuid[u]) rows.push(pend(resourceRow(byUuid[u], (indent || 0) + 1, o))) })
+    var leaves = uuids.filter(function (u) { return !!byUuid[u] }).map(function (u) { return pend(resourceRow(byUuid[u], (indent || 0) + 1, o)) })
+    if (filtering) {                                       // a fold with a match is forced open (the persisted flag is untouched); one without disappears
+      leaves = leaves.filter(function (r) { return rowMatches(r, terms) })
+      if (!leaves.length) return
+      open = true
+    }
+    foldsShown++
+    rows.push({ type: "fold", key: key, title: title, open: open, count: filtering ? leaves.length : uuids.length, indent: indent || 0 })
+    if (open) leaves.forEach(function (r) { rows.push(r) })
   }
   if (groupBy === "project") {
     var tree = s.tree && s.tree.length ? s.tree : [{ projectUuid: "", projectName: "Ungrouped", environments: [{ id: null, name: "", resourceUuids: resources.map(function (r) { return r.uuid }) }] }]
@@ -1600,6 +1629,7 @@ function panelRows(s, ui) {
     var left = resources.filter(function (r) { return !placed[r.uuid] }).map(function (r) { return r.uuid })
     if (left.length) fold("fold:s:unassigned", "Unassigned", left, 0)
   }
+  if (filtering && !foldsShown) rows.push({ type: "note", key: "note:resources", text: NOTES.nomatch })
   tagsSection()
   return spliceActions(rows, ui)
 }
@@ -1639,6 +1669,13 @@ function nextSelectable(rows, index, dir) {
   return -1
 }
 
+// The row Enter lands on when leaving the filter field: the first deployment or resource.
+function firstMatchIndex(rows) {
+  rows = rows || []
+  for (var i = 0; i < rows.length; i++) if (rows[i].type === "deployment" || rows[i].type === "resource") return i
+  return -1
+}
+
 function firstSelectableInSection(rows, title) {
   rows = rows || []
   for (var i = 0; i < rows.length; i++) {
@@ -1671,13 +1708,14 @@ function footerHints(focusSection, row, ui) {
   ui = ui || {}
   if (ui.confirmOpen) return "h/l pick · enter confirm · esc cancel"
   if (ui.view) return viewHints(ui.view)
+  if (ui.filterFocus) return "type to narrow · enter list · esc clear"
   if (focusSection === "hero") return (ui.instances > 1 ? "h/l instance · " : "") + "enter refresh · j down · r refresh · esc close"
-  if (row && row.type === "fold") return "j/k move · enter fold · g group · r refresh · esc close"
+  if (row && row.type === "fold") return "j/k move · enter fold · g group · / filter · r refresh · esc close"
   if (ui.expanded && ui.actionFocus === MORE_ID) return "h/l pick · enter " + (ui.moreOpen ? "less" : "more") + " · esc collapse"
   if (ui.expanded && ui.actionFocus) return "h/l pick · enter run · esc collapse"
   if (ui.expanded) return "l pick · enter collapse · esc collapse"
   var list = buttons(actionsFor(row))
-  if (!list.length) return "j/k move · g group · r refresh · esc close"
+  if (!list.length) return "j/k move · g group · / filter · r refresh · esc close"
   var ids = {}
   list.forEach(function (a) { ids[a.id] = true })
   var bits = HINT_ORDER.filter(function (id) { return ids[id] }).map(function (id) { return HINT_KEY[id] })
