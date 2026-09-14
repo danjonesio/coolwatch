@@ -13,6 +13,11 @@ logs, history, tag deploy; instances: one `InstanceCtx` per configured Coolify, 
 per-instance state files) and 4b (polish) all merged; manifest 1.0.0 (2026-09-13).**
 Read `docs/roadmap.md` before writing code.
 
+Branches (since 2026-09-14): work branches from `develop` into `develop`; `master` is the
+released code the marketplace verified and `omarchy plugin update` fast-forwards to, and
+moves only by a release PR from `develop` (`docs/release.md`: bump `manifest.json`, tag
+`vX.Y.Z`, file the marketplace verification issue with the new HEAD SHA).
+
 ## Product locks
 
 - Plugin id: `io.github.danjonesio.coolwatch`. Repo: `git@github.com:danjonesio/coolwatch.git`.
@@ -213,6 +218,7 @@ bin/dev-watch      inotify loop around dev-sync (runs tests on a .js save)
 bin/record-fixture curl one endpoint into tests/fixtures/ with secrets scrubbed and hosts/IPs/repos/commit messages replaced
 docs/              product, architecture, design, roadmap, API + shell references
 CONTRIBUTING.md    the newcomer page: points here, dev loop, PR rules, the two rules that trip people
+CHANGELOG.md       user-visible changes per release; docs/release.md is the checklist
 SECURITY.md        private reporting (GitHub advisories), scope, known boundaries; .github/ISSUE_TEMPLATE/ has bug + feature forms
 docs/preview/      card.html + panel.png + build: regenerates preview.png (the marketplace card; panel.png is a
                    scale-2 capture with every real name redrawn as a placeholder, never a raw capture)
@@ -428,6 +434,7 @@ bin/record-fixture deployments-active /deployments
 - `docs/architecture.md` â runtime contract, config, HTTP client, polling, state, notifications, actions, security
 - `docs/design.md` â bar icon states, panel anatomy, keyboard map, states, notification copy
 - `docs/roadmap.md` â phases with acceptance criteria
+- `docs/release.md` â branch model (`develop` â `master`), version bump, tag, marketplace verification
 - `docs/coolify-api.md` â API reference distilled from docs + openapi + source (2026-09-06)
 - `docs/omarchy-shell-reference.md` â plugin runtime and `qs.Ui` component catalogue (Omarchy 4.0.0.alpha)
 - `docs/reference/coolify-openapi-v4.3.17.yaml` â the authoritative endpoint list
