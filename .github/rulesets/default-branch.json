@@ -4,7 +4,7 @@
   "enforcement": "active",
   "bypass_actors": [],
   "conditions": {
-    "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] }
+    "ref_name": { "include": ["~DEFAULT_BRANCH", "refs/heads/develop"], "exclude": [] }
   },
   "rules": [
     { "type": "deletion" },

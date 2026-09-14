@@ -15,7 +15,7 @@ round trip later.
 ## Dev loop
 
 ```sh
-git checkout -b my-change
+git checkout -b my-change develop
 bin/check                 # tests, gates, shellcheck, plugin validate, qmllint
 bin/dev-sync              # copy into ~/.config/omarchy/plugins/<id>/
 omarchy restart shell     # Service.qml and Panel.qml changes need it
@@ -27,8 +27,11 @@ covered by `tests/run.js`; a change to either comes with a test. The shell sourc
 
 ## Pull requests
 
-- Branch from `master`, one change per PR, into `master`. The `check` status must pass;
-  the branch is deleted on merge.
+- Branch from `develop`, one change per PR, into `develop` (`gh pr create -B develop`).
+  The `check` status must pass; the branch is deleted on merge.
+- `master` is the released code: what the marketplace has verified and what
+  `omarchy plugin update` fast-forwards to. Nothing lands on it except a release PR from
+  `develop` (see `docs/release.md`).
 - Keep the docs in step: a lock, a command or a layout change lands in `AGENTS.md` or
   the relevant `docs/` file in the same PR.
 - Look native or do not ship: only `qs.Ui` and `qs.Commons`, no hardcoded colours,
