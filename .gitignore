@@ -11,3 +11,9 @@ tests/fixtures/*.private.json
 
 # tooling scratch
 .cache/
+
+# agent-instruction files never ship: the marketplace installs the whole tree
+# (docs/development.md holds the notes; a local CLAUDE.md may point at it)
+/AGENTS.md
+/CLAUDE.md
+/CLAUDE.local.md

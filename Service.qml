@@ -1704,7 +1704,7 @@ Item {
             drop = (ctx._lastPollAt.resources || 0) > e.since + 2000
           }
         } else if (e.verb === "stop" || e.verb === "start") {
-          // Prefix match on the state (AGENTS.md): a health blip must not clear a stop.
+          // Prefix match on the state (docs/development.md): a health blip must not clear a stop.
           if (Model.parseStatus(res.status || "").state !== e.baseState) drop = true
           else if (!e.stale && now - e.since >= Model.PENDING_STALE_MS) { e.stale = true; p[u] = e; changed = true }
         } else if (e.verb === "validate") {
