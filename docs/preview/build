@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Render preview.png (2400x1350, the marketplace card) from docs/preview/card.html.
 # panel.png is a scale-2 capture of the panel with every real name redrawn as a
-# placeholder (AGENTS.md privacy rule); retake it after a panel change and redraw
+# placeholder (docs/development.md privacy rule); retake it after a panel change and redraw
 # the names before committing. Needs chromium, curl, unzip and JetBrainsMono Nerd Font.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd); root=$(cd "$here/../.." && pwd)

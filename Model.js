@@ -562,7 +562,7 @@ function hasTerminal(recent, uuid) {
   return (recent || []).some(function (d) { return !!d && d.uuid === uuid && Object.prototype.hasOwnProperty.call(TERMINAL, String(d.status)) })
 }
 
-// State prefix only, never health (AGENTS.md prefix-match lock); unknown and paused on
+// State prefix only, never health (docs/development.md prefix-match lock); unknown and paused on
 // either side are a status-refresh gap or a deliberate act, not an event.
 var STOP_FROM = { running: true, starting: true, restarting: true, degraded: true }
 var DEGRADE_FROM = { running: true, starting: true, restarting: true }
@@ -606,7 +606,7 @@ function uuid8(uuid) { return String(uuid === undefined || uuid === null ? "" : 
 function appLabel(name, uuid) {
   var n = String(name === undefined || name === null ? "" : name).trim().replace(/:[^:]*-[a-z0-9]{20,}$/, "")
   // An unnamed app is "<app uuid>-<digits>" (no colon): the first 8 of that uuid beats a
-  // stub cut mid-timestamp, and matches the log lines. fqdn is never used (AGENTS.md).
+  // stub cut mid-timestamp, and matches the log lines. fqdn is never used (docs/development.md).
   if (/^[a-z0-9]{20,}-\d{6,}$/.test(n)) n = n.slice(0, 8)
   return elide(n || uuid8(uuid), 32)
 }

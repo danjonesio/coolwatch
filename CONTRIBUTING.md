@@ -5,10 +5,10 @@ round trip later.
 
 ## Start here
 
-- `AGENTS.md` is the contract: product locks, layout, commands, the things that bite.
+- `docs/development.md` is the contract: product locks, layout, commands, the things that bite.
   Read it before writing code; it applies to humans as much as to agents.
 - `docs/roadmap.md` says what is planned and what is deliberately out. Open an issue
-  before a large change so we can agree on the shape first; the locks in `AGENTS.md`
+  before a large change so we can agree on the shape first; the locks in `docs/development.md`
   are decisions, not oversights.
 - `docs/architecture.md` and `docs/design.md` are the specs the code follows.
 
@@ -32,7 +32,7 @@ covered by `tests/run.js`; a change to either comes with a test. The shell sourc
 - `master` is the released code: what the marketplace has verified and what
   `omarchy plugin update` fast-forwards to. Nothing lands on it except a release PR from
   `develop` (see `docs/release.md`).
-- Keep the docs in step: a lock, a command or a layout change lands in `AGENTS.md` or
+- Keep the docs in step: a lock, a command or a layout change lands in `docs/development.md` or
   the relevant `docs/` file in the same PR.
 - Look native or do not ship: only `qs.Ui` and `qs.Commons`, no hardcoded colours,
   sizes, radii or fonts.

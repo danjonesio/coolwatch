@@ -12,7 +12,7 @@ feature the minor, a change to config or state file format the major.
 1. On `develop`, `bin/check` is green and the installed copy has run the head for a day
    of real use (a shell restart, a deployment, a failed build, a panel session).
 2. Branch `release-X.Y.Z` from `develop`. Bump `"version"` in `manifest.json`. Update
-   the status line at the top of `AGENTS.md` (version and date) and add a short entry
+   the status line at the top of `docs/development.md` (version and date) and add a short entry
    at the top of `CHANGELOG.md` listing the user-visible changes since the last tag:
    `git log --oneline vPREV..develop` is the source.
 3. PR it into `develop`, merge it. Then open the release PR: `gh pr create -B master

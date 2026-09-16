@@ -30,7 +30,7 @@ for fx in "$root"/tests/fixtures/*.json; do
     || fail "SR31: $fx holds an unscrubbed sensitive key"
 done
 
-# SR39: fixtures name no real account (the public-repo rule in AGENTS.md; a server IP
+# SR39: fixtures name no real account (the public-repo rule in docs/development.md; a server IP
 # shipped once in 2026-09 and three hostnames survived the rewrite). The key-name gates
 # above cannot see a real hostname inside an fqdn, so this is a value gate over every
 # fixture, JSON or not: every URL host, bare IPv4 and repository slug must be a
