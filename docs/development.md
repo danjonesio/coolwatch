@@ -1,6 +1,9 @@
-# AGENTS.md
+# Development notes
 
-Operating notes for anyone (human or agent) working in this repo.
+Operating notes for anyone working in this repo. This file lives under `docs/` on purpose:
+the marketplace installs the whole repository as the plugin tree, and a root `AGENTS.md` or
+`CLAUDE.md` would be read as instructions by any coding agent run inside it (marketplace
+review, 2026-09-16). Keep it here and keep the root free of agent-instruction files.
 
 Coolwatch is a native Omarchy shell plugin for **Coolify** (Cloud and self-hosted). One
 bar icon, one panel: servers, projects, resources and their status, running and queued
@@ -12,6 +15,11 @@ Status: **Phases 1 ("see"), 2 ("act"), 3 ("notify") and 4 (depth: build logs, co
 logs, history, tag deploy; instances: one `InstanceCtx` per configured Coolify, chips,
 per-instance state files) and 4b (polish) all merged; manifest 1.0.0 (2026-09-13).**
 Read `docs/roadmap.md` before writing code.
+
+Branches (since 2026-09-14): work branches from `develop` into `develop`; `master` is the
+released code the marketplace verified and `omarchy plugin update` fast-forwards to, and
+moves only by a release PR from `develop` (`docs/release.md`: bump `manifest.json`, tag
+`vX.Y.Z`, file the marketplace verification issue with the new HEAD SHA).
 
 ## Product locks
 
@@ -211,8 +219,10 @@ bin/check          node tests + omarchy plugin validate + qmllint
 bin/dev-sync       copy plugin files into ~/.config/omarchy/plugins/<id>/
 bin/dev-watch      inotify loop around dev-sync (runs tests on a .js save)
 bin/record-fixture curl one endpoint into tests/fixtures/ with secrets scrubbed and hosts/IPs/repos/commit messages replaced
-docs/              product, architecture, design, roadmap, API + shell references
+docs/              product, architecture, design, roadmap, API + shell references, and this file
+                   (development.md; never a root AGENTS.md or CLAUDE.md, both git-ignored)
 CONTRIBUTING.md    the newcomer page: points here, dev loop, PR rules, the two rules that trip people
+CHANGELOG.md       user-visible changes per release; docs/release.md is the checklist
 SECURITY.md        private reporting (GitHub advisories), scope, known boundaries; .github/ISSUE_TEMPLATE/ has bug + feature forms
 docs/preview/      card.html + panel.png + build: regenerates preview.png (the marketplace card; panel.png is a
                    scale-2 capture with every real name redrawn as a placeholder, never a raw capture)
@@ -424,10 +434,12 @@ bin/record-fixture deployments-active /deployments
 
 ## Docs
 
+- `docs/development.md` — this file: locks, layout, commands, the things that bite
 - `docs/product.md` â what, for whom, feature map, what the API cannot do, open questions
 - `docs/architecture.md` â runtime contract, config, HTTP client, polling, state, notifications, actions, security
 - `docs/design.md` â bar icon states, panel anatomy, keyboard map, states, notification copy
 - `docs/roadmap.md` â phases with acceptance criteria
+- `docs/release.md` â branch model (`develop` â `master`), version bump, tag, marketplace verification
 - `docs/coolify-api.md` â API reference distilled from docs + openapi + source (2026-09-06)
 - `docs/omarchy-shell-reference.md` â plugin runtime and `qs.Ui` component catalogue (Omarchy 4.0.0.alpha)
 - `docs/reference/coolify-openapi-v4.3.17.yaml` â the authoritative endpoint list
