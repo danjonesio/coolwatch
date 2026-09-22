@@ -185,11 +185,19 @@ write-out = "\n<RS>%{exitcode} %{http_code} %{time_total} %{size_download} %{err
   log). A `Req`'s deadline is `blocks × max-time + 3` s; one 5 s reaper
   `Timer`, armed once at service start, kills a `Req` past its deadline (bumping `seq`
   first) and counts a reap as a failure.
+- Every block carries `header = "Authorization: Bearer …"` except the one kind in
+  `Api.UNAUTH` (`health`): `GET /api/v1/health` is Coolify's unauthenticated route, so its
+  block is byte-identical for any token (GET only; `bin/check` SR40 pins the literal).
 - Errors map per transfer: exit 6/7/28/35/60 → offline; exit 63 → response too large;
   401 → token rejected; 403 by `message` → API disabled / IP not allowed / missing
   ability; 429 → rate limited (`Retry-After` clamped to 1–300 s, else 30 → 60 → 60);
   other → Coolify error. Never read a `success` field (the 403 API-disabled body says
-  `true`). The last good snapshot stays on screen with "Showing data from N ago".
+  `true`). The last good snapshot stays on screen with "Showing data from N ago". A 2xx
+  whose body does not parse is a failure like any other (`_dispatch` reports it and
+  `_finish`'s `anyOk` follows that report, SR40): it never clears an error, drops a
+  backoff, lifts probe mode or latches the topology. `down` (Coolify not responding) is a
+  render-time kind: `Model.errorWithHealth` rewrites an `auth` or `http` error to it when
+  the health check contradicts it; `errorFor` never produces it.
 - offline/http/reap back off 30 → 60 → 60 s on that kind; 429 pauses every timer;
   401/403 stop every timer and probe `GET /deployments` once a minute until a 2xx or a
   config change.
@@ -220,6 +228,21 @@ before the deployments poll idled at 8 s on 2026-09-13).
   `refresh`, first panel open, at most once per 2 s), because changing a running
   `Timer`'s `interval` restarts it; after an interval change a kind whose last poll is
   older than the new interval launches immediately.
+- Diagnostics, not polls (health before auth, 2026-09-22): when a poll fails with an HTTP
+  answer of kind `auth` or `http` (`Model.healthWanted`), the service sends one
+  unauthenticated `GET /health` on its own `Req` (`max-time` 6, 64 KB cap), floored at
+  30 s per instance; in probe mode the probe's own 401 triggers it the same way, after the
+  failure is stamped (a health request launched beside the probe answered first and read
+  as stale). Never at token-ready, never while healthy (a never-failed instance has no
+  `perKind.health`), never for a curl-level failure, a recognised 403, a failure kept
+  behind a standing rate limit, or a view fetch. Ceiling two per minute per instance; a 502 front door costs
+  about 10 in the first minute and 5 steady, probe mode 2, a box that is down 0 extra.
+  Its answer settles in `_healthDone` and touches nothing else: never `_fail`,
+  `_succeeded`, `_backoff`, `_probeMode`, `_pauseFor` (its 429 is an IP bucket) or a
+  toast, and its headers never write `rateLimitRemaining`. The verdict is reset when the
+  error it explains clears; an OK older than the failure by more than the 30 s floor
+  (`Model.HEALTH_FLOOR_MS`) is not evidence, one inside it is (a panel open re-primes every
+  kind and re-stamps the failure, and the floor refuses a re-probe there).
 - Startup: deployments, version, resources and servers launch together; `/projects`
   65 s later, outside the first minute's burst. The icon lights on the first deployments response. A `startupRamp` retries
   every 2 s for 30 s if the first attempts are offline.
@@ -271,7 +294,7 @@ before the deployments poll idled at 8 s on 2026-09-13).
 ## State model
 
 The service holds one normalised store per instance: `Service.qml` declares an inline
-`InstanceCtx` component (its own store, timers, the ten `Req`s, ledgers, baseline, pending
+`InstanceCtx` component (its own store, timers, the eleven `Req`s, ledgers, baseline, pending
 map, notify state, recent file, `_status()`), instantiated by an `Instantiator` over a
 `ListModel` of instance ids that `_setInstanceIds` edits in place (a reassigned array would
 rebuild every context). The root owns the config file, the panel registry, the reaper tick
@@ -297,8 +320,10 @@ views:     { buildLogs, containerLogs, picks, history } // beside snapshot, the 
 instance:  { id, name, url, version, plaintext }
 error:     null | { kind, title, detail, httpCode, curlExit, request, at, staleSince }
            kind ∈ noconfig | configerror | unsafe | tokencmd | waitingtoken | auth |
-                  apidisabled | ipblocked | ability | ratelimited | offline | tls | toolarge | http
+                  apidisabled | ipblocked | ability | ratelimited | offline | tls | toolarge | http | down
            // tls (Phase 4, SR36): curl exit 60, the peer certificate failed verification; nothing was sent; retried like offline
+           // down (2026-09-22): render-time only, from Model.errorWithHealth; an auth/http error the health
+           // check contradicted. An annotated auth/http error also carries healthState, healthCode, healthExit.
 warning:   null | { kind (permissions | plaintext | notify | instances), title, detail }
 server:    { uuid, name, ip, reachable, usable, disabled, buildServer, resourceCount }
 resource:  { uuid, name, kind (application|service|database), type, status,
@@ -684,6 +709,14 @@ refused after three consecutive ability failures until a 2xx or a config change.
     Added after the 2026-09-13 review found three live hostnames, a private repository
     path and a real commit message that the by-hand rename and the key-name gates (SR31)
     had both missed. Names and descriptions stay a by-hand check.
+42. (SR40, 2026-09-22) Health before auth: exactly one descriptor kind is unauthenticated,
+    named by the literal `var UNAUTH = { health: true }` in `Api.js`, GET only, its block
+    byte-identical for any token, and the Authorization line is emitted from one
+    conditional site; `_dispatch` reports a body that does not parse and `_finish`'s
+    `anyOk` follows that report (one `if (ctx._dispatch(` and one `anyOk = true` in
+    `Service.qml`, comments stripped). The health answer settles in `_healthDone` and
+    touches nothing else; its body is capped at 16 chars by `Model.parseHealth` and never
+    stored, logged or shown; `down` never carries the Edit config button.
 
 ## Testing
 

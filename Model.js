@@ -260,7 +260,8 @@ var META = {
   offline: "Offline · retrying",
   tls: "Certificate rejected",
   toolarge: "Response too large",
-  http: "Coolify error"
+  http: "Coolify error",
+  down: "Coolify not responding"     // render-time only: errorWithHealth, never errorFor (health before auth)
 }
 
 var OFFLINE_EXITS = { 6: true, 7: true, 28: true, 35: true }
@@ -313,6 +314,78 @@ function retryAfterSec(headers, attempt) {
   var v = headers ? headers.retryAfter : null
   if (typeof v === "number" && isFinite(v) && v === Math.floor(v)) return Math.min(300, Math.max(1, v))
   return (attempt === undefined || attempt === null || attempt <= 1) ? 30 : 60
+}
+
+// ---- health before auth (2026-09-22) ------------------------------------------------------
+// GET /api/v1/health is unauthenticated and answers the plain text "OK". It runs only when a
+// poll fails with an HTTP answer (never while healthy, never at token-ready), on its own Req,
+// and its verdict is combined with the poll's error at render time by errorWithHealth. The
+// body is bounded here and never stored, logged or shown (SR26 shape).
+
+// The health body, trimmed and capped: "OK" or not. Never JSON.parsed.
+function parseHealth(body) {
+  return elide(String(body === undefined || body === null ? "" : body).trim(), 16)
+}
+
+// One splitResponses record (or null) -> { state, httpCode, curlExit, at }. States:
+//   ok       200 with body OK
+//   absent   404: the route does not exist on this Coolify (older version), not proof of anything
+//   blocked  401/403: something refused an unauthenticated request; never proof the token is fine
+//   fail     any other HTTP answer (3xx, 4xx, 5xx, 2xx with a body that is not OK), or curl 63
+//   unknown  429, a curl-level failure, a reap, or no record: changes nothing
+function healthResult(r, nowMs) {
+  var at = nowMs || Date.now()
+  if (!r) return { state: "unknown", httpCode: 0, curlExit: 0, at: at }
+  var exit = r.exit === undefined || r.exit === null ? 0 : Number(r.exit)
+  var code = r.code === undefined || r.code === null ? 0 : Number(r.code)
+  var state
+  if (exit === 63) state = "fail"
+  else if (exit !== 0) state = "unknown"
+  else if (code === 200 && parseHealth(r.body) === "OK") state = "ok"
+  else if (code === 404) state = "absent"
+  else if (code === 401 || code === 403) state = "blocked"
+  else if (code === 429) state = "unknown"
+  else state = "fail"
+  return { state: state, httpCode: code, curlExit: exit, at: at }
+}
+
+// The floor between two health requests per instance (Service._probeHealth), and therefore the
+// window inside which a fresh failure is guaranteed a re-probe. errorWithHealth's staleness
+// rule is measured against it: an OK older than the failure by more than this is not evidence.
+var HEALTH_FLOOR_MS = 30000
+
+// The probe gate: a poll error that came back as an HTTP answer and is one of the two kinds
+// the health check can explain. Every other kind is excluded by construction (a recognised
+// 403 is Coolify's own word, 429 is the limiter, a curl exit is a transport fact).
+function healthWanted(e) {
+  return !!e && (e.kind === "auth" || e.kind === "http") && Number(e.curlExit || 0) === 0
+}
+
+// Combine a poll error with the health verdict. Returns the same object when there is nothing
+// to add; otherwise a fresh error (kind "down", or the same kind annotated with healthState /
+// healthCode / healthExit for the body). Health only hardens a diagnosis:
+//   auth: fail -> down; ok or blocked -> auth annotated (the button stays); absent -> as is
+//   http: fail or blocked -> down; absent -> down only when the poll itself 404'd; ok -> annotated
+//   anything else -> as is. An "ok" older than the failure it explains by more than the probe
+//   floor is stale -> as is (a panel open or a probe tick re-stamps the failure within the floor,
+//   and the floor refuses a re-probe there, so the standing OK is the freshest evidence possible).
+function errorWithHealth(e, health) {
+  if (!e || !health || health.state === "unknown") return e
+  if (health.state === "ok" && (health.at || 0) < (e.at || 0) - HEALTH_FLOOR_MS) return e
+  var kind = null
+  if (e.kind === "auth") {
+    if (health.state === "fail") kind = "down"
+    else if (health.state === "ok" || health.state === "blocked") kind = "auth"
+  } else if (e.kind === "http") {
+    if (health.state === "fail" || health.state === "blocked") kind = "down"
+    else if (health.state === "absent") { if (Number(e.httpCode) === 404) kind = "down" }
+    else if (health.state === "ok") kind = "http"
+  }
+  if (!kind) return e
+  var extra = { request: e.request, httpCode: e.httpCode, curlExit: e.curlExit, at: e.at, staleSince: e.staleSince,
+                healthState: health.state, healthCode: health.httpCode || 0, healthExit: health.curlExit || 0 }
+  if (e.notJson) extra.notJson = true
+  return makeError(kind, kind === "down" ? "" : e.detail, extra)
 }
 
 // ---- normalise ------------------------------------------------------------------------
@@ -1036,6 +1109,7 @@ function barState(s) {
   if (ek === "auth") return dim(G.cloudAlert, "Coolwatch — token rejected")
   if (ek === "apidisabled") return dim(G.cloudAlert, "Coolwatch — API disabled on this instance")
   if (ek === "ipblocked") return dim(G.cloudAlert, "Coolwatch — this IP is not allowed")
+  if (ek === "down") return dim(G.cloudOff, "Coolwatch — Coolify is not responding" + (e.healthCode ? " (" + e.healthCode + ")" : ""))
   if (ek === "offline") return dim(G.cloudOff, "Coolwatch — offline, retrying")
   if (ek === "tls") return dim(G.cloudAlert, "Coolwatch — certificate rejected, retrying")
   if (ek === "ratelimited") return dim(G.cloud, "Coolwatch — rate limited, backing off " + (s.backoffSec || 0) + "s")
@@ -1076,6 +1150,7 @@ function barMark(b) { return !!b && (b.glyph === G.cloud || b.glyph === G.progre
 function instanceTroubleOf(x) {
   if (!x) return ""
   if (x.error === "ability") return "token lacks an ability"          // META.ability is empty by design (the callout composes it)
+  if (x.error === "down") return "not responding"                     // META.down lowercased would read "coolify not responding"
   if (x.error) return META[x.error] ? META[x.error].replace(/ · .*$/, "").toLowerCase() : "error"
   if (x.failed > 0) return plural(x.failed, "failed build")
   if (x.down > 0) return plural(x.down, "server") + " unreachable"
@@ -1142,6 +1217,21 @@ function calloutEditable(s) {
   return !!(s.warning && s.warning.kind === "permissions")
 }
 
+// The host in a callout body: the instance's url host, never fqdn (bin/check).
+function hostWord(s) { return hostOf(s && s.instance ? s.instance.url : "") || "Coolify" }
+
+// Bodies for the health-derived states (health before auth). Constant copy: only the host and a
+// numeric code from the health answer ever appear; the health body itself never does.
+function downBody(e, s) {
+  var host = hostWord(s), c = Number(e.healthCode || 0)
+  if (Number(e.healthExit) === 63) return host + " sent a page, not Coolify's health answer. Retrying."
+  if (c >= 300 && c < 400) return host + " redirected Coolify's health check (" + c + "). Check the url in ~/.config/coolwatch/config.json: the scheme or the path is probably wrong."
+  if (c === 404 || (c >= 200 && c < 300)) return "Nothing at " + host + " answers as Coolify. Check the url in ~/.config/coolwatch/config.json."   // a 2xx here is a page, not OK
+  if (c === 401 || c === 403) return host + " refused Coolify's unauthenticated health check (" + c + "), so something in front of Coolify is blocking this machine. Retrying."
+  if (c >= 500) return host + " answered " + c + " on Coolify's health check, so this is not a token problem. Retrying."
+  return host + " did not answer Coolify's health check" + (c ? " (" + c + ")" : "") + ". Retrying."
+}
+
 function calloutBody(e, s) {
   switch (e.kind) {
     case "noconfig": return "Create ~/.config/coolwatch/config.json (chmod 600):\n" + SAMPLE_CONFIG
@@ -1149,15 +1239,25 @@ function calloutBody(e, s) {
     case "unsafe": return "Anyone on this machine can rewrite it. Run: chmod 600 ~/.config/coolwatch/config.json"
     case "tokencmd": return "The token command exited " + (e.curlExit || 0) + ". Its output is never logged; run it yourself to see why."
     case "waitingtoken": return "Running the token command…"
-    case "auth": return "Create a token in Coolify → Security → API Tokens with the read ability."
+    case "auth":
+      if (e.healthState === "ok") return "Coolify is up and rejected this token. Create a new one in Coolify → Security → API Tokens with the read ability."
+      if (e.healthState === "blocked") return hostWord(s) + " also refused Coolify's unauthenticated health check (" + (e.healthCode || 0) + "), so something in front of Coolify may be blocking this machine. If the proxy is expected, the token may have been revoked."
+      return "Create a token in Coolify → Security → API Tokens with the read ability."
     case "apidisabled": return "Enable it in Settings → Advanced → API Access."
     case "ipblocked": return "Add this machine's IP to the token's allowed list in Coolify → Security → API Tokens."
     case "ability": return "The token is missing the " + (abilityOf(e.detail) || "required") + " ability."
     case "ratelimited": return "Backing off " + ((s && s.backoffSec) || e.backoffSec || 30) + "s."
-    case "offline": return "Retrying."
+    case "offline": return "Nothing answered at " + hostWord(s) + ". Retrying."
+    case "down": return downBody(e, s)
     case "tls": return "curl could not verify this instance's certificate; nothing was sent. Fix the certificate (or trust its CA on this machine). Retrying."
     case "toolarge": return "Coolify's response exceeded 8 MB and was dropped."
-    case "http": return e.detail || ("Coolify returned " + (e.httpCode || 0) + ".")
+    case "http":
+      if (e.healthState === "ok") {
+        if (e.notJson) return "Coolify is up, but the API returned something that is not JSON (" + (e.httpCode || 0) + ")."
+        var synthetic = e.detail === "Coolify returned " + (e.httpCode || 0)   // errorFor's fallback when Coolify sent no message
+        return "Coolify is up, but the API returned " + (e.httpCode || 0) + "." + (e.detail && !synthetic ? "\n" + e.detail : "")
+      }
+      return e.detail || ("Coolify returned " + (e.httpCode || 0) + ".")
     default: return e.detail || ""
   }
 }
