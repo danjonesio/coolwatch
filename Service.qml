@@ -954,8 +954,10 @@ Item {
           else if (isView) ctx._viewFail(p, r)
           else ctx._fail(p.kind, e, r.headers)
         } else {
-          anyOk = true
-          ctx._dispatch(p.arg[i], r, p.kind)
+          // HTTP 200 alone is not success (the _drainDispatched precedent): a body that does not
+          // parse is _fail'ed inside _dispatch, and counting it as ok here would let _succeeded
+          // clear that error, drop the backoff and lift probe mode on the same pass.
+          if (ctx._dispatch(p.arg[i], r, p.kind)) anyOk = true
         }
       }
       if (isView) { ctx._viewDone(p); ctx._flushNotify(); return }   // never _succeeded: a user fetch must not lift probe mode
@@ -1017,7 +1019,7 @@ Item {
     function _dispatch(req, r, kind) {
       var now = Date.now()
       var json = req.json === false ? null : Model.parseJson(r.body)
-      if (req.json !== false && !json.ok) { ctx._fail(kind, Model.makeError("http", "Coolify returned something that is not JSON", { httpCode: r.code, request: kind }), r.headers); return }
+      if (req.json !== false && !json.ok) { ctx._fail(kind, Model.makeError("http", "Coolify returned something that is not JSON", { httpCode: r.code, request: kind, notJson: true }), r.headers); return false }
       switch (req.kind) {
         case "version":
           ctx._version = Model.parseVersion(r.body)
@@ -1138,6 +1140,7 @@ Item {
           break
       }
       console.log("coolwatch " + ctx.instId + "/" + req.kind + " " + r.code + " exit=" + r.exit + " " + r.timeMs + "ms " + r.bytes + "B")   // per-request line names the instance (Phase 4)
+      return true
     }
 
     // ---- depth (Phase 4): capture, view slices, view failures ------------------------------
