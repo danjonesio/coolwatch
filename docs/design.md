@@ -47,6 +47,7 @@ First matching row wins (`Model.barState`):
 | 4 | Waiting for token | `tokenCommand` running | `󰅟` | yes | no | "Coolwatch — waiting for token command" |
 | 5 | Token rejected | 401 | `󰧠` | yes | no | "Coolwatch — token rejected" |
 | 6 | API disabled / IP blocked | 403 | `󰧠` | yes | no | "Coolwatch — API disabled on this instance" / "Coolwatch — this IP is not allowed" |
+| 6b | Coolify not responding (2026-09-22) | a 401 or HTTP error that `GET /health` contradicts | `󰅤` F0164 | yes | no | "Coolwatch — Coolify is not responding (502)"; the code is the health answer's, omitted when 0 |
 | 7 | Offline | curl exit 6/7/28/35 | `󰅤` F0164 | yes | no | "Coolwatch — offline, retrying" |
 | 7b | Certificate rejected (Phase 4) | curl exit 60 | `󰧠` | yes | no | "Coolwatch — certificate rejected, retrying" |
 | 8 | Rate limited | 429 | `󰅟` | yes | no | "Coolwatch — rate limited, backing off Ns" |
@@ -151,13 +152,22 @@ config callout the empty list reads `e edit config · …`.
 | token command failed | "The token command exited N. Its output is never logged; run it yourself to see why." |
 | waiting for token | "Running the token command…" |
 | 401 | "Create a token in Coolify → Security → API Tokens with the read ability." |
+| 401, health OK | "Coolify is up and rejected this token. Create a new one in Coolify → Security → API Tokens with the read ability." |
+| 401, health 401/403 | "<host> also refused Coolify's unauthenticated health check (401), so something in front of Coolify may be blocking this machine. If the proxy is expected, the token may have been revoked." (button kept) |
+| Coolify not responding, health 3xx | "<host> redirected Coolify's health check (302). Check the url in ~/.config/coolwatch/config.json: the scheme or the path is probably wrong." |
+| Coolify not responding, health 404 or HTML | "Nothing at <host> answers as Coolify. Check the url in ~/.config/coolwatch/config.json." |
+| Coolify not responding, health 401/403 | "<host> refused Coolify's unauthenticated health check (401), so something in front of Coolify is blocking this machine. Retrying." |
+| Coolify not responding, health ≥ 500 | "<host> answered 502 on Coolify's health check, so this is not a token problem. Retrying." |
+| Coolify not responding, health over the cap | "<host> sent a page, not Coolify's health answer. Retrying." |
+| Coolify not responding, any other code | "<host> did not answer Coolify's health check (400). Retrying." |
 | 403 API disabled | "Enable it in Settings → Advanced → API Access." |
 | 403 IP | "Add this machine's IP to the token's allowed list in Coolify → Security → API Tokens." |
 | 403 ability | "The token is missing the <ability> ability." |
 | 429 | "Backing off Ns." |
-| offline | "Retrying." |
+| offline | "Nothing answered at <host>. Retrying." |
 | too large | "Coolify's response exceeded 8 MB and was dropped." |
 | other HTTP | the redacted Coolify message, else "Coolify returned <code>." |
+| other HTTP, health OK, no data | "Coolify is up, but the API returned 500." then the redacted message |
 | partial | "<kind> is unavailable." |
 
 ### Instance chips (Phase 4)
@@ -439,7 +449,9 @@ only scrolled into view when it would fall below the card.
 ## Loading, empty and error states
 
 Bodies are in the Callout table above. Precedence: config > token > auth > network >
-partial > loading > healthy.
+partial > loading > healthy. A token rejection or an HTTP error that `GET /health`
+contradicts is rewritten to "Coolify not responding" before anything renders; nothing
+here out-ranks anything.
 
 | Situation | Hero meta | Body |
 |---|---|---|
@@ -450,7 +462,8 @@ partial > loading > healthy.
 | Config readable by others, inline token | healthy meta | warning callout; polling continues |
 | `tokenCommand` running | "WAITING FOR TOKEN" | callout |
 | `tokenCommand` failed | "TOKEN UNAVAILABLE" | callout with the exit code |
-| 401 | "TOKEN REJECTED" | "Create a token in Coolify → Security → API Tokens with the read ability." |
+| 401 | "TOKEN REJECTED" | "Create a token in Coolify → Security → API Tokens with the read ability."; with health OK the body starts "Coolify is up and rejected this token." |
+| 401 or HTTP error that the health check contradicts | "COOLIFY NOT RESPONDING" | callout naming the host and the health answer's code; last snapshot stays; "Showing data from N ago."; never the partial presentation, never Edit config |
 | 403 API disabled | "API DISABLED" | "Enable it in Settings → Advanced → API Access." |
 | 403 IP not allowed | "IP NOT ALLOWED" | callout |
 | 403 ability | normal | from a poll: callout naming the missing ability; from an action: the status line only |
@@ -468,6 +481,9 @@ partial > loading > healthy.
 | The token lacks `read:sensitive` | unchanged | in the log view: "Logs need the read:sensitive ability. Create a new token under Security → API Tokens with read, read:sensitive and deploy, and swap it in." |
 
 ## Notifications
+
+No notification comes from the health check: "Coolify not responding" is a callout and a
+bar state only (2026-09-22).
 
 Toasts use Omarchy's notification style automatically. Copy is short and names the
 thing:
