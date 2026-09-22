@@ -1469,7 +1469,7 @@ Item {
     function _succeeded(kind) {
       var b = ctx._backoff; if (b[kind]) { delete b[kind]; ctx._backoff = b }
       if (ctx._error && ctx._error.request === kind) ctx._error = null
-      if (!ctx._error) ctx._health = { state: "unknown", httpCode: 0, curlExit: 0, at: 0 }   // the verdict lives as long as the failure it explains
+      if (!ctx._error && ctx._health.state !== "unknown") ctx._health = { state: "unknown", httpCode: 0, curlExit: 0, at: 0 }   // the verdict lives as long as the failure it explains
       if (ctx._probeMode) { ctx._probeMode = false; ctx._prime("all"); ctx._drainTerminal() }
     }
 
@@ -1530,7 +1530,9 @@ Item {
         bo[kind] = { until: Date.now() + (a <= 1 ? 30 : 60) * 1000, attempt: a }; ctx._backoff = bo
       }
       console.warn("coolwatch " + ctx.instId + "/" + kind + " failed: " + e.kind + " http=" + e.httpCode + " exit=" + e.curlExit + " " + e.detail)
-      if (Model.healthWanted(e)) ctx._healthWanted = true   // drained after _finish's loop, never launched from inside it
+      // The standing error, not e: a ratelimited error kept above must not probe. Never for a view
+      // kind: its failure is a message in the view (SR29). Drained after _finish's loop.
+      if (!ctx._isViewKind(kind) && Model.healthWanted(ctx._error)) ctx._healthWanted = true
     }
 
     // 429 is instance-wide: pause every timer for Retry-After (clamped) or the ladder.
@@ -1831,7 +1833,7 @@ Item {
       onTriggered: { ticks += 1; ctx._prime("missing") }
     }
     // 401/403: everything stops; one deployments probe a minute until a 2xx or a config change.
-    Timer { id: probeTimer; interval: 60000; repeat: true; running: ctx._ready && ctx._probeMode; onTriggered: { ctx._launch(deploymentsReq, Api.reqDeployments(), 12); ctx._probeHealth() } }   // log-bearing: 12 s, 4 MB (SR30); the health probe rides beside it, never instead of it
+    Timer { id: probeTimer; interval: 60000; repeat: true; running: ctx._ready && ctx._probeMode; onTriggered: ctx._launch(deploymentsReq, Api.reqDeployments(), 12) }   // log-bearing: 12 s, 4 MB (SR30); the probe's own 401 triggers the health check through _fail, after the failure is stamped (review: a probe launched beside it answered first and read as stale)
     // 429: everything pauses for Retry-After (clamped) or the ladder.
     Timer { id: pauseTimer; interval: 30000; repeat: false; running: false; onTriggered: { ctx._paused = false; ctx._prime("all"); ctx._drainTerminal() } }
 

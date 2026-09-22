@@ -231,9 +231,11 @@ before the deployments poll idled at 8 s on 2026-09-13).
 - Diagnostics, not polls (health before auth, 2026-09-22): when a poll fails with an HTTP
   answer of kind `auth` or `http` (`Model.healthWanted`), the service sends one
   unauthenticated `GET /health` on its own `Req` (`max-time` 6, 64 KB cap), floored at
-  30 s per instance, and again beside each probe-mode tick. Never at token-ready, never
-  while healthy (a never-failed instance has no `perKind.health`), never for a curl-level
-  failure or a recognised 403. Ceiling two per minute per instance; a 502 front door costs
+  30 s per instance; in probe mode the probe's own 401 triggers it the same way, after the
+  failure is stamped (a health request launched beside the probe answered first and read
+  as stale). Never at token-ready, never while healthy (a never-failed instance has no
+  `perKind.health`), never for a curl-level failure, a recognised 403, a failure kept
+  behind a standing rate limit, or a view fetch. Ceiling two per minute per instance; a 502 front door costs
   about 10 in the first minute and 5 steady, probe mode 2, a box that is down 0 extra.
   Its answer settles in `_healthDone` and touches nothing else: never `_fail`,
   `_succeeded`, `_backoff`, `_probeMode`, `_pauseFor` (its 429 is an IP bucket) or a
