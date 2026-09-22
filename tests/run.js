@@ -997,18 +997,27 @@ test("Model: the health scenarios end to end: callout, bar, hero meta, chip word
   // Coolify up, one endpoint 5xx: partial with data, the up-sentence without
   r = show(E("http", 500, { request: "servers" }), H("ok", 200), { servers: [{ uuid: "s", name: "a", reachable: true }] })
   eq(r.c.title, "servers unavailable"); eq(r.b.dimmed, false); eq(r.m, "servers unavailable · showing last known")
-  r = show(E("http", 500), H("ok", 200)); eq(r.c.body, "Coolify is up, but the API returned 500.\nCoolify returned 500.")
+  // built by errorFor, as the service does: the synthetic fallback detail is not repeated, a real message is
+  const e500 = M.errorFor({ httpCode: 500, body: "boom", request: "deployments" }); e500.at = NOW
+  r = show(e500, H("ok", 200)); eq(r.c.body, "Coolify is up, but the API returned 500.")
+  const e503 = M.errorFor({ httpCode: 503, body: '{"message":"Maintenance in progress."}', request: "deployments" }); e503.at = NOW
+  r = show(e503, H("ok", 200)); eq(r.c.body, "Coolify is up, but the API returned 503.\nMaintenance in progress.")
+  r = show(E("http", 200, { notJson: true }), H("ok", 200)); eq(r.c.body, "Coolify is up, but the API returned something that is not JSON (200).")
+  // a front door serving an HTML login page with 200 to everything, beside a 401 on the API path
+  r = show(E("auth", 401), H("fail", 200)); eq(r.c.title, "Coolify not responding"); eq(r.c.body, "Nothing at " + host + " answers as Coolify. Check the url in ~/.config/coolwatch/config.json.")
   // a stale ok changes nothing
   r = show(E("auth", 401), { state: "ok", httpCode: 200, curlExit: 0, at: NOW - 40000 }); eq(r.c.body, "Create a token in Coolify → Security → API Tokens with the read ability.")
   // staleness still appended after a rewrite; the down kind is out of the partial presentation
   r = show(E("http", 502, { staleSince: NOW - 3 * 60000 }), H("fail", 502), { servers: [{ uuid: "s", name: "a", reachable: true }] })
   eq(r.c.title, "Coolify not responding"); assert(/Showing data from 3m ago\./.test(r.c.body)); eq(r.b.dimmed, true); eq(M.isPartial(r.s), false)
   // every down state has a non-empty body, in the documented order
-  for (const [code, exit] of [[301, 0], [302, 0], [404, 0], [401, 0], [403, 0], [500, 0], [502, 0], [400, 0], [405, 0], [418, 0], [200, 63], [0, 63]]) {
+  for (const [code, exit] of [[301, 0], [302, 0], [404, 0], [401, 0], [403, 0], [500, 0], [502, 0], [400, 0], [405, 0], [418, 0], [200, 63], [0, 63], [0, 0], [200, 0], [204, 0]]) {
     const c = M.callout(snap({ error: M.makeError("down", "", { healthCode: code, healthExit: exit }) }), NOW)
     assert(c.body.length > 0, "down body for " + code + "/" + exit)
   }
   eq(M.calloutBody(M.makeError("down", "", { healthCode: 400 }), snap({})), host + " did not answer Coolify's health check (400). Retrying.")
+  eq(M.calloutBody(M.makeError("down", "", { healthCode: 0 }), snap({})), host + " did not answer Coolify's health check. Retrying.", "no code, no parenthesis")
+  eq(M.calloutBody(M.makeError("down", "", { healthCode: 204 }), snap({})), "Nothing at " + host + " answers as Coolify. Check the url in ~/.config/coolwatch/config.json.")
   eq(M.calloutBody(M.makeError("down", "", { healthCode: 200, healthExit: 63 }), snap({})), host + " sent a page, not Coolify's health answer. Retrying.")
   eq(M.calloutBody(M.makeError("down", "", { healthCode: 401 }), snap({})), host + " refused Coolify's unauthenticated health check (401), so something in front of Coolify is blocking this machine. Retrying.")
   assert(M.calloutEditable(snap({ error: M.makeError("down") })) === false, "down never carries Edit config")

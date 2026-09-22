@@ -1219,7 +1219,7 @@ function downBody(e, s) {
   var host = hostWord(s), c = Number(e.healthCode || 0)
   if (Number(e.healthExit) === 63) return host + " sent a page, not Coolify's health answer. Retrying."
   if (c >= 300 && c < 400) return host + " redirected Coolify's health check (" + c + "). Check the url in ~/.config/coolwatch/config.json: the scheme or the path is probably wrong."
-  if (c === 404 || (e.notJson && c >= 200 && c < 300)) return "Nothing at " + host + " answers as Coolify. Check the url in ~/.config/coolwatch/config.json."
+  if (c === 404 || (c >= 200 && c < 300)) return "Nothing at " + host + " answers as Coolify. Check the url in ~/.config/coolwatch/config.json."   // a 2xx here is a page, not OK
   if (c === 401 || c === 403) return host + " refused Coolify's unauthenticated health check (" + c + "), so something in front of Coolify is blocking this machine. Retrying."
   if (c >= 500) return host + " answered " + c + " on Coolify's health check, so this is not a token problem. Retrying."
   return host + " did not answer Coolify's health check" + (c ? " (" + c + ")" : "") + ". Retrying."
@@ -1245,7 +1245,11 @@ function calloutBody(e, s) {
     case "tls": return "curl could not verify this instance's certificate; nothing was sent. Fix the certificate (or trust its CA on this machine). Retrying."
     case "toolarge": return "Coolify's response exceeded 8 MB and was dropped."
     case "http":
-      if (e.healthState === "ok") return "Coolify is up, but the API returned " + (e.httpCode || 0) + "." + (e.detail ? "\n" + e.detail : "")
+      if (e.healthState === "ok") {
+        if (e.notJson) return "Coolify is up, but the API returned something that is not JSON (" + (e.httpCode || 0) + ")."
+        var synthetic = e.detail === "Coolify returned " + (e.httpCode || 0)   // errorFor's fallback when Coolify sent no message
+        return "Coolify is up, but the API returned " + (e.httpCode || 0) + "." + (e.detail && !synthetic ? "\n" + e.detail : "")
+      }
       return e.detail || ("Coolify returned " + (e.httpCode || 0) + ".")
     default: return e.detail || ""
   }

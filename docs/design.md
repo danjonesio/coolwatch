@@ -159,7 +159,7 @@ config callout the empty list reads `e edit config · …`.
 | Coolify not responding, health 401/403 | "<host> refused Coolify's unauthenticated health check (401), so something in front of Coolify is blocking this machine. Retrying." |
 | Coolify not responding, health ≥ 500 | "<host> answered 502 on Coolify's health check, so this is not a token problem. Retrying." |
 | Coolify not responding, health over the cap | "<host> sent a page, not Coolify's health answer. Retrying." |
-| Coolify not responding, any other code | "<host> did not answer Coolify's health check (400). Retrying." |
+| Coolify not responding, any other code | "<host> did not answer Coolify's health check (400). Retrying."; the parenthesis is omitted when there is no code |
 | 403 API disabled | "Enable it in Settings → Advanced → API Access." |
 | 403 IP | "Add this machine's IP to the token's allowed list in Coolify → Security → API Tokens." |
 | 403 ability | "The token is missing the <ability> ability." |
@@ -167,7 +167,7 @@ config callout the empty list reads `e edit config · …`.
 | offline | "Nothing answered at <host>. Retrying." |
 | too large | "Coolify's response exceeded 8 MB and was dropped." |
 | other HTTP | the redacted Coolify message, else "Coolify returned <code>." |
-| other HTTP, health OK, no data | "Coolify is up, but the API returned 500." then the redacted message |
+| other HTTP, health OK, no data | "Coolify is up, but the API returned 500.", then Coolify's redacted message on a second line when it sent one; a body that was not JSON reads "Coolify is up, but the API returned something that is not JSON (200)." |
 | partial | "<kind> is unavailable." |
 
 ### Instance chips (Phase 4)
