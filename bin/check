@@ -116,6 +116,13 @@ nd=$(printf '%s\n' "$sq" | grep -c 'if (ctx._dispatch(' || true)
 [[ $nd -eq 1 ]] || fail "SR40: _finish must set anyOk from _dispatch's return once (found $nd)"
 na=$(printf '%s\n' "$sq" | grep -c 'anyOk = true' || true)
 [[ $na -eq 1 ]] || fail "SR40: anyOk = true must appear exactly once in Service.qml (found $na)"
+# SR40 part 2: exactly one descriptor kind is unauthenticated, named by a literal allowlist, and
+# the Authorization line is emitted from one conditional site. Widening either is a gate edit.
+ajs=$(sed 's#//.*##' "$root/Api.js")
+nu=$(printf '%s\n' "$ajs" | grep -cF 'var UNAUTH = { health: true }' || true)
+[[ $nu -eq 1 ]] || fail "SR40: Api.js must hold the literal 'var UNAUTH = { health: true }' exactly once (found $nu)"
+nh=$(printf '%s\n' "$ajs" | grep -cF 'if (!unauth) s += "header = \"Authorization' || true)
+[[ $nh -eq 1 ]] || fail "SR40: the conditional Authorization line must appear exactly once in Api.js (found $nh)"
 
 # Lint the four bin/ scripts with shellcheck. Required in CI (ubuntu-latest ships it); a local
 # machine without it skips with a note rather than blocking the dev loop.
