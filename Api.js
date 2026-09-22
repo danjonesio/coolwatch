@@ -43,6 +43,10 @@ function argv() { return ["curl", "-q", "-S", "-K", "-"] }
 // Method whitelist: the values are the constants emitted into the config, never the
 // caller's string. Checked with hasOwnProperty so prototype keys never pass (SR1).
 var METHODS = { GET: "GET", POST: "POST" }
+// Kinds that carry no bearer-token header: the health check is Coolify's one unauthenticated
+// route, so its block is byte-identical for any token and the token never touches its path.
+// GET only; a hasOwnProperty constant like METHODS, and bin/check SR40 pins this literal (SR40).
+var UNAUTH = { health: true }
 
 // One config block per transfer. A POST block adds `request`, a JSON Content-Type and a
 // constant empty body via data-raw (`data` would read a local file for a leading `@`).
@@ -51,14 +55,16 @@ var METHODS = { GET: "GET", POST: "POST" }
 function block(instance, token, req, maxTimeSec) {
   var m = req.method || "GET"
   if (!Object.prototype.hasOwnProperty.call(METHODS, m)) return null
+  var unauth = Object.prototype.hasOwnProperty.call(UNAUTH, req.kind)
+  if (unauth && m !== "GET") return null
   var s = "url = \"" + quote(base(instance) + req.path) + "\"\n" +
     "silent\n" +
     "connect-timeout = \"5\"\n" +
     "max-time = \"" + quote(maxTimeSec) + "\"\n" +
     "max-filesize = \"" + (req.maxBytes || MAX_FILESIZE) + "\"\n" +
-    "proto = \"=https,http\"\n" +
-    "header = \"Authorization: Bearer " + quote(token) + "\"\n" +
-    "header = \"Accept: application/json\"\n" +
+    "proto = \"=https,http\"\n"
+  if (!unauth) s += "header = \"Authorization: Bearer " + quote(token) + "\"\n"
+  s += "header = \"Accept: application/json\"\n" +
     "write-out = \"" + quote(TRAILER) + "\"\n"
   if (m !== "GET") {
     s += "request = \"" + METHODS[m] + "\"\n" +
@@ -81,6 +87,9 @@ function config(instance, token, reqs, maxTimeSec) {
 
 // Request descriptors: data only, no secrets.
 function reqVersion()             { return { kind: "version", path: "/version", json: false } }
+// GET /api/v1/health: unauthenticated, plain "OK", absent from the openapi. Two bytes expected;
+// the cap keeps a captive portal's page out of the body (curl exit 63 is a nameable answer).
+function reqHealth()              { return { kind: "health", path: "/health", json: false, maxBytes: 65536 } }
 function reqDeployments()         { return { kind: "deployments", path: "/deployments", maxBytes: MAX_FILESIZE_LOG } }
 function reqDeployment(uuid)      { return { kind: "deployment", path: "/deployments/" + seg(uuid), arg: uuid, maxBytes: MAX_FILESIZE_LOG } }
 function reqResources()           { return { kind: "resources", path: "/resources" } }

@@ -135,7 +135,8 @@ test("Api.base strips trailing slashes", () => {
 // ---- Api.js: Phase 2 action blocks ------------------------------------------------
 
 test("Api.block GET output is byte-identical for every Phase 1 descriptor (SR1)", () => {
-  const gets = [A.reqVersion(), A.reqDeployments(), A.reqDeployment("u1"), A.reqResources(), A.reqServers(), A.reqProjects(), A.reqProject("p1"), A.reqServerResources("s1")]
+  const gets = [A.reqVersion(), A.reqDeployments(), A.reqDeployment("u1"), A.reqResources(), A.reqServers(), A.reqProjects(), A.reqProject("p1"), A.reqServerResources("s1"),
+                A.reqBuildLog("u1"), A.reqHistory("u1", 0), A.reqContainerLog("application", "u1"), A.reqContainerLog("service", "u1", "db"), A.reqService("u1"), A.reqTags()]
   for (const r of gets) {
     const b = A.block(inst, TOK, r, 6)
     const want = 'url = "' + A.quote(A.base(inst) + r.path) + '"\nsilent\nconnect-timeout = "5"\nmax-time = "6"\nmax-filesize = "' + (r.maxBytes || A.MAX_FILESIZE) + '"\nproto = "=https,http"\nheader = "Authorization: Bearer ' + TOK + '"\nheader = "Accept: application/json"\nwrite-out = "' + A.quote(A.TRAILER) + '"\n'
@@ -145,6 +146,37 @@ test("Api.block GET output is byte-identical for every Phase 1 descriptor (SR1)"
     eq(count(b, "Content-Type"), 0)
     eq(b.split("\n").filter(l => l.length).length, 9, "nine lines per GET block")
   }
+})
+
+// Health before auth (2026-09-22): the one unauthenticated descriptor. SR40 = security
+// requirements 1, 2 and 11 of docs/plans/health-before-auth: no token on the path, GET only,
+// every other factory still authenticated, no location.
+test("Api.reqHealth block is the GET block minus the Authorization line and is token-independent (SR40)", () => {
+  const r = A.reqHealth()
+  const b = A.block(inst, TOK, r, 6)
+  const want = 'url = "' + A.quote(A.base(inst) + r.path) + '"\nsilent\nconnect-timeout = "5"\nmax-time = "6"\nmax-filesize = "65536"\nproto = "=https,http"\nheader = "Accept: application/json"\nwrite-out = "' + A.quote(A.TRAILER) + '"\n'
+  eq(b, want, "byte-identical health block")
+  eq(b.split("\n").filter(l => l.length).length, 8, "eight lines: the GET block minus Authorization")
+  eq(A.block(inst, "AAA", r, 6), A.block(inst, "BBB", r, 6), "the token never reaches the unauthenticated path")
+  assert(b.indexOf("Authorization") < 0 && b.indexOf("Bearer") < 0, "no Authorization line")
+  assert(b.indexOf(TOK) < 0, "no token text")
+  assert(b.indexOf("https://app.coolify.io/api/v1/health") >= 0, "path is /api/v1/health")
+  assert(b.indexOf("location") < 0 && b.indexOf("proto-redir") < 0, "no redirect following (SR2)")
+  eq(A.config(inst, TOK, [r], 6).indexOf(TOK), -1, "config text holds no token")
+  eq(A.block(inst, TOK, { kind: "health", path: "/health", json: false, method: "POST" }, 6), null, "an unauthenticated non-GET is refused")
+  eq(A.config(inst, TOK, [A.reqServers(), { kind: "health", path: "/health", method: "POST" }], 6), null, "and config() refuses the whole batch")
+})
+
+test("Api.config: every poll descriptor stays authenticated beside a health block (SR40)", () => {
+  const polls = [A.reqVersion(), A.reqDeployments(), A.reqResources(), A.reqServers(), A.reqProjects()]
+  const cfg = A.config(inst, TOK, polls, 10)
+  eq(count(cfg, 'header = "Authorization: Bearer ' + TOK + '"'), 5, "five headers for five polls")
+  const cfg2 = A.config(inst, TOK, polls.concat([A.reqHealth()]), 10)
+  eq(count(cfg2, "url = "), 6)
+  eq(count(cfg2, 'header = "Authorization: Bearer ' + TOK + '"'), 5, "five headers for six blocks")
+  eq(count(cfg2, 'header = "Accept: application/json"'), 6, "every block keeps Accept")
+  eq(count(cfg2, 'proto = "=https,http"'), 6, "every block keeps proto")
+  eq(count(cfg2, "write-out = "), 6)
 })
 
 test("Api.block max-filesize is per descriptor: 4 MB for log-bearing kinds, 8 MB otherwise (SR30)", () => {
