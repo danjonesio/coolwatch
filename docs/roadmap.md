@@ -9,9 +9,9 @@ state paths, hard cut. Everything below was built under the old name.
 ## Phase 0 — research and docs (done 2026-09-06)
 
 - `docs/coolify-api.md`, `docs/omarchy-shell-reference.md` researched from source.
-- `docs/product.md`, `docs/architecture.md`, `docs/design.md`, this file, `AGENTS.md`.
+- `docs/product.md`, `docs/architecture.md`, `docs/design.md`, this file, `docs/development.md` (then the root `AGENTS.md`).
 - Open questions answered by Dan the same day; recorded as "Decisions" in
-  `docs/product.md` and as product locks in `AGENTS.md`.
+  `docs/product.md` and as product locks in `docs/development.md`.
 
 ## Phase 1 — see
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bin/record-fixture <name> <api-path>      e.g. bin/record-fixture servers /servers
 # Records a Coolify response into tests/fixtures/<name>.json with secret-bearing
-# values replaced and the identity values the public-repo rule forbids (AGENTS.md;
+# values replaced and the identity values the public-repo rule forbids (docs/development.md;
 # bin/check SR39) rewritten to placeholders: URL hosts in fqdn/domains/urls become
 # placeholder.example.net, IPs 203.0.113.10, repository slugs example/<repo>, commit
 # messages the marker. Resource, project, server and team names and descriptions are
