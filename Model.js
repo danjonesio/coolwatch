@@ -349,6 +349,11 @@ function healthResult(r, nowMs) {
   return { state: state, httpCode: code, curlExit: exit, at: at }
 }
 
+// The floor between two health requests per instance (Service._probeHealth), and therefore the
+// window inside which a fresh failure is guaranteed a re-probe. errorWithHealth's staleness
+// rule is measured against it: an OK older than the failure by more than this is not evidence.
+var HEALTH_FLOOR_MS = 30000
+
 // The probe gate: a poll error that came back as an HTTP answer and is one of the two kinds
 // the health check can explain. Every other kind is excluded by construction (a recognised
 // 403 is Coolify's own word, 429 is the limiter, a curl exit is a transport fact).
@@ -361,10 +366,12 @@ function healthWanted(e) {
 // healthCode / healthExit for the body). Health only hardens a diagnosis:
 //   auth: fail -> down; ok or blocked -> auth annotated (the button stays); absent -> as is
 //   http: fail or blocked -> down; absent -> down only when the poll itself 404'd; ok -> annotated
-//   anything else -> as is. An "ok" older than the failure it would explain is stale -> as is.
+//   anything else -> as is. An "ok" older than the failure it explains by more than the probe
+//   floor is stale -> as is (a panel open or a probe tick re-stamps the failure within the floor,
+//   and the floor refuses a re-probe there, so the standing OK is the freshest evidence possible).
 function errorWithHealth(e, health) {
   if (!e || !health || health.state === "unknown") return e
-  if (health.state === "ok" && (health.at || 0) < (e.at || 0)) return e
+  if (health.state === "ok" && (health.at || 0) < (e.at || 0) - HEALTH_FLOOR_MS) return e
   var kind = null
   if (e.kind === "auth") {
     if (health.state === "fail") kind = "down"

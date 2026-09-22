@@ -240,7 +240,9 @@ before the deployments poll idled at 8 s on 2026-09-13).
   Its answer settles in `_healthDone` and touches nothing else: never `_fail`,
   `_succeeded`, `_backoff`, `_probeMode`, `_pauseFor` (its 429 is an IP bucket) or a
   toast, and its headers never write `rateLimitRemaining`. The verdict is reset when the
-  error it explains clears.
+  error it explains clears; an OK older than the failure by more than the 30 s floor
+  (`Model.HEALTH_FLOOR_MS`) is not evidence, one inside it is (a panel open re-primes every
+  kind and re-stamps the failure, and the floor refuses a re-probe there).
 - Startup: deployments, version, resources and servers launch together; `/projects`
   65 s later, outside the first minute's burst. The icon lights on the first deployments response. A `startupRamp` retries
   every 2 s for 30 s if the first attempts are offline.

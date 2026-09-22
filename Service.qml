@@ -1474,11 +1474,11 @@ Item {
     }
 
     // Health before auth: the only launch site. Gated like every launch (ready, not paused), floored
-    // at 30 s per instance, so at most two health requests a minute and none while healthy.
+    // at Model.HEALTH_FLOOR_MS per instance, so at most two health requests a minute and none while healthy.
     function _probeHealth() {
       if (!ctx._ready || !ctx._instance || ctx._paused) return
       var now = Date.now()
-      if (now - ctx._lastHealthAt < 30000) return
+      if (now - ctx._lastHealthAt < Model.HEALTH_FLOOR_MS) return
       ctx._lastHealthAt = now
       ctx._launch(healthReq, Api.reqHealth(), 6)
     }

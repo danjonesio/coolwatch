@@ -950,7 +950,9 @@ test("Model.errorWithHealth: the full kind x state matrix; health only hardens (
   eq(d.kind, "down"); eq(d.request, "deployments"); eq(d.httpCode, 502); eq(d.curlExit, 0)
   eq(d.staleSince, NOW - 60000); eq(d.at, NOW); eq(d.notJson, true); eq(d.healthCode, 502); eq(d.healthState, "fail"); eq(d.healthExit, 0); eq(d.detail, "", "no detail on down")
   // an OK older than the failure is stale
-  const eA = E("auth"); assert(M.errorWithHealth(eA, H("ok", 200, NOW - 40000)) === eA, "stale ok changes nothing")
+  eq(M.HEALTH_FLOOR_MS, 30000)
+  const eA = E("auth"); assert(M.errorWithHealth(eA, H("ok", 200, NOW - 40000)) === eA, "an ok older than the failure by more than the floor changes nothing")
+  assert(M.errorWithHealth(eA, H("ok", 200, NOW - 20000)) !== eA, "an ok inside the floor before a re-stamped failure still counts (a panel open re-primes every kind)")
   assert(M.errorWithHealth(eA, H("ok", 200, NOW)) !== eA, "an ok at the same instant counts")
   // a fail is never stale
   eq(M.errorWithHealth(E("auth"), H("fail", 502, NOW - 40000)).kind, "down")
@@ -1005,8 +1007,9 @@ test("Model: the health scenarios end to end: callout, bar, hero meta, chip word
   r = show(E("http", 200, { notJson: true }), H("ok", 200)); eq(r.c.body, "Coolify is up, but the API returned something that is not JSON (200).")
   // a front door serving an HTML login page with 200 to everything, beside a 401 on the API path
   r = show(E("auth", 401), H("fail", 200)); eq(r.c.title, "Coolify not responding"); eq(r.c.body, "Nothing at " + host + " answers as Coolify. Check the url in ~/.config/coolwatch/config.json.")
-  // a stale ok changes nothing
+  // a stale ok changes nothing; one inside the probe floor is the freshest evidence there can be
   r = show(E("auth", 401), { state: "ok", httpCode: 200, curlExit: 0, at: NOW - 40000 }); eq(r.c.body, "Create a token in Coolify → Security → API Tokens with the read ability.")
+  r = show(E("auth", 401), { state: "ok", httpCode: 200, curlExit: 0, at: NOW - 25000 }); assert(/Coolify is up and rejected/.test(r.c.body))
   // staleness still appended after a rewrite; the down kind is out of the partial presentation
   r = show(E("http", 502, { staleSince: NOW - 3 * 60000 }), H("fail", 502), { servers: [{ uuid: "s", name: "a", reachable: true }] })
   eq(r.c.title, "Coolify not responding"); assert(/Showing data from 3m ago\./.test(r.c.body)); eq(r.b.dimmed, true); eq(M.isPartial(r.s), false)
