@@ -501,6 +501,7 @@ Item {
              rateLimitRemaining: null, backoffUntil: 0, paused: false, probeMode: false, openPanels: root._openPanels, baselineDone: false,
              topologyFetched: false, topologyLoaded: false, terminalQueue: 0, drainRetries: 0, recentPersisted: 0, recentRejected: false,
              error: root._configError ? { kind: root._configError.kind, request: "", httpCode: 0, curlExit: 0 } : null, warning: null,
+             health: { state: "unknown", httpCode: 0, curlExit: 0, at: 0 },
              bar: { glyph: "U+" + root.bar.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: root.bar.dimmed, active: root.bar.active },
              topologyQueue: 0, lastAction: null, pending: 0, pendingStale: 0, actionsLastMin: 0, inflightAction: false,
              baseline: { deployments: false, resources: false, servers: false, version: false },
@@ -579,7 +580,7 @@ Item {
     readonly property string sensitiveMessage: root.sensitiveMessage
     // Chips and the tooltip suffix read this (Model.instanceChips / instanceTrouble).
     readonly property var summary: ({ id: ctx.instId, name: ctx._instance ? ctx._instance.name : ctx.instId,
-                                      error: ctx._error ? ctx._error.kind : "", failed: ctx._failedUnacked.length,
+                                      error: ctx._shownError ? ctx._shownError.kind : "", failed: ctx._failedUnacked.length,
                                       down: ctx._servers.filter(function(x) { return !x.reachable && !x.disabled }).length })
 
     property var _instance: null         // this entry without the token
@@ -622,6 +623,13 @@ Item {
     property bool _paused: false         // 429: every timer stops until pauseTimer fires
     property int _backoffSec: 0
     property bool _probeMode: false      // 401/403: timers stop; one deployments probe a minute
+    // Health before auth (2026-09-22): GET /health runs only when a poll fails with an HTTP answer
+    // (Model.healthWanted), on healthReq, at most once per 30 s; its verdict never enters _error,
+    // _backoff, _probeMode or a toast. _shownError is the one place the two are combined.
+    property var _health: ({ state: "unknown", httpCode: 0, curlExit: 0, at: 0 })
+    property double _lastHealthAt: 0     // the 30 s floor; standalone so no reset defeats it
+    property bool _healthWanted: false   // set inside _finish's loop, drained after it
+    readonly property var _shownError: Model.errorWithHealth(ctx._error, ctx._health)
     property var _rateLimitRemaining: null
     property double _lastPrimeAt: 0
     property bool _busy: false
@@ -704,7 +712,7 @@ Item {
 
     readonly property var snapshot: ({
       instance: ctx._instance ? { id: ctx._instance.id, name: ctx._instance.name, url: ctx._instance.url, version: ctx._version, plaintext: ctx._instance.plaintext } : null,
-      error: ctx._error, warning: ctx._warning,
+      error: ctx._shownError, warning: ctx._warning,
       servers: ctx._servers, resources: ctx._resources, deployments: ctx._deployments, recent: ctx._recent,
       tree: ctx._tree, byServer: ctx._byServer,
       failedUnacked: ctx._failedUnacked, lastPollAt: ctx._lastPollAt,
@@ -842,6 +850,7 @@ Item {
       ctx._baselineDone = false
       ctx._topologyFetched = false; ctx._topologyLoaded = false; ctx._lastTopologyStepAt = 0; ctx._topologyQueue = []
       ctx._backoff = {}; ctx._paused = false; ctx._backoffSec = 0; ctx._probeMode = false
+      ctx._health = { state: "unknown", httpCode: 0, curlExit: 0, at: 0 }; ctx._lastHealthAt = 0; ctx._healthWanted = false
       startupRamp.ticks = 0
       var interrupted = ctx._inflightAction !== null
       ctx._pending = {}; ctx._inflightAction = null; ctx._ipcAbilityStreak = 0; ctx._lastAbility = ""
@@ -903,8 +912,9 @@ Item {
     Req { id: logReq; owner: ctx; property var target: null }        // buildlog (one-shot, a uuid neither active nor drained) and containerlog
     Req { id: historyReq; owner: ctx; property var target: null }    // history pages
     Req { id: serviceReq; owner: ctx; property var target: null }    // GET /services/{uuid} for the picker, and GET /tags
+    Req { id: healthReq; owner: ctx }                                  // GET /health, unauthenticated; settled by _healthDone and nothing else
 
-    readonly property var _reqs: [versionReq, deploymentsReq, deploymentReq, resourcesReq, serversReq, topologyReq, actionReq, logReq, historyReq, serviceReq]
+    readonly property var _reqs: [versionReq, deploymentsReq, deploymentReq, resourcesReq, serversReq, topologyReq, actionReq, logReq, historyReq, serviceReq, healthReq]
 
     function _syncBusy() { ctx._busy = ctx._reqs.some(function(p) { return p.running }) }
     function _isViewKind(kind) { return !!ctx._viewKinds[kind] }
@@ -933,6 +943,15 @@ Item {
       ctx._syncBusy()
       if (p.liveSeq !== p.seq) return
       if (p === actionReq) { ctx._finishAction(p, code, stdoutText, stderrText); return }   // after the stale guard, never before
+      if (p === healthReq) {
+        // A diagnostic, not a poll: recorded for the rate accounting, then its verdict and
+        // nothing else. Never _fail, _dispatch, _succeeded, _pauseFor or _flushNotify (SR40).
+        var hs = Model.splitResponses(stdoutText)
+        var h0 = hs[0] || { exit: code || 1, code: 0, body: "", errmsg: stderrText, headers: null, timeMs: 0, bytes: 0 }
+        ctx._record("health", h0)
+        ctx._healthDone(hs[0] || null)
+        return
+      }
       var isView = ctx._isViewKind(p.kind)
       var results = Model.splitResponses(stdoutText)
       if (results.length === 0) {
@@ -974,6 +993,7 @@ Item {
       // (A failed stage-2 block after a successful /projects still counts: the tree is usable.)
       if (p.kind === "topology" && (anyOk || ctx._projects.length)) { ctx._topologyFetched = ctx._topologyQueue.length === 0; if (ctx._topologyFetched) ctx._topologyLoaded = true }   // the next block waits for topologyStep
       ctx._flushNotify()                // last: after the joins, so every toast reads the joined snapshot
+      if (ctx._healthWanted) { ctx._healthWanted = false; Qt.callLater(ctx._probeHealth) }   // outside the block loop, like _deploymentsBytes
     }
 
     // ---- notifications (Phase 3) ---------------------------------------------------------
@@ -1449,14 +1469,32 @@ Item {
     function _succeeded(kind) {
       var b = ctx._backoff; if (b[kind]) { delete b[kind]; ctx._backoff = b }
       if (ctx._error && ctx._error.request === kind) ctx._error = null
+      if (!ctx._error) ctx._health = { state: "unknown", httpCode: 0, curlExit: 0, at: 0 }   // the verdict lives as long as the failure it explains
       if (ctx._probeMode) { ctx._probeMode = false; ctx._prime("all"); ctx._drainTerminal() }
+    }
+
+    // Health before auth: the only launch site. Gated like every launch (ready, not paused), floored
+    // at 30 s per instance, so at most two health requests a minute and none while healthy.
+    function _probeHealth() {
+      if (!ctx._ready || !ctx._instance || ctx._paused) return
+      var now = Date.now()
+      if (now - ctx._lastHealthAt < 30000) return
+      ctx._lastHealthAt = now
+      ctx._launch(healthReq, Api.reqHealth(), 6)
+    }
+    // Settles healthReq: the verdict and a log line of numbers. Never _fail, _succeeded, _backoff,
+    // _probeMode, _pauseFor, _markPoll or a toast (SR40).
+    function _healthDone(r) {
+      var res = Model.healthResult(r, Date.now())
+      ctx._health = { state: res.state, httpCode: res.httpCode, curlExit: res.curlExit, at: res.at }
+      console.log("coolwatch " + ctx.instId + "/health " + res.state + " http=" + res.httpCode + " exit=" + res.curlExit)
     }
 
     function _record(kind, r) {
       var pk = ctx._perKindEntry(kind)
       pk.lastAt = Date.now(); pk.lastCode = r.code; pk.lastMs = r.timeMs; pk.lastBytes = r.bytes
       if (r.exit === 0 && r.code < 400) pk.consecutiveFailures = 0
-      if (r.headers && r.headers.rateLimitRemaining !== null) ctx._rateLimitRemaining = r.headers.rateLimitRemaining
+      if (kind !== "health" && r.headers && r.headers.rateLimitRemaining !== null) ctx._rateLimitRemaining = r.headers.rateLimitRemaining   // health is unauthenticated: another bucket
       ctx._perKind = ctx._perKind
       ctx._noteBytes(kind, r.bytes || 0)
     }
@@ -1492,6 +1530,7 @@ Item {
         bo[kind] = { until: Date.now() + (a <= 1 ? 30 : 60) * 1000, attempt: a }; ctx._backoff = bo
       }
       console.warn("coolwatch " + ctx.instId + "/" + kind + " failed: " + e.kind + " http=" + e.httpCode + " exit=" + e.curlExit + " " + e.detail)
+      if (Model.healthWanted(e)) ctx._healthWanted = true   // drained after _finish's loop, never launched from inside it
     }
 
     // 429 is instance-wide: pause every timer for Retry-After (clamped) or the ladder.
@@ -1792,7 +1831,7 @@ Item {
       onTriggered: { ticks += 1; ctx._prime("missing") }
     }
     // 401/403: everything stops; one deployments probe a minute until a 2xx or a config change.
-    Timer { id: probeTimer; interval: 60000; repeat: true; running: ctx._ready && ctx._probeMode; onTriggered: ctx._launch(deploymentsReq, Api.reqDeployments(), 12) }   // log-bearing: 12 s, 4 MB (SR30)
+    Timer { id: probeTimer; interval: 60000; repeat: true; running: ctx._ready && ctx._probeMode; onTriggered: { ctx._launch(deploymentsReq, Api.reqDeployments(), 12); ctx._probeHealth() } }   // log-bearing: 12 s, 4 MB (SR30); the health probe rides beside it, never instead of it
     // 429: everything pauses for Retry-After (clamped) or the ladder.
     Timer { id: pauseTimer; interval: 30000; repeat: false; running: false; onTriggered: { ctx._paused = false; ctx._prime("all"); ctx._drainTerminal() } }
 
@@ -1807,6 +1846,13 @@ Item {
             p.kill()
             var pk = ctx._perKindEntry(p.kind)
             pk.reaps += 1; pk.lastReapAt = now
+            if (p === healthReq) {
+              // A reaped health probe is "unknown": no failure count, no backoff, never a claim (SR40).
+              ctx._perKind = ctx._perKind
+              ctx._healthDone(null)
+              console.warn("coolwatch " + ctx.instId + "/health reaped")
+              continue
+            }
             if (p === actionReq) {
               // A reaped POST may have landed: pending stays, no backoff, no retry (SR7).
               ctx._perKind = ctx._perKind
@@ -1880,7 +1926,8 @@ Item {
         drainRetries: ctx._drainRetries,
         recentPersisted: ctx._recentPersisted,
         recentRejected: ctx._recentRejected,
-        error: ctx._error ? { kind: ctx._error.kind, request: ctx._error.request, httpCode: ctx._error.httpCode, curlExit: ctx._error.curlExit } : null,
+        error: ctx._shownError ? { kind: ctx._shownError.kind, request: ctx._shownError.request, httpCode: ctx._shownError.httpCode, curlExit: ctx._shownError.curlExit } : null,
+        health: { state: ctx._health.state, httpCode: ctx._health.httpCode, curlExit: ctx._health.curlExit, at: ctx._health.at },   // numbers only, never the body
         id: ctx.instId,
         warning: ctx._warning ? ctx._warning.kind : null,
         bar: (function() { var b = Model.barState(ctx.snapshot); return { glyph: "U+" + b.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: b.dimmed, active: b.active } })(),   // computed on demand, not a standing binding (review: perf 6)
