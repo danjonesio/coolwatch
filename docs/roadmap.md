@@ -217,6 +217,12 @@ Each item is its own PR into `develop`; a release bundles whatever is merged
 (`docs/release.md`). Nothing here breaks a product lock: REST only, no metrics, no
 second process. Ordered by value over cost inside each group.
 
+Done from this list: **Health before auth** (PR #13, merged 2026-09-22 into `develop`;
+`docs/plans/health-before-auth.md` and its build record). One unauthenticated
+`GET /health` when a poll fails with an HTTP answer; the callout tells "Coolify not
+responding" from "token rejected". It also fixed a pre-existing bug: a 2xx whose body did
+not parse counted as a success and cost about 49 requests in the first minute on a wrong URL.
+
 ### Small (an hour each, `Model.js` + a test, patch or minor)
 
 - **Preview builds labelled.** Coolify builds every open pull request of a GitHub-App
@@ -249,10 +255,6 @@ second process. Ordered by value over cost inside each group.
 - **Toast click on a building deployment** opens its log the way a failed one does
   (`--exec … log <uuid>`), and on a queued one offers nothing (a click cannot confirm a
   cancel).
-- **Health before auth.** `GET /health` is unauthenticated and one line. A 401/403 with
-  a healthy `/health` is a token problem; a failed `/health` is Coolify down. Today both
-  land in `auth`/`error` and the callout guesses. One extra request per probe, none in
-  steady state.
 - **Database backup state.** `GET /databases/{uuid}` may carry scheduled-backup status
   that `/resources` does not; a failed backup is the failure nobody notices. Record a
   fixture first; if the field is not there, drop the item.
