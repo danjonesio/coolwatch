@@ -961,9 +961,70 @@ test("Model.errorWithHealth: the full kind x state matrix; health only hardens (
   eq(M.errorWithHealth(null, H("fail", 502)), null); const e1 = E("auth"); assert(M.errorWithHealth(e1, null) === e1)
 })
 
+test("Model: the health scenarios end to end: callout, bar, hero meta, chip word (health SR5, SR6, SR7)", () => {
+  const H = (state, code, exit) => ({ state, httpCode: code || 0, curlExit: exit || 0, at: NOW + 1 })
+  const E = (kind, code, extra) => M.makeError(kind, kind === "http" ? "Coolify returned " + code + "." : "", Object.assign({ request: "deployments", httpCode: code, curlExit: 0, at: NOW }, extra || {}))
+  function show(e, h, o) { const s = snap(Object.assign({ error: M.errorWithHealth(e, h) }, o || {})); return { s, c: M.callout(s, NOW), b: M.barState(s), m: M.heroMeta(s) } }
+  const host = "app.coolify.io"
+  // proxy 502
+  let r = show(E("http", 502), H("fail", 502))
+  eq(r.c.title, "Coolify not responding"); eq(r.c.body, host + " answered 502 on Coolify's health check, so this is not a token problem. Retrying."); eq(r.c.edit, false)
+  eq(r.b.glyph, M.G.cloudOff); eq(r.b.dimmed, true); eq(r.m, "Coolify not responding")
+  eq(M.instanceTroubleOf({ id: "x", error: r.s.error.kind }), "not responding")
+  eq(M.instanceTrouble([{ id: "a" }, { id: "b", name: "homelab", error: "down" }], "a"), "homelab: not responding")
+  // proxy 401 to everything: stays auth, both causes named, button kept
+  r = show(E("auth", 401), H("blocked", 401))
+  eq(r.c.title, "Token rejected"); assert(/also refused Coolify's unauthenticated health check \(401\)/.test(r.c.body)); assert(/may have been revoked/.test(r.c.body)); eq(r.c.edit, true)
+  eq(r.b.glyph, M.G.cloudAlert)
+  // path typo: 302 on both
+  r = show(E("http", 302, { notJson: true }), H("fail", 302))
+  eq(r.c.title, "Coolify not responding"); eq(r.c.body, host + " redirected Coolify's health check (302). Check the url in ~/.config/coolwatch/config.json: the scheme or the path is probably wrong."); eq(r.c.edit, false)
+  // host is not Coolify: 404 on both, or HTML 200 on both
+  r = show(E("http", 404), H("absent", 404)); eq(r.c.body, "Nothing at " + host + " answers as Coolify. Check the url in ~/.config/coolwatch/config.json.")
+  r = show(E("http", 200, { notJson: true }), H("fail", 200)); eq(r.c.title, "Coolify not responding"); eq(r.c.body, "Nothing at " + host + " answers as Coolify. Check the url in ~/.config/coolwatch/config.json.")
+  // revoked token with Coolify up
+  r = show(E("auth", 401), H("ok", 200))
+  eq(r.c.title, "Token rejected"); eq(r.c.body, "Coolify is up and rejected this token. Create a new one in Coolify → Security → API Tokens with the read ability."); eq(r.c.edit, true)
+  assert(/read ability/.test(r.c.body)); eq(r.b.tooltip, "Coolwatch — token rejected")
+  // API disabled is Coolify's own word: never overridden
+  const dis = M.errorFor({ httpCode: 403, body: fixture("error-403-api-disabled.json") }); dis.at = NOW
+  r = show(dis, H("fail", 502)); eq(r.c.title, "API disabled"); eq(r.s.error, dis)
+  // older Coolify without the route: a real 500 stays a Coolify error, a 401 stays token rejected
+  r = show(E("http", 500), H("absent", 404)); eq(r.c.title, "Coolify error"); eq(r.c.body, "Coolify returned 500.")
+  r = show(E("auth", 401), H("absent", 404)); eq(r.c.title, "Token rejected"); eq(r.c.body, "Create a token in Coolify → Security → API Tokens with the read ability.")
+  // health timed out: nothing changes
+  r = show(E("auth", 401), H("unknown", 0, 28)); eq(r.c.title, "Token rejected"); eq(r.c.edit, true)
+  // Coolify up, one endpoint 5xx: partial with data, the up-sentence without
+  r = show(E("http", 500, { request: "servers" }), H("ok", 200), { servers: [{ uuid: "s", name: "a", reachable: true }] })
+  eq(r.c.title, "servers unavailable"); eq(r.b.dimmed, false); eq(r.m, "servers unavailable · showing last known")
+  r = show(E("http", 500), H("ok", 200)); eq(r.c.body, "Coolify is up, but the API returned 500.\nCoolify returned 500.")
+  // a stale ok changes nothing
+  r = show(E("auth", 401), { state: "ok", httpCode: 200, curlExit: 0, at: NOW - 40000 }); eq(r.c.body, "Create a token in Coolify → Security → API Tokens with the read ability.")
+  // staleness still appended after a rewrite; the down kind is out of the partial presentation
+  r = show(E("http", 502, { staleSince: NOW - 3 * 60000 }), H("fail", 502), { servers: [{ uuid: "s", name: "a", reachable: true }] })
+  eq(r.c.title, "Coolify not responding"); assert(/Showing data from 3m ago\./.test(r.c.body)); eq(r.b.dimmed, true); eq(M.isPartial(r.s), false)
+  // every down state has a non-empty body, in the documented order
+  for (const [code, exit] of [[301, 0], [302, 0], [404, 0], [401, 0], [403, 0], [500, 0], [502, 0], [400, 0], [405, 0], [418, 0], [200, 63], [0, 63]]) {
+    const c = M.callout(snap({ error: M.makeError("down", "", { healthCode: code, healthExit: exit }) }), NOW)
+    assert(c.body.length > 0, "down body for " + code + "/" + exit)
+  }
+  eq(M.calloutBody(M.makeError("down", "", { healthCode: 400 }), snap({})), host + " did not answer Coolify's health check (400). Retrying.")
+  eq(M.calloutBody(M.makeError("down", "", { healthCode: 200, healthExit: 63 }), snap({})), host + " sent a page, not Coolify's health answer. Retrying.")
+  eq(M.calloutBody(M.makeError("down", "", { healthCode: 401 }), snap({})), host + " refused Coolify's unauthenticated health check (401), so something in front of Coolify is blocking this machine. Retrying.")
+  assert(M.calloutEditable(snap({ error: M.makeError("down") })) === false, "down never carries Edit config")
+  // the offline body names the host
+  eq(M.calloutBody(M.makeError("offline"), snap({})), "Nothing answered at " + host + ". Retrying.")
+  assert(M.calloutBody(M.makeError("offline"), snap({ instance: {} })).indexOf("Coolify") >= 0, "no url: the generic word")
+  // default-deny: every META kind except the three that are the partial presentation or ability dims the bar
+  for (const k of Object.keys(M.META)) {
+    if (k === "ability" || k === "http" || k === "toolarge") continue   // no bar row by design: ability must not take over; http/toolarge are the partial presentation
+    eq(M.barState(snap({ error: M.makeError(k) })).dimmed, true, k + " dims the bar")
+  }
+})
+
 // ---- Model.js: bar, hero, callout --------------------------------------------------------------
 
-test("Model.barState: all 15 rows (glyph, dimmed, active, tooltip)", () => {
+test("Model.barState: all 16 rows (glyph, dimmed, active, tooltip)", () => {
   const G = M.G
   function st(o) { return M.barState(snap(o)) }
   let b = st({ error: M.makeError("noconfig") }); eq(b.glyph, G.cloudOutline); eq(b.dimmed, true); eq(b.active, false); assert(/no config at/.test(b.tooltip))
@@ -974,6 +1035,8 @@ test("Model.barState: all 15 rows (glyph, dimmed, active, tooltip)", () => {
   b = st({ error: M.makeError("auth") }); eq(b.glyph, G.cloudAlert); eq(b.tooltip, "Coolwatch — token rejected")
   b = st({ error: M.makeError("apidisabled") }); eq(b.glyph, G.cloudAlert); assert(/API disabled/.test(b.tooltip))
   b = st({ error: M.makeError("ipblocked") }); eq(b.glyph, G.cloudAlert); assert(/IP/.test(b.tooltip))
+  b = st({ error: M.makeError("down", "", { healthCode: 502 }) }); eq(b.glyph, G.cloudOff); eq(b.dimmed, true); eq(b.active, false); eq(b.tooltip, "Coolwatch — Coolify is not responding (502)")
+  b = st({ error: M.makeError("down") }); eq(b.tooltip, "Coolwatch — Coolify is not responding")
   b = st({ error: M.makeError("offline") }); eq(b.glyph, G.cloudOff); eq(b.dimmed, true); assert(/offline/.test(b.tooltip))
   b = st({ error: M.makeError("tls") }); eq(b.glyph, G.cloudAlert); eq(b.dimmed, true); assert(/certificate/.test(b.tooltip))   // SR36
   b = st({ error: M.makeError("ratelimited"), backoffSec: 30 }); eq(b.glyph, G.cloud); eq(b.tooltip, "Coolwatch — rate limited, backing off 30s")
@@ -1000,8 +1063,9 @@ test("Model.heroMeta: every condition string; no 0 deploying; empty account; pre
   eq(M.heroMeta(snap({ servers: [{}], resources: [{}] })), "1 server · 1 resource")
   eq(M.heroMeta(snap({})), "No resources on this team")
   eq(M.heroMeta(snap({ baselineDone: false })), "Loading")
-  for (const [k, v] of Object.entries({ noconfig: "Not configured", configerror: "Config error", unsafe: "Config unsafe", tokencmd: "Token unavailable", waitingtoken: "Waiting for token", auth: "Token rejected", apidisabled: "API disabled", ipblocked: "IP not allowed", offline: "Offline · retrying", ratelimited: "Rate limited", toolarge: "Response too large", http: "Coolify error" }))
-    eq(M.heroMeta(snap({ error: M.makeError(k) })), v, k)
+  // derived from META so a new kind cannot go unasserted; ability is the documented empty title
+  for (const [k, v] of Object.entries(M.META)) if (k !== "ability") eq(M.heroMeta(snap({ error: M.makeError(k) })), v, k)
+  eq(M.heroMeta(snap({ error: M.makeError("down") })), "Coolify not responding")
   eq(M.heroMeta(snap({ error: M.makeError("http", "", { request: "servers" }), servers: [{}] })), "servers unavailable · showing last known")
   eq(M.heroMeta(snap({ error: M.makeError("ability", "Missing required permissions: deploy"), servers: [{}] })), "1 server", "ability does not take over meta")
   eq(M.heroMeta(snap({ error: M.makeError("offline"), baselineDone: false })), "Offline · retrying", "error beats loading")
@@ -1011,7 +1075,8 @@ test("Model.heroMeta: every condition string; no 0 deploying; empty account; pre
 
 test("Model.callout: every error and warning kind has a body; healthy is null; staleness appended", () => {
   eq(M.callout(snap({})), null)
-  const kinds = ["noconfig", "configerror", "unsafe", "tokencmd", "waitingtoken", "auth", "apidisabled", "ipblocked", "ability", "ratelimited", "offline", "tls", "toolarge", "http"]
+  const kinds = Object.keys(M.META)   // every kind, derived: a new kind without a body fails here
+  eq(kinds.length, 15)
   kinds.forEach(k => {
     const c = M.callout(snap({ error: M.makeError(k, "detail text", { curlExit: 3, httpCode: 500 }) }), NOW)
     assert(c && c.body.length > 0, k + " has a body"); assert(c.title.length > 0, k + " has a title")
@@ -1024,7 +1089,9 @@ test("Model.callout: every error and warning kind has a body; healthy is null; s
   assert(/chmod 600/.test(w.body)); assert(/readable/.test(w.title))
   // "Edit config" (Phase 5 prep): the file's own problems carry the button, nothing else does.
   ;["noconfig", "configerror", "unsafe", "tokencmd", "auth"].forEach(k => assert(M.callout(snap({ error: M.makeError(k, "d") })).edit === true, k + " editable"))
-  ;["waitingtoken", "apidisabled", "ipblocked", "ability", "ratelimited", "offline", "tls", "toolarge", "http"].forEach(k => assert(M.callout(snap({ error: M.makeError(k, "d") })).edit === false, k + " not editable"))
+  const notEditable = Object.keys(M.META).filter(k => !M.EDITABLE_ERRORS[k])   // the complement, derived
+  eq(notEditable.length, 10); assert(notEditable.indexOf("down") >= 0, "down is not the file's problem")
+  notEditable.forEach(k => assert(M.callout(snap({ error: M.makeError(k, "d") })).edit === false, k + " not editable"))
   assert(w.edit === true, "permissions warning editable")
   assert(M.callout(snap({ warning: { kind: "plaintext" } })).edit === false, "plaintext not editable")
   assert(M.calloutEditable(null) === false && M.calloutEditable(snap({})) === false)

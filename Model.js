@@ -260,7 +260,8 @@ var META = {
   offline: "Offline · retrying",
   tls: "Certificate rejected",
   toolarge: "Response too large",
-  http: "Coolify error"
+  http: "Coolify error",
+  down: "Coolify not responding"     // render-time only: errorWithHealth, never errorFor (health before auth)
 }
 
 var OFFLINE_EXITS = { 6: true, 7: true, 28: true, 35: true }
@@ -1101,6 +1102,7 @@ function barState(s) {
   if (ek === "auth") return dim(G.cloudAlert, "Coolwatch — token rejected")
   if (ek === "apidisabled") return dim(G.cloudAlert, "Coolwatch — API disabled on this instance")
   if (ek === "ipblocked") return dim(G.cloudAlert, "Coolwatch — this IP is not allowed")
+  if (ek === "down") return dim(G.cloudOff, "Coolwatch — Coolify is not responding" + (e.healthCode ? " (" + e.healthCode + ")" : ""))
   if (ek === "offline") return dim(G.cloudOff, "Coolwatch — offline, retrying")
   if (ek === "tls") return dim(G.cloudAlert, "Coolwatch — certificate rejected, retrying")
   if (ek === "ratelimited") return dim(G.cloud, "Coolwatch — rate limited, backing off " + (s.backoffSec || 0) + "s")
@@ -1141,6 +1143,7 @@ function barMark(b) { return !!b && (b.glyph === G.cloud || b.glyph === G.progre
 function instanceTroubleOf(x) {
   if (!x) return ""
   if (x.error === "ability") return "token lacks an ability"          // META.ability is empty by design (the callout composes it)
+  if (x.error === "down") return "not responding"                     // META.down lowercased would read "coolify not responding"
   if (x.error) return META[x.error] ? META[x.error].replace(/ · .*$/, "").toLowerCase() : "error"
   if (x.failed > 0) return plural(x.failed, "failed build")
   if (x.down > 0) return plural(x.down, "server") + " unreachable"
@@ -1207,6 +1210,21 @@ function calloutEditable(s) {
   return !!(s.warning && s.warning.kind === "permissions")
 }
 
+// The host in a callout body: the instance's url host, never fqdn (bin/check).
+function hostWord(s) { return hostOf(s && s.instance ? s.instance.url : "") || "Coolify" }
+
+// Bodies for the health-derived states (health before auth). Constant copy: only the host and a
+// numeric code from the health answer ever appear; the health body itself never does.
+function downBody(e, s) {
+  var host = hostWord(s), c = Number(e.healthCode || 0)
+  if (Number(e.healthExit) === 63) return host + " sent a page, not Coolify's health answer. Retrying."
+  if (c >= 300 && c < 400) return host + " redirected Coolify's health check (" + c + "). Check the url in ~/.config/coolwatch/config.json: the scheme or the path is probably wrong."
+  if (c === 404 || (e.notJson && c >= 200 && c < 300)) return "Nothing at " + host + " answers as Coolify. Check the url in ~/.config/coolwatch/config.json."
+  if (c === 401 || c === 403) return host + " refused Coolify's unauthenticated health check (" + c + "), so something in front of Coolify is blocking this machine. Retrying."
+  if (c >= 500) return host + " answered " + c + " on Coolify's health check, so this is not a token problem. Retrying."
+  return host + " did not answer Coolify's health check" + (c ? " (" + c + ")" : "") + ". Retrying."
+}
+
 function calloutBody(e, s) {
   switch (e.kind) {
     case "noconfig": return "Create ~/.config/coolwatch/config.json (chmod 600):\n" + SAMPLE_CONFIG
@@ -1214,15 +1232,21 @@ function calloutBody(e, s) {
     case "unsafe": return "Anyone on this machine can rewrite it. Run: chmod 600 ~/.config/coolwatch/config.json"
     case "tokencmd": return "The token command exited " + (e.curlExit || 0) + ". Its output is never logged; run it yourself to see why."
     case "waitingtoken": return "Running the token command…"
-    case "auth": return "Create a token in Coolify → Security → API Tokens with the read ability."
+    case "auth":
+      if (e.healthState === "ok") return "Coolify is up and rejected this token. Create a new one in Coolify → Security → API Tokens with the read ability."
+      if (e.healthState === "blocked") return hostWord(s) + " also refused Coolify's unauthenticated health check (" + (e.healthCode || 0) + "), so something in front of Coolify may be blocking this machine. If the proxy is expected, the token may have been revoked."
+      return "Create a token in Coolify → Security → API Tokens with the read ability."
     case "apidisabled": return "Enable it in Settings → Advanced → API Access."
     case "ipblocked": return "Add this machine's IP to the token's allowed list in Coolify → Security → API Tokens."
     case "ability": return "The token is missing the " + (abilityOf(e.detail) || "required") + " ability."
     case "ratelimited": return "Backing off " + ((s && s.backoffSec) || e.backoffSec || 30) + "s."
-    case "offline": return "Retrying."
+    case "offline": return "Nothing answered at " + hostWord(s) + ". Retrying."
+    case "down": return downBody(e, s)
     case "tls": return "curl could not verify this instance's certificate; nothing was sent. Fix the certificate (or trust its CA on this machine). Retrying."
     case "toolarge": return "Coolify's response exceeded 8 MB and was dropped."
-    case "http": return e.detail || ("Coolify returned " + (e.httpCode || 0) + ".")
+    case "http":
+      if (e.healthState === "ok") return "Coolify is up, but the API returned " + (e.httpCode || 0) + "." + (e.detail ? "\n" + e.detail : "")
+      return e.detail || ("Coolify returned " + (e.httpCode || 0) + ".")
     default: return e.detail || ""
   }
 }
