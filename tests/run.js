@@ -880,6 +880,87 @@ test("Model.normaliseDeployment / terminalEvent on the recorded cancelled fixtur
   assert(d.finishedAt, "a cancelled queued deployment carries finished_at")
 })
 
+// ---- Model.js: health before auth (2026-09-22) ----------------------------------------------------
+// Security requirements of docs/plans/health-before-auth: 3 (bounded body), 5 (health only hardens).
+
+test("Model.parseHealth: trimmed, capped at 16 chars, never OK for a page (health SR3)", () => {
+  eq(M.parseHealth("OK\n"), "OK")
+  eq(M.parseHealth(fixture("health-ok.txt")), "OK")
+  const page = "<!doctype html>" + "<p>x</p>".repeat(300000)
+  const p = M.parseHealth(page)
+  assert(p.length <= 16, "capped"); assert(p !== "OK")
+  eq(M.parseHealth(null), ""); eq(M.parseHealth(" ok "), "ok")
+})
+
+test("Model.healthResult: every record shape maps to one state and carries numbers only (health SR5)", () => {
+  const h = (exit, code, body) => M.healthResult({ exit, code, body, timeMs: 1, bytes: 2, headers: null }, NOW)
+  eq(h(0, 200, "OK\n").state, "ok")
+  eq(h(0, 200, fixture("health-ok.txt")).state, "ok")
+  eq(h(0, 404, '{"message":"Not found."}').state, "absent")
+  eq(h(0, 401, "").state, "blocked"); eq(h(0, 403, "").state, "blocked")
+  eq(h(0, 429, "").state, "unknown")
+  eq(h(0, 500, "").state, "fail"); eq(h(0, 502, "").state, "fail")
+  eq(h(0, 302, "<html>").state, "fail"); eq(h(0, 301, "").state, "fail")
+  eq(h(0, 200, "<html>login</html>").state, "fail", "2xx that is not OK")
+  eq(h(0, 204, "").state, "fail")
+  eq(h(7, 0, "").state, "unknown"); eq(h(28, 0, "").state, "unknown"); eq(h(60, 0, "").state, "unknown")
+  eq(h(63, 200, "").state, "fail", "over the cap is not Coolify's OK")
+  eq(M.healthResult(null, NOW).state, "unknown")
+  const r = h(0, 502, "bad gateway page")
+  eq(JSON.stringify(Object.keys(r).sort()), JSON.stringify(["at", "curlExit", "httpCode", "state"]), "no body field")
+  eq(r.httpCode, 502); eq(r.curlExit, 0); eq(r.at, NOW)
+})
+
+test("Model.healthWanted: auth or http with an HTTP answer, nothing else (health SR5)", () => {
+  for (const k of Object.keys(M.META)) {
+    const want = k === "auth" || k === "http"
+    eq(M.healthWanted(M.makeError(k, "", { curlExit: 0, httpCode: 401 })), want, k + " exit 0")
+    eq(M.healthWanted(M.makeError(k, "", { curlExit: 7 })), false, k + " exit 7")
+  }
+  eq(M.healthWanted(M.errorFor({ httpCode: 401, body: fixture("error-401.json") })), true)
+  eq(M.healthWanted(M.errorFor({ curlExit: 7, errmsg: "refused" })), false)
+  eq(M.healthWanted(M.errorFor({ httpCode: 403, body: fixture("error-403-api-disabled.json") })), false)
+  eq(M.healthWanted(M.makeError("http", "not JSON", { httpCode: 200, request: "deployments", notJson: true })), true, "a not-JSON 200 asks for a probe")
+  eq(M.healthWanted(null), false)
+})
+
+test("Model.errorWithHealth: the full kind x state matrix; health only hardens (health SR5)", () => {
+  const H = (state, code, at) => ({ state, httpCode: code || 0, curlExit: 0, at: at === undefined ? NOW + 1 : at })
+  const E = (kind, extra) => M.makeError(kind, "d", Object.assign({ request: "deployments", httpCode: 401, curlExit: 0, at: NOW, staleSince: NOW - 60000 }, extra || {}))
+  for (const k of Object.keys(M.META)) {
+    for (const st of ["unknown", "ok", "fail", "blocked", "absent"]) {
+      const e = E(k), out = M.errorWithHealth(e, H(st, 502))
+      if (k === "auth") {
+        if (st === "fail") eq(out.kind, "down", "auth+fail")
+        else if (st === "ok" || st === "blocked") { eq(out.kind, "auth", "auth+" + st); eq(out.healthState, st); assert(out !== e, "annotated copy") }
+        else assert(out === e, "auth+" + st + " untouched")
+      } else if (k === "http") {
+        if (st === "fail" || st === "blocked") eq(out.kind, "down", "http+" + st)
+        else if (st === "ok") { eq(out.kind, "http"); eq(out.healthState, "ok"); eq(out.detail, "d", "detail kept") }
+        else assert(out === e, "http+" + st + " untouched (poll was 401)")
+      } else assert(out === e, k + "+" + st + " untouched")
+    }
+  }
+  // the absent asymmetry: only a poll that itself 404'd
+  eq(M.errorWithHealth(E("http", { httpCode: 404 }), H("absent", 404)).kind, "down")
+  const e500 = E("http", { httpCode: 500 }); assert(M.errorWithHealth(e500, H("absent", 404)) === e500, "older Coolify with a real 500 stays http")
+  const eAuth = E("auth"); assert(M.errorWithHealth(eAuth, H("absent", 404)) === eAuth, "older Coolify with a 401 stays auth")
+  // fields copied through on the rewrite
+  const d = M.errorWithHealth(E("http", { httpCode: 502, notJson: true }), H("fail", 502))
+  eq(d.kind, "down"); eq(d.request, "deployments"); eq(d.httpCode, 502); eq(d.curlExit, 0)
+  eq(d.staleSince, NOW - 60000); eq(d.at, NOW); eq(d.notJson, true); eq(d.healthCode, 502); eq(d.healthState, "fail"); eq(d.healthExit, 0); eq(d.detail, "", "no detail on down")
+  // an OK older than the failure is stale
+  const eA = E("auth"); assert(M.errorWithHealth(eA, H("ok", 200, NOW - 40000)) === eA, "stale ok changes nothing")
+  assert(M.errorWithHealth(eA, H("ok", 200, NOW)) !== eA, "an ok at the same instant counts")
+  // a fail is never stale
+  eq(M.errorWithHealth(E("auth"), H("fail", 502, NOW - 40000)).kind, "down")
+  // the wrong-URL not-JSON pair (step 0 makes it reachable)
+  eq(M.errorWithHealth(E("http", { httpCode: 200, notJson: true }), H("fail", 200)).kind, "down", "poll HTML + health HTML")
+  const eNj = E("http", { httpCode: 200, notJson: true }); eq(M.errorWithHealth(eNj, H("ok", 200)).kind, "http", "poll HTML + health OK stays http")
+  // nulls
+  eq(M.errorWithHealth(null, H("fail", 502)), null); const e1 = E("auth"); assert(M.errorWithHealth(e1, null) === e1)
+})
+
 // ---- Model.js: bar, hero, callout --------------------------------------------------------------
 
 test("Model.barState: all 15 rows (glyph, dimmed, active, tooltip)", () => {

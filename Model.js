@@ -315,6 +315,71 @@ function retryAfterSec(headers, attempt) {
   return (attempt === undefined || attempt === null || attempt <= 1) ? 30 : 60
 }
 
+// ---- health before auth (2026-09-22) ------------------------------------------------------
+// GET /api/v1/health is unauthenticated and answers the plain text "OK". It runs only when a
+// poll fails with an HTTP answer (never while healthy, never at token-ready), on its own Req,
+// and its verdict is combined with the poll's error at render time by errorWithHealth. The
+// body is bounded here and never stored, logged or shown (SR26 shape).
+
+// The health body, trimmed and capped: "OK" or not. Never JSON.parsed.
+function parseHealth(body) {
+  return elide(String(body === undefined || body === null ? "" : body).trim(), 16)
+}
+
+// One splitResponses record (or null) -> { state, httpCode, curlExit, at }. States:
+//   ok       200 with body OK
+//   absent   404: the route does not exist on this Coolify (older version), not proof of anything
+//   blocked  401/403: something refused an unauthenticated request; never proof the token is fine
+//   fail     any other HTTP answer (3xx, 4xx, 5xx, 2xx with a body that is not OK), or curl 63
+//   unknown  429, a curl-level failure, a reap, or no record: changes nothing
+function healthResult(r, nowMs) {
+  var at = nowMs || Date.now()
+  if (!r) return { state: "unknown", httpCode: 0, curlExit: 0, at: at }
+  var exit = r.exit === undefined || r.exit === null ? 0 : Number(r.exit)
+  var code = r.code === undefined || r.code === null ? 0 : Number(r.code)
+  var state
+  if (exit === 63) state = "fail"
+  else if (exit !== 0) state = "unknown"
+  else if (code === 200 && parseHealth(r.body) === "OK") state = "ok"
+  else if (code === 404) state = "absent"
+  else if (code === 401 || code === 403) state = "blocked"
+  else if (code === 429) state = "unknown"
+  else state = "fail"
+  return { state: state, httpCode: code, curlExit: exit, at: at }
+}
+
+// The probe gate: a poll error that came back as an HTTP answer and is one of the two kinds
+// the health check can explain. Every other kind is excluded by construction (a recognised
+// 403 is Coolify's own word, 429 is the limiter, a curl exit is a transport fact).
+function healthWanted(e) {
+  return !!e && (e.kind === "auth" || e.kind === "http") && Number(e.curlExit || 0) === 0
+}
+
+// Combine a poll error with the health verdict. Returns the same object when there is nothing
+// to add; otherwise a fresh error (kind "down", or the same kind annotated with healthState /
+// healthCode / healthExit for the body). Health only hardens a diagnosis:
+//   auth: fail -> down; ok or blocked -> auth annotated (the button stays); absent -> as is
+//   http: fail or blocked -> down; absent -> down only when the poll itself 404'd; ok -> annotated
+//   anything else -> as is. An "ok" older than the failure it would explain is stale -> as is.
+function errorWithHealth(e, health) {
+  if (!e || !health || health.state === "unknown") return e
+  if (health.state === "ok" && (health.at || 0) < (e.at || 0)) return e
+  var kind = null
+  if (e.kind === "auth") {
+    if (health.state === "fail") kind = "down"
+    else if (health.state === "ok" || health.state === "blocked") kind = "auth"
+  } else if (e.kind === "http") {
+    if (health.state === "fail" || health.state === "blocked") kind = "down"
+    else if (health.state === "absent") { if (Number(e.httpCode) === 404) kind = "down" }
+    else if (health.state === "ok") kind = "http"
+  }
+  if (!kind) return e
+  var extra = { request: e.request, httpCode: e.httpCode, curlExit: e.curlExit, at: e.at, staleSince: e.staleSince,
+                healthState: health.state, healthCode: health.httpCode || 0, healthExit: health.curlExit || 0 }
+  if (e.notJson) extra.notJson = true
+  return makeError(kind, kind === "down" ? "" : e.detail, extra)
+}
+
 // ---- normalise ------------------------------------------------------------------------
 
 var STATES = { running: true, starting: true, restarting: true, degraded: true, paused: true, exited: true }
