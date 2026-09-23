@@ -1565,6 +1565,43 @@ function actionRequest(s, verb, uuid) {
            status: row.type === "resource" ? obj.status : null }
 }
 
+var IPC_ARG_MAX = 64          // the IPC argument's own bound: UUID_RE's ceiling and _refuse's echo bound (not FILTER_MAX_TERM: a filter term is a different input)
+var UUID_SHAPED_RE = /^[a-z0-9]{20,}$/   // what appLabel treats as a Coolify uuid (the {20,} runs above); a miss on this shape is a uuid miss
+// The four lists actionRequest scans, by presence only. Kept beside the gate rather than
+// extracted from it so the single gate stays byte-for-byte; a fifth list goes in both.
+function holdsUuid(s, uuid) {
+  return [s.resources, s.deployments, s.servers, s.tags].some(function (l) {
+    return (l || []).some(function (x) { return !!x && x.uuid === uuid })
+  })
+}
+// Turns an IPC argument into a store uuid, in front of actionRequest (which stays the gate).
+// Uuid first, over every list the gate scans, so an existing uuid never changes meaning; then
+// the resource label the panel shows (appLabel on both sides: whitespace collapses, a pasted
+// decorated name and a 32+-char name both elide the same way; appLabel's regexes are
+// lowercase-only, so an upper-cased decorated paste does not resolve while an upper-cased
+// label does), exact first, then case-folded. Resources only: a deployment's label is its
+// application's, no verb applies to a server, and a tag name would fan out unconfirmed (SR35).
+// A row whose uuid fails UUID_RE is invisible (normalise does not charset-check uuids; the
+// same drop normaliseTags makes), so a name never resolves to a string that would fail the
+// gate's re-test and reach stdout, the log or status through _refuse (SR15).
+function resolveActionTarget(s, arg) {
+  var a = String(arg === undefined || arg === null ? "" : arg).trim()
+  if (!a || a.length > IPC_ARG_MAX) return { ok: false, why: "unknownname" }
+  s = s || {}
+  if (UUID_RE.test(a) && holdsUuid(s, a)) return { ok: true, uuid: a, by: "uuid" }
+  var label = appLabel(a, ""), want = label.toLowerCase(), exact = [], folded = []
+  if (want) (s.resources || []).forEach(function (r) {
+    if (!r || !UUID_RE.test(r.uuid)) return
+    var l = appLabel(r.name, r.uuid)
+    if (l === label && exact.indexOf(r.uuid) < 0) exact.push(r.uuid)
+    if (l.toLowerCase() === want && folded.indexOf(r.uuid) < 0) folded.push(r.uuid)
+  })
+  var hits = exact.length ? exact : folded
+  if (hits.length === 1) return { ok: true, uuid: hits[0], by: "name" }
+  if (hits.length) return { ok: false, why: "ambiguousname" }
+  return { ok: false, why: UUID_SHAPED_RE.test(a) ? "unknown" : "unknownname" }
+}
+
 // "" when the action may launch now (SR6).
 function canAct(pending, inflight, uuid, nowMs, lastLaunchAt) {
   if ((pending && Object.prototype.hasOwnProperty.call(pending, uuid)) || (inflight && inflight.uuid === uuid)) return "already pending"

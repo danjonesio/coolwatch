@@ -1521,6 +1521,52 @@ test("Model.actionRequest: the single gate — invalid, unknown, not applicable,
   eq(M.actionRequest(s, "restart", SVC_RUNNING).kind, "service")
 })
 
+test("Model.resolveActionTarget: uuid first, then one exact label over resources only (IPC verbs by name)", () => {
+  const R = M.resolveActionTarget, s = actSnap(), rs = s.resources
+  const keys = (r) => Object.keys(r).join(",")
+  const withRes = (extra) => actSnap({ resources: rs.concat(extra) })
+  // label, case, whitespace: the panel's appLabel on both sides
+  eq(R(s, "storefront").uuid, APP); eq(R(s, "storefront").by, "name"); eq(R(s, "storefront").ok, true)
+  eq(R(s, "STOREFRONT").uuid, APP); eq(R(s, "  storefront ").uuid, APP)
+  eq(R(s, "Storefront  Prod  WP").uuid, SVC_EXITED); eq(R(s, "storefront prod wp").uuid, SVC_EXITED)
+  // generated and decorated raw names go through the same appLabel
+  eq(R(s, "xyhpwdxq").uuid, "xyhpwdxqu33omjgwuo6c7cjp")
+  eq(R(s, "xyhpwdxqu33omjgwuo6c7cjp-200537415987").uuid, "xyhpwdxqu33omjgwuo6c7cjp"); eq(R(s, "xyhpwdxqu33omjgwuo6c7cjp-200537415987").by, "name")
+  eq(R(s, "storefront:main-h0wxyg40kc0lz727dom9l03i").uuid, APP); eq(R(s, "storefront:main-h0wxyg40kc0lz727dom9l03i").by, "name")
+  // a 41-char name resolves by its full text (both sides elide at 32); two names sharing 31 chars are jointly uuid-only (decision)
+  const long1 = { uuid: "longname000000000000001", name: "a-very-long-application-name-that-goes-on" }
+  const long2 = { uuid: "longname000000000000002", name: "a-very-long-application-name-that-ends-elsewhere" }
+  eq(R(withRes([long1]), long1.name).uuid, long1.uuid)
+  eq(R(withRes([long1, long2]), long1.name).why, "ambiguousname", "31-character collision")
+  // uuid-first (requirement 3): a resource named after another's uuid cannot steal by-uuid calls
+  const thief = withRes([{ uuid: "zzzzzzzzzzzzzzzzzzzzzzzz", name: APP }])
+  eq(R(thief, APP).by, "uuid"); eq(R(thief, APP).uuid, APP); eq(R(thief, "zzzzzzzzzzzzzzzzzzzzzzzz").by, "uuid")
+  // the uuid pass covers every list the gate scans
+  const st = actSnap({ tags: M.normaliseTags(fx("tags.json")) })
+  eq(R(st, SRV).by, "uuid"); eq(R(st, st.deployments[0].uuid).by, "uuid"); eq(R(st, st.tags[1].uuid).by, "uuid")
+  // resources only (requirements 4, 5): a running build's label is its application's; deployments, servers and tags (SR35) never resolve by name
+  eq(R(s, "storefront").ok, true, "not ambiguous while storefront builds")
+  eq(R(s, "worker").why, "unknownname"); eq(R(s, "hetzner-1").why, "unknownname")
+  eq(R(st, "production-landing").why, "unknownname", "SR35: a tag name cannot fan out"); eq(R(st, "canary").why, "unknownname")
+  // no prefix
+  eq(R(s, "storefron").why, "unknownname"); eq(R(s, "h0wx").why, "unknownname"); eq(R(s, "xyhpwdx").why, "unknownname")
+  // a uuid-shaped miss is a uuid miss (requirement 9): today's arm, today's token; a label typo is a name miss
+  eq(R(s, "zzzzzzzzzzzzzzzzzzzzzzzz").why, "unknown"); eq(R(s, "storefrnt").why, "unknownname")
+  // ambiguity refuses, never picks first (requirement 6): exact pass, then the fold
+  const twoBranches = withRes([{ uuid: "branch000000000000000001", name: "storefront:main-branch000000000000000001" }, { uuid: "branch000000000000000002", name: "storefront:staging-branch000000000000000002" }])
+  eq(R(twoBranches, "storefront").why, "ambiguousname")
+  const apis = withRes([{ uuid: "api00000000000000000001", name: "api" }, { uuid: "api00000000000000000002", name: "API" }])
+  eq(R(apis, "api").uuid, "api00000000000000000001"); eq(R(apis, "API").uuid, "api00000000000000000002"); eq(R(apis, "Api").why, "ambiguousname")
+  eq(R(withRes([rs[0]]), "storefront").uuid, APP, "the same resource listed twice is one hit")
+  // guards (requirements 2, 7): a row whose uuid fails UUID_RE is invisible (SR15); bounds; missing lists; nothing throws
+  eq(R(withRes([{ uuid: "../../etc/passwd", name: "hostile" }]), "hostile").why, "unknownname")
+  const empty = withRes([{ uuid: "", name: "" }])
+  eq(R(empty, ":x-" + "a".repeat(20)).why, "unknownname"); eq(R(empty, "").why, "unknownname")
+  eq(R(s, " ").why, "unknownname"); eq(R(s, "x".repeat(65)).why, "unknownname")
+  eq(R(undefined, "storefront").why, "unknownname"); eq(R(snap(), "storefront").why, "unknownname"); eq(R(withRes([null]), "storefront").uuid, APP)
+  eq(keys(R(s, "storefront")), "ok,uuid,by"); eq(keys(R(s, "storefrnt")), "ok,why")
+})
+
 test("Model.canAct: pending and inflight dedupe by uuid; inflight or 1 s spacing is busy (SR6)", () => {
   const now = NOW
   eq(M.canAct({ u1: { verb: "stop" } }, null, "u1", now, 0), "already pending")
