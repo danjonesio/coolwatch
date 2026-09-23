@@ -13,8 +13,8 @@ that runs inside `omarchy-shell`; there is no daemon and no second process.
 
 Status: **Phases 1 ("see"), 2 ("act"), 3 ("notify") and 4 (depth: build logs, container
 logs, history, tag deploy; instances: one `InstanceCtx` per configured Coolify, chips,
-per-instance state files) and 4b (polish) all merged; manifest 1.0.0 (2026-09-13). On
-`develop` since 2026-09-22: health before auth (one unauthenticated `GET /health` when a
+per-instance state files) and 4b (polish) all merged; manifest 1.0.0 (2026-09-13).
+Manifest 1.1.0 (2026-09-23): health before auth (one unauthenticated `GET /health` when a
 poll fails with an HTTP answer; the callout tells "Coolify not responding" from "token
 rejected"; `docs/plans/health-before-auth.md`); build duration on terminal and History rows
 (`duration · age` from `created_at → finished_at`; `docs/plans/build-duration.md`); IPC
