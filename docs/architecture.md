@@ -36,7 +36,7 @@ No daemon, no second Quickshell, no Python collector. The shell is the runtime.
 - The service registers `IpcHandler { target: "io.github.danjonesio.coolwatch" }` with
   `refresh` and `status` (Phase 1; `status` returns fixed-shape JSON with counts,
   per-kind timings and the rolling request count, never a secret, body or URL).
-  Phase 2 adds `deploy <uuid>`, `restart <uuid>`, `stop <uuid>`, `start <uuid>`: each
+  Phase 2 adds `deploy <uuid|name>`, `restart <uuid|name>`, `stop <uuid|name>`, `start <uuid|name>`: each
   returns `queued <verb> <uuid>` or a refusal token (`unknown uuid <uuid>` for a
   uuid-shaped argument the store does not hold, `unknown name <argument>`,
   `ambiguous name <argument>`, `not applicable <verb> <uuid>`, `already pending <uuid>`,
@@ -45,9 +45,10 @@ No daemon, no second Quickshell, no Python collector. The shell is the runtime.
   failures from the CLI); Phase 4 adds `instances` (`cloud (active), homelab`) and
   `instance <id>` (`active <id>` or `unknown instance <id>`), and the action verbs resolve
   against the active instance; the outcome is `status.lastAction`. An argument is tried
-  as a uuid over every list first, then as a resource label (`Model.resolveActionTarget`,
-  in front of the gate; resources only, never deployments, servers or tags, so a tag name
-  cannot fan out unconfirmed; exact, then case-folded). CLI verbs never confirm. The uuid
+  as a uuid over every list first (a uuid-shaped argument, 20+ lowercase alphanumerics,
+  the store does not hold is a uuid miss and never a name), then as a resource label
+  (`Model.resolveActionTarget`, in front of the gate; resources only, never deployments,
+  servers or tags, so a tag name cannot fan out unconfirmed; exact, then case-folded). CLI verbs never confirm. The uuid
   or name echoed back is bounded to 64 characters and one line; the `ipc` log line
   carries the resolved uuid8 on success and `-` otherwise, and `status.lastAction.uuid8`
   is `""` for any IPC call refused before resolution (a readiness gate, `unknown name`,
@@ -544,11 +545,11 @@ and `data-raw = "{}"` (constants; `data` would read a file for a leading `@`) an
 `location`. `Model.actionRequest` is the single gate for the panel and the IPC verbs
 (uuid shape, presence in the store, the applicability table); the service builds the
 `Api` descriptor from the stored kind. `Model.resolveActionTarget` runs in front of the
-gate for IPC calls only, turning a label into a store uuid; it is not a second gate.
-One single-flight `actionReq` goes through
-`_launch` like a poll; `act()` refuses while an action is in flight or within 1 s of the
-last launch, while the same uuid is pending, when not ready / probing / paused, and
-after 120 requests in the last minute. There is no queue and no compensating poll.
+gate for IPC calls only, turning a label into a store uuid; it is not a second gate. One
+single-flight `actionReq` goes through `_launch` like a poll; `act()` refuses while an
+action is in flight or within 1 s of the last launch, while the same uuid is pending,
+when not ready / probing / paused, and after 120 requests in the last minute. There is
+no queue and no compensating poll.
 
 Pending is a service-owned map `{ uuid: { verb, targetType, kind, since, baseStatus,
 deploymentUuid, stale } }` applied at render through `Model.panelRows`'s `ui.pending`
