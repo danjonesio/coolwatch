@@ -36,23 +36,25 @@ No daemon, no second Quickshell, no Python collector. The shell is the runtime.
 - The service registers `IpcHandler { target: "io.github.danjonesio.coolwatch" }` with
   `refresh` and `status` (Phase 1; `status` returns fixed-shape JSON with counts,
   per-kind timings and the rolling request count, never a secret, body or URL).
-  Phase 2 adds `deploy <uuid|name>`, `restart <uuid|name>`, `stop <uuid|name>`, `start <uuid|name>`: each
-  returns `queued <verb> <uuid>` or a refusal token (`unknown uuid <uuid>` for a
-  uuid-shaped argument the store does not hold, `unknown name <argument>`,
-  `ambiguous name <argument>`, `not applicable <verb> <uuid>`, `already pending <uuid>`,
-  `busy`, `not configured`, `config unsafe`, `rate limited`, `token rejected`,
-  `refused: token lacks the <ability> permission` after three consecutive ability
-  failures from the CLI); Phase 4 adds `instances` (`cloud (active), homelab`) and
-  `instance <id>` (`active <id>` or `unknown instance <id>`), and the action verbs resolve
-  against the active instance; the outcome is `status.lastAction`. An argument is tried
-  as a uuid over every list first (a uuid-shaped argument, 20+ lowercase alphanumerics,
-  the store does not hold is a uuid miss and never a name), then as a resource label
-  (`Model.resolveActionTarget`, in front of the gate; resources only, never deployments,
-  servers or tags, so a tag name cannot fan out unconfirmed; exact, then case-folded). CLI verbs never confirm. The uuid
-  or name echoed back is bounded to 64 characters and one line; the `ipc` log line
-  carries the resolved uuid8 on success and `-` otherwise, and `status.lastAction.uuid8`
-  is `""` for any IPC call refused before resolution (a readiness gate, `unknown name`,
-  `ambiguous name`).
+  Phase 2 adds `deploy <uuid|name>`, `restart <uuid|name>`, `stop <uuid|name>`,
+  `start <uuid|name>`: each returns `queued <verb> <uuid>` or a refusal token
+  (`unknown uuid <uuid>` for a uuid-shaped argument the store does not hold,
+  `unknown name <argument>`, `ambiguous name <argument>`, `not applicable <verb> <uuid>`,
+  `already pending <uuid>`, `busy`, `not configured`, `config unsafe`, `rate limited`,
+  `token rejected`, `refused: token lacks the <ability> permission` after three
+  consecutive ability failures from the CLI); Phase 4 adds `instances`
+  (`cloud (active), homelab`) and `instance <id>` (`active <id>` or
+  `unknown instance <id>`), and the action verbs resolve against the active instance;
+  the outcome is `status.lastAction`. An argument is tried as a uuid over every list
+  first (a uuid-shaped argument, 20+ lowercase alphanumerics, the store does not hold is
+  a uuid miss and never a name), then as a resource label (`Model.resolveActionTarget`,
+  in front of the gate; resources only, never deployments, servers or tags, so a tag
+  name cannot fan out unconfirmed; exact, then case-folded). CLI verbs never confirm.
+  The uuid or name echoed back is bounded to 64 characters and one line; the `ipc` log
+  line carries the resolved uuid8 on success and `-` otherwise, and
+  `status.lastAction.uuid8` is `""` for an IPC call refused by a readiness gate or by
+  name (`unknown name`, `ambiguous name`); a uuid-shaped miss keeps the argument's
+  first 8.
 - Hot reload: saving under `~/.config/omarchy/plugins/` reloads the plugin. `bin/dev-sync`
   copies the repo there (the validator refuses symlinks).
 
@@ -573,7 +575,7 @@ and dim refusals, 6 s for failures), never the callout, never `_error`, `_backof
 `_probeMode` or `consecutiveFailures`. The one escalation is a 429, which enters the
 instance-wide pause through `_pauseFor` (extracted from `_fail`). A reaped action says
 "Sent, but Coolify did not answer", keeps its pending entry, and is never retried.
-`status` gains `lastAction { verb, uuid8, code, curlExit, ms, at, result, instance }` (`instance` since Phase 4; `uuid8` is `""` for an IPC call refused before resolution: a readiness gate, `unknown name`, `ambiguous name`), `pending`,
+`status` gains `lastAction { verb, uuid8, code, curlExit, ms, at, result, instance }` (`instance` since Phase 4; `uuid8` is `""` for an IPC call refused by a readiness gate or by name, and the argument's first 8 for a uuid-shaped miss), `pending`,
 `pendingStale`, `actionsLastMin` and `inflightAction`; the log line is
 `coolwatch action <verb> <code> exit=<n> <ms>ms <uuid8>`.
 
