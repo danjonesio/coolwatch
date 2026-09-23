@@ -354,7 +354,8 @@ its raw key-event function is never called.
 A single caption line between the hero and the callout, dim for 2.2 s after a success
 ("Deployment queued", "Stop requested", "Deployment cancelled", "Validation started")
 or a dim refusal ("api is already stopping", "Busy, try again", "Nothing to start" when a
-verb does not apply to the target, which the CLI can trigger), urgent for 6 s after a
+verb does not apply to the target, which the CLI can trigger, "No match for that name",
+"That name matches more than one resource" for a CLI name argument), urgent for 6 s after a
 failure ("Coolify no longer has that resource|deployment|server" when the target vanished
 before dispatch, "Too many requests · try again shortly", "Rate limited · backing off Ns",
 "Not configured", "Config is unsafe", "Token rejected") or after a Coolify answer ("Token lacks the deploy permission", "Coolify said: Deployment cannot be
