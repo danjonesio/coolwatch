@@ -47,6 +47,7 @@ First matching row wins (`Model.barState`):
 | 4 | Waiting for token | `tokenCommand` running | `󰅟` | yes | no | "Coolwatch — waiting for token command" |
 | 5 | Token rejected | 401 | `󰧠` | yes | no | "Coolwatch — token rejected" |
 | 6 | API disabled / IP blocked | 403 | `󰧠` | yes | no | "Coolwatch — API disabled on this instance" / "Coolwatch — this IP is not allowed" |
+| 6b | Coolify not responding (2026-09-22) | a 401 or HTTP error that `GET /health` contradicts | `󰅤` F0164 | yes | no | "Coolwatch — Coolify is not responding (502)"; the code is the health answer's, omitted when 0 |
 | 7 | Offline | curl exit 6/7/28/35 | `󰅤` F0164 | yes | no | "Coolwatch — offline, retrying" |
 | 7b | Certificate rejected (Phase 4) | curl exit 60 | `󰧠` | yes | no | "Coolwatch — certificate rejected, retrying" |
 | 8 | Rate limited | 429 | `󰅟` | yes | no | "Coolwatch — rate limited, backing off Ns" |
@@ -81,8 +82,8 @@ Card padding is the `KeyboardPanel` default. Column spacing `Style.space(12)`.
 │ DEPLOYMENTS                                       │  PanelSectionHeader
 │ 󰦖 api          main · fix login redirect   1m 20s │  active: spinner, name, commit, elapsed
 │ 󰔟 worker       queued                             │  queued
-│ 󰄬 web          finished                    4m ago │  recent terminal (dimmed)
-│ 󰅙 cron         failed                     12m ago │  failed in urgent
+│ 󰄬 web          finished           2m 21s · 4m ago │  recent terminal (dimmed): duration · age
+│ 󰅙 cron         failed             1m 4s · 12m ago │  failed in urgent
 │ ───────────────────────────────────────────────── │
 │ SERVERS                                           │
 │ ● web-1        10.0.0.4 · 7 resources             │  ● foreground = reachable
@@ -151,13 +152,22 @@ config callout the empty list reads `e edit config · …`.
 | token command failed | "The token command exited N. Its output is never logged; run it yourself to see why." |
 | waiting for token | "Running the token command…" |
 | 401 | "Create a token in Coolify → Security → API Tokens with the read ability." |
+| 401, health OK | "Coolify is up and rejected this token. Create a new one in Coolify → Security → API Tokens with the read ability." |
+| 401, health 401/403 | "<host> also refused Coolify's unauthenticated health check (401), so something in front of Coolify may be blocking this machine. If the proxy is expected, the token may have been revoked." (button kept) |
+| Coolify not responding, health 3xx | "<host> redirected Coolify's health check (302). Check the url in ~/.config/coolwatch/config.json: the scheme or the path is probably wrong." |
+| Coolify not responding, health 404 or HTML | "Nothing at <host> answers as Coolify. Check the url in ~/.config/coolwatch/config.json." |
+| Coolify not responding, health 401/403 | "<host> refused Coolify's unauthenticated health check (401), so something in front of Coolify is blocking this machine. Retrying." |
+| Coolify not responding, health ≥ 500 | "<host> answered 502 on Coolify's health check, so this is not a token problem. Retrying." |
+| Coolify not responding, health over the cap | "<host> sent a page, not Coolify's health answer. Retrying." |
+| Coolify not responding, any other code | "<host> did not answer Coolify's health check (400). Retrying."; the parenthesis is omitted when there is no code |
 | 403 API disabled | "Enable it in Settings → Advanced → API Access." |
 | 403 IP | "Add this machine's IP to the token's allowed list in Coolify → Security → API Tokens." |
 | 403 ability | "The token is missing the <ability> ability." |
 | 429 | "Backing off Ns." |
-| offline | "Retrying." |
+| offline | "Nothing answered at <host>. Retrying." |
 | too large | "Coolify's response exceeded 8 MB and was dropped." |
 | other HTTP | the redacted Coolify message, else "Coolify returned <code>." |
+| other HTTP, health OK, no data | "Coolify is up, but the API returned 500.", then Coolify's redacted message on a second line when it sent one; a body that was not JSON reads "Coolify is up, but the API returned something that is not JSON (200)." |
 | partial | "<kind> is unavailable." |
 
 ### Instance chips (Phase 4)
@@ -177,15 +187,17 @@ Rows are `CursorSurface`s. Left glyph by status: `󰦖` in progress (`bar.urgent
 queued (dim), `󰄬` finished (dim), `󰅙` failed (`Color.accent`: red in Aetheria while `bar.urgent` is yellow-green), `󰜺` cancelled (dim). Name in
 body weight, "branch · commit message" in caption dim (the branch is the joined
 application's `git_branch`; the first seven characters of the commit when the join
-misses), right-aligned elapsed or age. Expanded row (Phase 2) shows an action row:
+misses), right-aligned: the ticking elapsed on a running row; on a terminal one how long the
+deployment ran, from Coolify's `created_at → finished_at`, then the age (`2m 21s · 4m ago`);
+the age alone when Coolify's pair is missing. Expanded row (Phase 2) shows an action row:
 **Logs** first (Phase 4; `L` is the direct key, so Enter, Enter reaches the build log),
 **Cancel** (only while queued or in progress; `foreground: root.urgent`) or **Dismiss** (a
 terminal row; `x` does the same), **Open**. A pending cancel appends " · cancelling…" to the caption in accent. The section shows all active plus the newest 5 terminal deployments from the
 last hour; older ones drop out on their own (Phase 3 persists them across restarts; the
 history view below, reached from an application's strip, holds the rest). It never goes
 blank while there is an outcome to show (Phase 4b): with nothing active and nothing under
-an hour old, the newest terminal deployment stays with its age (`3h ago`, `2d ago`) until
-it is dismissed. Every terminal row carries a `×` (`Model.G.dismiss`, U+00D7) at its right
+an hour old, the newest terminal deployment stays with its duration and age (`2m 21s · 3h ago`,
+`1m 4s · 2d ago`) until it is dismissed. Every terminal row carries a `×` (`Model.G.dismiss`, U+00D7) at its right
 edge, dim, foreground while the row has the cursor (`hasCursor`, never `containsMouse`);
 one click on it, `x` on the row, or **Dismiss** in the strip acknowledges. Dismiss clears
 that row **and every older terminal entry**, so the section reads "Nothing deploying."
@@ -195,8 +207,11 @@ entries stay in `recent` for dedupe with `dismissed: true` and are hidden from t
 at any age; the status line reads "Dismissed". The file keeps entries for seven days, so
 a Friday build is still Monday's last deployment.
 
-Elapsed time ticks every second while the panel is open (a `Timer` on `root.opened`),
-formatted `1m 20s`, `45s`, `2h 03m`.
+A running row's elapsed ticks every second while the panel is open (a `Timer` on
+`root.opened`), formatted `45s`, `1m 20s`, `2h 03m`. The age beside it (`Just now`, `4m ago`,
+`3h ago`, `2d ago`) follows the same clock and changes once a minute. A terminal row's
+duration is fixed from Coolify's `created_at → finished_at` and is never recomputed. A
+terminal row without Coolify's pair renders the age alone; it is not a state.
 
 ### Log view (Phase 4)
 
@@ -244,8 +259,8 @@ is busy).
 
 **History** in an application's strip opens `‹ <app> · N deployments`: ten rows newest
 first, each `glyph · status word` over `branch` / `restart` / `deploy` (never the string
-`HEAD`), right-aligned age from the row's timestamps; then `Show 10 more (10 of 39)`
-until the count is reached. Enter on a row opens that build's log (a second view; `h`
+`HEAD`), right-aligned `duration · age` on a terminal row (a running row keeps its age); then
+`Show 10 more (10 of 39)` until the count is reached. Enter on a row opens that build's log (a second view; `h`
 returns to the history with the cursor still on that row). Pages are fetched on demand,
 never on a timer, and never touch Recent. States: `Loading history…`, `No deployments
 recorded for this application.`, `Coolify no longer has that application.`
@@ -339,7 +354,8 @@ its raw key-event function is never called.
 A single caption line between the hero and the callout, dim for 2.2 s after a success
 ("Deployment queued", "Stop requested", "Deployment cancelled", "Validation started")
 or a dim refusal ("api is already stopping", "Busy, try again", "Nothing to start" when a
-verb does not apply to the target, which the CLI can trigger), urgent for 6 s after a
+verb does not apply to the target, which the CLI can trigger, "No match for that name",
+"That name matches more than one resource" for a CLI name argument), urgent for 6 s after a
 failure ("Coolify no longer has that resource|deployment|server" when the target vanished
 before dispatch, "Too many requests · try again shortly", "Rate limited · backing off Ns",
 "Not configured", "Config is unsafe", "Token rejected") or after a Coolify answer ("Token lacks the deploy permission", "Coolify said: Deployment cannot be
@@ -439,7 +455,9 @@ only scrolled into view when it would fall below the card.
 ## Loading, empty and error states
 
 Bodies are in the Callout table above. Precedence: config > token > auth > network >
-partial > loading > healthy.
+partial > loading > healthy. A token rejection or an HTTP error that `GET /health`
+contradicts is rewritten to "Coolify not responding" before anything renders; nothing
+here out-ranks anything.
 
 | Situation | Hero meta | Body |
 |---|---|---|
@@ -450,7 +468,8 @@ partial > loading > healthy.
 | Config readable by others, inline token | healthy meta | warning callout; polling continues |
 | `tokenCommand` running | "WAITING FOR TOKEN" | callout |
 | `tokenCommand` failed | "TOKEN UNAVAILABLE" | callout with the exit code |
-| 401 | "TOKEN REJECTED" | "Create a token in Coolify → Security → API Tokens with the read ability." |
+| 401 | "TOKEN REJECTED" | "Create a token in Coolify → Security → API Tokens with the read ability."; with health OK the body starts "Coolify is up and rejected this token." |
+| 401 or HTTP error that the health check contradicts | "COOLIFY NOT RESPONDING" | callout naming the host and the health answer's code; last snapshot stays; "Showing data from N ago."; never the partial presentation, never Edit config |
 | 403 API disabled | "API DISABLED" | "Enable it in Settings → Advanced → API Access." |
 | 403 IP not allowed | "IP NOT ALLOWED" | callout |
 | 403 ability | normal | from a poll: callout naming the missing ability; from an action: the status line only |
@@ -469,6 +488,9 @@ partial > loading > healthy.
 
 ## Notifications
 
+No notification comes from the health check: "Coolify not responding" is a callout and a
+bar state only (2026-09-22).
+
 Toasts use Omarchy's notification style automatically. Copy is short and names the
 thing:
 
@@ -476,8 +498,9 @@ thing:
 stripped (`storefront:main-h0wx…` → `storefront`), elided to 32, the uuid's
 first 8 characters when the name is empty or is Coolify's generated `<uuid>-<digits>`
 shape for an unnamed app (`xyhpwdxqu33omjgwuo6c7cjp-200537415987` → `xyhpwdxq`, which
-matches the log lines). One rule for every toast; the panel still shows the raw name. `dur` is `createdAt → finishedAt` ("1m 42s"), empty when either is
-unparseable; `sub` is the panel's `branch · commit message`. Headlines are elided at 72,
+matches the log lines). One rule for every toast; the panel still shows the raw name. `dur` is `createdAt → finishedAt` ("1m 42s"; a queue wait is inside it, Coolify has no start
+time), empty when either is unparseable, reversed or over 7 days; the panel's terminal rows
+render the same value; `sub` is the panel's `branch · commit message`. Headlines are elided at 72,
 bodies at 96 (the toast text box is 304 px). An empty body is omitted, which gives the
 compact one-line toast. With two or more instances every body ends in ` · <instance
 name>` (`Deployed api` / `21s · main · Coolify Cloud`); the headline never changes.

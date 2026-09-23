@@ -211,6 +211,72 @@ Left alone, on purpose
 - Marketplace submission: README with install/usage/remove, `preview.png`, public repo,
   issue form at plugins.omarchy.org.
 
+## Backlog — 1.x candidates (opened 2026-09-14, after the 1.0.0 submission)
+
+Each item is its own PR into `develop`; a release bundles whatever is merged
+(`docs/release.md`). Nothing here breaks a product lock: REST only, no metrics, no
+second process. Ordered by value over cost inside each group.
+
+Done from this list: **Health before auth** (PR #13, merged 2026-09-22 into `develop`;
+`docs/plans/health-before-auth.md` and its build record). One unauthenticated
+`GET /health` when a poll fails with an HTTP answer; the callout tells "Coolify not
+responding" from "token rejected". It also fixed a pre-existing bug: a 2xx whose body did
+not parse counted as a success and cost about 49 requests in the first minute on a wrong URL.
+**Build duration** (PR #15, merged 2026-09-23 into `develop`; `docs/plans/build-duration.md` and
+its build record). Terminal rows in the section and in History read `duration · age`
+(`2m 21s · 4m ago`); Coolify has no `started_at`, so the duration is `created_at → finished_at`
+and the finished toast already carried it. The cancelled toast still has no body (open call).
+**IPC verbs by name** (PR #17, merged 2026-09-23 into `develop`;
+`docs/plans/ipc-verbs-by-name.md` and its build record). `deploy <label>` resolves the
+panel's label on the active instance (uuid first, resources only, exact then case-folded),
+`unknown name` / `ambiguous name` otherwise; a uuid-shaped miss still reads `unknown uuid`.
+
+### Small (an hour each, `Model.js` + a test, patch or minor)
+
+- **Preview builds labelled.** Coolify builds every open pull request of a GitHub-App
+  application as its own copy when previews are on; those deployments carry
+  `pull_request_id` and today look like a production deploy. Row and toast say
+  `PR #123` (`Model.appLabel` caption, `notifyCopy`).
+- **Commit message on the cursor row.** Parsed (`commit_message`) and never shown. A
+  `PanelToolTip` on a deployment row, same binding as the elided-name tip; `notifySafe`
+  is not needed (it never reaches argv).
+- **Coolify version in the hero meta.** `/version` is fetched for the instance probe and
+  never displayed. No "update available": that needs a second source.
+- **`y` copies the cursor row's uuid** through `wl-copy` (`Util.execArgv`), for the IPC
+  verbs. Panel-only key.
+- **Hyprland keybinding in the README.** A `bindd` line for the toggle IPC; the biggest
+  usability gap for the cost of one doc line.
+
+### Medium (a plan, a fixture, a needs-human list)
+
+- **Per-instance notify overrides.** `instances[].notify` merged over the top-level
+  block, so a noisy staging Coolify can be quiet and production loud. Parsing and tests
+  only; every notify state is already per context.
+- **Long build warning.** A `notify.longBuildMin` threshold (default off): one `normal`
+  toast when a build has run past it, from local elapsed time, once per uuid. Not a
+  progress claim.
+- **Toast click on a building deployment** opens its log the way a failed one does
+  (`--exec … log <uuid>`), and on a queued one offers nothing (a click cannot confirm a
+  cancel).
+- **Database backup state.** `GET /databases/{uuid}` may carry scheduled-backup status
+  that `/resources` does not; a failed backup is the failure nobody notices. Record a
+  fixture first; if the field is not there, drop the item.
+- **Log search.** `/` inside the log overlay reuses the filter contract to narrow lines
+  and jump between matches; the view already holds the text.
+- **Idle-aware polling.** Halve every interval while the session is locked or idle if
+  the shell exposes that state (check `hypridle`/lock signals in `qs.Commons` first);
+  restores the full cadence on unlock with one immediate poll. Saves rate budget on a
+  desk that is not being looked at.
+- **Validate outcome.** Validate has no observable end; a single `/servers/{uuid}` read
+  at the end of the pending window would let the row show the reachability word that
+  changed. One request, only after the action.
+
+### Deferred (decide after marketplace feedback)
+
+- The Phase 5 overlay console.
+- Team switching: a token belongs to one team, so "one `instances[]` entry per team"
+  already covers it; document the pattern, build nothing.
+
 ## Out of the plan
 
 - Utilisation via SSH to each server and Sentinel's localhost API. Dropped 2026-09-13:

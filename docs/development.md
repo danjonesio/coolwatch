@@ -13,7 +13,12 @@ that runs inside `omarchy-shell`; there is no daemon and no second process.
 
 Status: **Phases 1 ("see"), 2 ("act"), 3 ("notify") and 4 (depth: build logs, container
 logs, history, tag deploy; instances: one `InstanceCtx` per configured Coolify, chips,
-per-instance state files) and 4b (polish) all merged; manifest 1.0.0 (2026-09-13).**
+per-instance state files) and 4b (polish) all merged; manifest 1.0.0 (2026-09-13).
+Manifest 1.1.0 (2026-09-23): health before auth (one unauthenticated `GET /health` when a
+poll fails with an HTTP answer; the callout tells "Coolify not responding" from "token
+rejected"; `docs/plans/health-before-auth.md`); build duration on terminal and History rows
+(`duration · age` from `created_at → finished_at`; `docs/plans/build-duration.md`); IPC
+verbs by name (`docs/plans/ipc-verbs-by-name.md`).**
 Read `docs/roadmap.md` before writing code.
 
 Branches (since 2026-09-14): work branches from `develop` into `develop`; `master` is the
@@ -51,6 +56,13 @@ moves only by a release PR from `develop` (`docs/release.md`: bump `manifest.jso
   by `_viewDone` from the same three sites as `_drainDone`. Their failure is a message in
   the view and nothing else: never `_fail`, `_error`, `_backoff`, `_probeMode` or
   `consecutiveFailures`, and a success never lifts probe mode; only a 429 pauses (SR29).
+  The health check (2026-09-22) is a diagnostic in the same family with its own sink:
+  `health` settles in `_healthDone` and touches nothing else (never `_fail`, `_succeeded`,
+  `_backoff`, `_probeMode`, `_pauseFor`, `_markPoll`, `rateLimitRemaining` or a toast); a
+  health 2xx never lifts probe mode; a non-JSON body never counts as success (`_dispatch`
+  reports it, `_finish`'s `anyOk` follows); `Model.errorWithHealth` combines the verdict
+  with the poll's error at render time and only ever hardens it (`down`), never softens
+  `auth`; the body is capped at 16 chars and never stored, logged or shown (SR40).
   The active build's log is read off the deployments poll that already carries it and the
   terminal body off the drain: **no log poller**. Log text lives in the service's view
   slices (`views`, beside `snapshot`) and the panel's overlay model only; it never enters
@@ -160,9 +172,10 @@ moves only by a release PR from `develop` (`docs/release.md`: bump `manifest.jso
   panel). Deploy, Redeploy, Restart, Start, Validate do not. CLI verbs never confirm: typing the
   verb is the confirmation.
 - One deploy button follows the state: Deploy on a stopped application, Redeploy on a
-  running one (both `POST /deploy`; `d` and IPC `deploy` resolve the same way). Only
-  applications get it (`POST /deploy` accepts services and databases but that is Start
-  under another name). A left click on a row opens its strip; the buttons are clickable. A strip of more than four
+  running one (both `POST /deploy`; `d` and IPC `deploy` resolve the same way, and a name
+  argument resolves to the row the panel shows: `Model.appLabel`, resources only, uuid
+  first). Only applications get it (`POST /deploy` accepts services and databases but that
+  is Start under another name). A left click on a row opens its strip; the buttons are clickable. A strip of more than four
   buttons folds: the lifecycle verbs plus **More** on the first line, Logs · History · Open beneath once More is open
   (`Model.stripFor`; More is panel state, never a verb; text keys reach a folded button). The ListView model is a
   `ListModel` patched in place by key (`Model.listPatch`), never reassigned: a swap resets the scroll. Open targets the resource's
@@ -199,7 +212,9 @@ moves only by a release PR from `develop` (`docs/release.md`: bump `manifest.jso
   (the 200/min limit is per token): each `status.instances[].requestsLastMin` stays under
   20 with the panel closed once settled, with the same allowances as above (a panel open
   primes and drains every context at once: ≤ 24 per instance in the window after it
-  opens), and `requestsTotalLastMin` is reported alongside (measured 2026-09-12 with two
+  opens; the health diagnostic adds at most 2 per instance and only while a poll is
+  failing with an HTTP answer, see `docs/architecture.md` "Diagnostics, not polls"), and
+  `requestsTotalLastMin` is reported alongside (measured 2026-09-12 with two
   entries on one account from a quiet start: 17–19 each, 35–38 total; 24 each in the
   window after a panel opened).
 
@@ -269,13 +284,15 @@ omarchy-shell io.github.danjonesio.coolwatch status | jq .ui   # Phase 4b: {load
 omarchy-shell io.github.danjonesio.coolwatch status | jq '{logView, buildLogsHeld, history, tags, sensitive, dep: (.perKind.deployments | {lastBytes, bytesLastMin, skipped})}'   # Phase 4 fields, counts only
 quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch (notify|recent|drain|logview) '   # unanchored: the log prefixes "DEBUG qml:"
 quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [A-Za-z0-9_-]+/(buildlog|containerlog|service|history|tags) '   # the view fetches ("<instance id>/<kind>" since Phase 4); a failure logs "<id>/<kind> view failed: <kind> http=<n>"
-omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`; resolves against the active instance only
+omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid|name>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" (uuid-shaped, not in the store) | "unknown name <name>" | "ambiguous name <name>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`; resolves against the active instance only; a name is the panel's label (resources only, uuid first)
 omarchy-shell io.github.danjonesio.coolwatch instances                          # -> "cloud (active), homelab"
 omarchy-shell io.github.danjonesio.coolwatch instance homelab                   # -> "active homelab" | "unknown instance homelab"
 omarchy-shell io.github.danjonesio.coolwatch log <deployment uuid>             # -> "log <uuid8>" | "invalid uuid": opens the panel on that build's log (a failed toast's click); the log says "coolwatch ipc log <uuid8> -> summoned|open|no panel <instance id>"
 omarchy-shell io.github.danjonesio.coolwatch status | jq '{activeInstance, requestsTotalLastMin, instances: [.instances[]|{id, configState, requestsLastMin, sensitive, paused, error}]}'   # Phase 4 instances; top-level keys mirror the active one
 omarchy-shell io.github.danjonesio.coolwatch status | jq '[.instances[]|{id, requestsLastMin}]'   # the rate gate, per token
-quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [A-Za-z0-9_-]+/(deployments|resources|servers) '   # per-request, failure and reaper lines carry "<instance id>/<kind>" since Phase 4 (ids may hold capitals); "coolwatch notify|recent|drain|logview|action " lines do not
+omarchy-shell io.github.danjonesio.coolwatch status | jq '{activeInstance, error, health, probeMode}'   # health before auth: error is the shown kind (down = the health check contradicted a 401/HTTP error); health = {state, httpCode, curlExit, at}, never a body
+omarchy-shell io.github.danjonesio.coolwatch status | jq '[.instances[]|{id, error: (.error.kind // "ok"), health: .health.state, requestsLastMin}]'   # a never-failed instance reads health unknown and has no perKind.health
+quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [A-Za-z0-9_-]+/(deployments|resources|servers|health) '   # per-request, failure and reaper lines carry "<instance id>/<kind>" since Phase 4 (ids may hold capitals); "coolwatch notify|recent|drain|logview|action " lines do not
 
 # rollback of a Phase 4 instances build to the depth build (a second instances[] entry is validated and ignored by the depth build;
 # recent-<id>.json files are ignored; recent.json's optional id field is ignored by the older parseRecent)
@@ -310,6 +327,11 @@ bin/record-fixture deployments-active /deployments
 
 ## Coolify facts that bite
 
+- `GET /api/v1/health` is unauthenticated, outside the ability system, and answers the plain
+  text `OK` (content-type text/html on Cloud, verified 2026-09-22); it is absent from the
+  openapi. A 404 there means an older Coolify without the route, not a wrong URL. A wrong
+  path or an `http://` url on an https-only instance answers 301/302 with an HTML page on
+  every route, including the API.
 - Apps carry only integer `environment_id` / `destination_id`, never a project or
   server uuid. `GET /resources` is the flat everything with status and
   `environment_id`; `GET /projects/{uuid}` returns environments with the integer `id`

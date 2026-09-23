@@ -260,7 +260,8 @@ var META = {
   offline: "Offline · retrying",
   tls: "Certificate rejected",
   toolarge: "Response too large",
-  http: "Coolify error"
+  http: "Coolify error",
+  down: "Coolify not responding"     // render-time only: errorWithHealth, never errorFor (health before auth)
 }
 
 var OFFLINE_EXITS = { 6: true, 7: true, 28: true, 35: true }
@@ -313,6 +314,78 @@ function retryAfterSec(headers, attempt) {
   var v = headers ? headers.retryAfter : null
   if (typeof v === "number" && isFinite(v) && v === Math.floor(v)) return Math.min(300, Math.max(1, v))
   return (attempt === undefined || attempt === null || attempt <= 1) ? 30 : 60
+}
+
+// ---- health before auth (2026-09-22) ------------------------------------------------------
+// GET /api/v1/health is unauthenticated and answers the plain text "OK". It runs only when a
+// poll fails with an HTTP answer (never while healthy, never at token-ready), on its own Req,
+// and its verdict is combined with the poll's error at render time by errorWithHealth. The
+// body is bounded here and never stored, logged or shown (SR26 shape).
+
+// The health body, trimmed and capped: "OK" or not. Never JSON.parsed.
+function parseHealth(body) {
+  return elide(String(body === undefined || body === null ? "" : body).trim(), 16)
+}
+
+// One splitResponses record (or null) -> { state, httpCode, curlExit, at }. States:
+//   ok       200 with body OK
+//   absent   404: the route does not exist on this Coolify (older version), not proof of anything
+//   blocked  401/403: something refused an unauthenticated request; never proof the token is fine
+//   fail     any other HTTP answer (3xx, 4xx, 5xx, 2xx with a body that is not OK), or curl 63
+//   unknown  429, a curl-level failure, a reap, or no record: changes nothing
+function healthResult(r, nowMs) {
+  var at = nowMs || Date.now()
+  if (!r) return { state: "unknown", httpCode: 0, curlExit: 0, at: at }
+  var exit = r.exit === undefined || r.exit === null ? 0 : Number(r.exit)
+  var code = r.code === undefined || r.code === null ? 0 : Number(r.code)
+  var state
+  if (exit === 63) state = "fail"
+  else if (exit !== 0) state = "unknown"
+  else if (code === 200 && parseHealth(r.body) === "OK") state = "ok"
+  else if (code === 404) state = "absent"
+  else if (code === 401 || code === 403) state = "blocked"
+  else if (code === 429) state = "unknown"
+  else state = "fail"
+  return { state: state, httpCode: code, curlExit: exit, at: at }
+}
+
+// The floor between two health requests per instance (Service._probeHealth), and therefore the
+// window inside which a fresh failure is guaranteed a re-probe. errorWithHealth's staleness
+// rule is measured against it: an OK older than the failure by more than this is not evidence.
+var HEALTH_FLOOR_MS = 30000
+
+// The probe gate: a poll error that came back as an HTTP answer and is one of the two kinds
+// the health check can explain. Every other kind is excluded by construction (a recognised
+// 403 is Coolify's own word, 429 is the limiter, a curl exit is a transport fact).
+function healthWanted(e) {
+  return !!e && (e.kind === "auth" || e.kind === "http") && Number(e.curlExit || 0) === 0
+}
+
+// Combine a poll error with the health verdict. Returns the same object when there is nothing
+// to add; otherwise a fresh error (kind "down", or the same kind annotated with healthState /
+// healthCode / healthExit for the body). Health only hardens a diagnosis:
+//   auth: fail -> down; ok or blocked -> auth annotated (the button stays); absent -> as is
+//   http: fail or blocked -> down; absent -> down only when the poll itself 404'd; ok -> annotated
+//   anything else -> as is. An "ok" older than the failure it explains by more than the probe
+//   floor is stale -> as is (a panel open or a probe tick re-stamps the failure within the floor,
+//   and the floor refuses a re-probe there, so the standing OK is the freshest evidence possible).
+function errorWithHealth(e, health) {
+  if (!e || !health || health.state === "unknown") return e
+  if (health.state === "ok" && (health.at || 0) < (e.at || 0) - HEALTH_FLOOR_MS) return e
+  var kind = null
+  if (e.kind === "auth") {
+    if (health.state === "fail") kind = "down"
+    else if (health.state === "ok" || health.state === "blocked") kind = "auth"
+  } else if (e.kind === "http") {
+    if (health.state === "fail" || health.state === "blocked") kind = "down"
+    else if (health.state === "absent") { if (Number(e.httpCode) === 404) kind = "down" }
+    else if (health.state === "ok") kind = "http"
+  }
+  if (!kind) return e
+  var extra = { request: e.request, httpCode: e.httpCode, curlExit: e.curlExit, at: e.at, staleSince: e.staleSince,
+                healthState: health.state, healthCode: health.httpCode || 0, healthExit: health.curlExit || 0 }
+  if (e.notJson) extra.notJson = true
+  return makeError(kind, kind === "down" ? "" : e.detail, extra)
 }
 
 // ---- normalise ------------------------------------------------------------------------
@@ -383,6 +456,13 @@ function normaliseResources(arr) {
   })
 }
 
+// A timestamp is kept only as a non-empty string of at most the recent file's cap (40): the first
+// bound in the normalise layer, and load-bearing twice: it keeps a 10 MB stamp out of recentEntry's
+// redact() on every save and out of the per-tick parses in Panel.qml's right column. The file path
+// stays different on purpose (recentEntry truncates and stringifies); durationOf's bounds guard it.
+function tsField(v) {
+  return typeof v === "string" && v && v.length <= RECENT_STRING_FIELDS.createdAt ? v : null
+}
 function normaliseDeployment(d) {
   d = d || {}
   return {
@@ -395,9 +475,9 @@ function normaliseDeployment(d) {
     status: String(d.status || ""),
     commit: String(d.commit || ""),
     commitMessage: String(d.commit_message || "").split("\n")[0],
-    createdAt: d.created_at || null,
-    updatedAt: d.updated_at || null,
-    finishedAt: d.finished_at || null,
+    createdAt: tsField(d.created_at),
+    updatedAt: tsField(d.updated_at),
+    finishedAt: tsField(d.finished_at),
     url: typeof d.deployment_url === "string" ? d.deployment_url : null,
     restartOnly: !!d.restart_only,
     force: !!d.force_rebuild,
@@ -656,9 +736,16 @@ function notifyBody(text, max) {
   return notifySafe(text, max).replace(/&/g, "&amp;").replace(/</g, "&lt;")
 }
 
+// createdAt -> finishedAt (Coolify has no started_at, so a queue wait is inside it). Parse once and
+// compute from the two numbers: "" when either end is unparseable, reversed (a fabricated "0s" is a metric
+// the API did not give) or over the cap; "0s" for an equal pair (Coolify's stamps are second-granular).
+var DURATION_MAX_MS = 7 * 24 * 3600 * 1000   // longer than this is not a deployment: caps the string the name column is sized against
 function durationOf(d) {
-  var a = Date.parse(d.createdAt), b = Date.parse(d.finishedAt)
-  return isNaN(a) || isNaN(b) ? "" : elapsed(d.createdAt, b)
+  var a = Date.parse(d && d.createdAt), b = Date.parse(d && d.finishedAt)
+  if (isNaN(a) || isNaN(b)) return ""
+  var span = b - a
+  if (span < 0 || span > DURATION_MAX_MS) return ""
+  return span === 0 ? "0s" : elapsed(0, span)
 }
 function serverLabelFor(s, serverUuid) {
   if (!serverUuid) return ""
@@ -1036,6 +1123,7 @@ function barState(s) {
   if (ek === "auth") return dim(G.cloudAlert, "Coolwatch — token rejected")
   if (ek === "apidisabled") return dim(G.cloudAlert, "Coolwatch — API disabled on this instance")
   if (ek === "ipblocked") return dim(G.cloudAlert, "Coolwatch — this IP is not allowed")
+  if (ek === "down") return dim(G.cloudOff, "Coolwatch — Coolify is not responding" + (e.healthCode ? " (" + e.healthCode + ")" : ""))
   if (ek === "offline") return dim(G.cloudOff, "Coolwatch — offline, retrying")
   if (ek === "tls") return dim(G.cloudAlert, "Coolwatch — certificate rejected, retrying")
   if (ek === "ratelimited") return dim(G.cloud, "Coolwatch — rate limited, backing off " + (s.backoffSec || 0) + "s")
@@ -1076,6 +1164,7 @@ function barMark(b) { return !!b && (b.glyph === G.cloud || b.glyph === G.progre
 function instanceTroubleOf(x) {
   if (!x) return ""
   if (x.error === "ability") return "token lacks an ability"          // META.ability is empty by design (the callout composes it)
+  if (x.error === "down") return "not responding"                     // META.down lowercased would read "coolify not responding"
   if (x.error) return META[x.error] ? META[x.error].replace(/ · .*$/, "").toLowerCase() : "error"
   if (x.failed > 0) return plural(x.failed, "failed build")
   if (x.down > 0) return plural(x.down, "server") + " unreachable"
@@ -1142,6 +1231,21 @@ function calloutEditable(s) {
   return !!(s.warning && s.warning.kind === "permissions")
 }
 
+// The host in a callout body: the instance's url host, never fqdn (bin/check).
+function hostWord(s) { return hostOf(s && s.instance ? s.instance.url : "") || "Coolify" }
+
+// Bodies for the health-derived states (health before auth). Constant copy: only the host and a
+// numeric code from the health answer ever appear; the health body itself never does.
+function downBody(e, s) {
+  var host = hostWord(s), c = Number(e.healthCode || 0)
+  if (Number(e.healthExit) === 63) return host + " sent a page, not Coolify's health answer. Retrying."
+  if (c >= 300 && c < 400) return host + " redirected Coolify's health check (" + c + "). Check the url in ~/.config/coolwatch/config.json: the scheme or the path is probably wrong."
+  if (c === 404 || (c >= 200 && c < 300)) return "Nothing at " + host + " answers as Coolify. Check the url in ~/.config/coolwatch/config.json."   // a 2xx here is a page, not OK
+  if (c === 401 || c === 403) return host + " refused Coolify's unauthenticated health check (" + c + "), so something in front of Coolify is blocking this machine. Retrying."
+  if (c >= 500) return host + " answered " + c + " on Coolify's health check, so this is not a token problem. Retrying."
+  return host + " did not answer Coolify's health check" + (c ? " (" + c + ")" : "") + ". Retrying."
+}
+
 function calloutBody(e, s) {
   switch (e.kind) {
     case "noconfig": return "Create ~/.config/coolwatch/config.json (chmod 600):\n" + SAMPLE_CONFIG
@@ -1149,15 +1253,25 @@ function calloutBody(e, s) {
     case "unsafe": return "Anyone on this machine can rewrite it. Run: chmod 600 ~/.config/coolwatch/config.json"
     case "tokencmd": return "The token command exited " + (e.curlExit || 0) + ". Its output is never logged; run it yourself to see why."
     case "waitingtoken": return "Running the token command…"
-    case "auth": return "Create a token in Coolify → Security → API Tokens with the read ability."
+    case "auth":
+      if (e.healthState === "ok") return "Coolify is up and rejected this token. Create a new one in Coolify → Security → API Tokens with the read ability."
+      if (e.healthState === "blocked") return hostWord(s) + " also refused Coolify's unauthenticated health check (" + (e.healthCode || 0) + "), so something in front of Coolify may be blocking this machine. If the proxy is expected, the token may have been revoked."
+      return "Create a token in Coolify → Security → API Tokens with the read ability."
     case "apidisabled": return "Enable it in Settings → Advanced → API Access."
     case "ipblocked": return "Add this machine's IP to the token's allowed list in Coolify → Security → API Tokens."
     case "ability": return "The token is missing the " + (abilityOf(e.detail) || "required") + " ability."
     case "ratelimited": return "Backing off " + ((s && s.backoffSec) || e.backoffSec || 30) + "s."
-    case "offline": return "Retrying."
+    case "offline": return "Nothing answered at " + hostWord(s) + ". Retrying."
+    case "down": return downBody(e, s)
     case "tls": return "curl could not verify this instance's certificate; nothing was sent. Fix the certificate (or trust its CA on this machine). Retrying."
     case "toolarge": return "Coolify's response exceeded 8 MB and was dropped."
-    case "http": return e.detail || ("Coolify returned " + (e.httpCode || 0) + ".")
+    case "http":
+      if (e.healthState === "ok") {
+        if (e.notJson) return "Coolify is up, but the API returned something that is not JSON (" + (e.httpCode || 0) + ")."
+        var synthetic = e.detail === "Coolify returned " + (e.httpCode || 0)   // errorFor's fallback when Coolify sent no message
+        return "Coolify is up, but the API returned " + (e.httpCode || 0) + "." + (e.detail && !synthetic ? "\n" + e.detail : "")
+      }
+      return e.detail || ("Coolify returned " + (e.httpCode || 0) + ".")
     default: return e.detail || ""
   }
 }
@@ -1297,6 +1411,7 @@ function deploymentRow(d, originStr) {
     type: "deployment", key: "dep:" + d.uuid, uuid: d.uuid, glyph: g.glyph, tone: g.tone,
     name: appLabel(d.appName, d.uuid), sub: [d.branch, d.commitMessage].filter(function (x) { return !!x }).join(" · "),   // Phase 4b: the toast label, not Coolify's decorated name
     createdAt: d.createdAt, updatedAt: d.updatedAt, terminal: !!TERMINAL[d.status], status: d.status,
+    finishedAt: d.finishedAt || null,
     url: openUrl("deployment", d, originStr), pendingVerb: ""
   }
 }
@@ -1448,6 +1563,46 @@ function actionRequest(s, verb, uuid) {
   return { ok: true, verb: a.id, uuid: uuid, name: row.name, targetType: targetTypeOf(row),
            kind: row.type === "resource" ? row.kind : null, confirm: a.confirm, destructive: a.destructive,
            status: row.type === "resource" ? obj.status : null }
+}
+
+var IPC_ARG_MAX = 64          // the IPC argument's own bound: UUID_RE's ceiling and _refuse's echo bound (not FILTER_MAX_TERM: a filter term is a different input)
+var UUID_SHAPED_RE = /^[a-z0-9]{20,}$/   // what appLabel treats as a Coolify uuid (the {20,} runs above); a miss on this shape is a uuid miss
+// The four lists actionRequest scans, by presence only. Kept beside the gate rather than
+// extracted from it so the single gate stays byte-for-byte; a fifth list goes in both.
+function holdsUuid(s, uuid) {
+  return [s.resources, s.deployments, s.servers, s.tags].some(function (l) {
+    return (l || []).some(function (x) { return !!x && x.uuid === uuid })
+  })
+}
+// Turns an IPC argument into a store uuid, in front of actionRequest (which stays the gate).
+// Uuid first, over every list the gate scans, so an existing uuid never changes meaning; then
+// the resource label the panel shows (appLabel on both sides: whitespace collapses, a pasted
+// decorated name and a 32+-char name both elide the same way; appLabel's regexes are
+// lowercase-only, so an upper-cased decorated paste does not resolve while an upper-cased
+// label does), exact first, then case-folded. Resources only: a deployment's label is its
+// application's, no verb applies to a server, and a tag name would fan out unconfirmed (SR35).
+// A uuid-shaped argument the store does not hold is a uuid miss and never a name: a script's
+// by-uuid call cannot be redirected to a resource named after a deleted uuid (the cost: a label
+// of 20+ lowercase letters and digits with nothing else is uuid-only). A row whose uuid is not a
+// UUID_RE string is invisible (normalise does not charset-check uuids; the same drop
+// normaliseTags makes), so a name never resolves to a string that would fail the gate's
+// re-test and reach stdout, the log or status through _refuse (SR15).
+function resolveActionTarget(s, arg) {
+  var a = String(arg === undefined || arg === null ? "" : arg).trim()
+  if (!a || a.length > IPC_ARG_MAX) return { ok: false, why: "unknownname" }
+  s = s || {}
+  if (UUID_RE.test(a) && holdsUuid(s, a)) return { ok: true, uuid: a, by: "uuid" }
+  if (UUID_SHAPED_RE.test(a)) return { ok: false, why: "unknown" }
+  var label = appLabel(a, ""), want = label.toLowerCase(), exact = [], folded = []
+  ;(s.resources || []).forEach(function (r) {
+    if (!r || typeof r.uuid !== "string" || !UUID_RE.test(r.uuid)) return
+    var l = appLabel(r.name, r.uuid)
+    if (l === label && exact.indexOf(r.uuid) < 0) exact.push(r.uuid)
+    if (l.toLowerCase() === want && folded.indexOf(r.uuid) < 0) folded.push(r.uuid)
+  })
+  var hits = exact.length ? exact : folded
+  if (hits.length === 1) return { ok: true, uuid: hits[0], by: "name" }
+  return { ok: false, why: hits.length ? "ambiguousname" : "unknownname" }
 }
 
 // "" when the action may launch now (SR6).
@@ -1693,7 +1848,8 @@ function rowRev(r) {
   return [r.type, r.glyph || r.dot || "", r.tone || "", r.name || r.title || r.text || "", r.sub || r.statusWords || "",
           r.open === undefined ? "" : String(r.open), r.count === undefined ? "" : String(r.count),
           r.dim === undefined ? "" : String(r.dim), r.kindHint || "", r.terminal === undefined ? "" : String(r.terminal), r.control || "",
-          r.pendingVerb || "", r.url ? "u" : "", r.actions ? r.actions.map(function (a) { return a.id }).join(",") : ""].join("")
+          r.pendingVerb || "", r.url ? "u" : "", r.actions ? r.actions.map(function (a) { return a.id }).join(",") : "",
+          r.finishedAt || ""].join("")   // the right column renders it (rowTime); set once per uuid, unlike updatedAt
 }
 
 function sameRows(a, b) {
@@ -1938,7 +2094,7 @@ function normaliseHistory(json) {
 // api row carries commit "HEAD" and no message). Rows carry timestamps, not ages.
 function historyRow(d, appUuid, originStr) {
   var r = deploymentRow(d, originStr)
-  r.type = "history"; r.key = "hist:" + d.uuid; r.appUuid = appUuid || null; r.finishedAt = d.finishedAt || null
+  r.type = "history"; r.key = "hist:" + d.uuid; r.appUuid = appUuid || null
   r.sub = d.restartOnly ? "restart" : (d.branch && d.branch !== "HEAD" ? d.branch : "deploy")
   return viewRow("history", r)
 }
@@ -2045,4 +2201,27 @@ function age(iso, nowMs) {
   var h = Math.floor(m / 60)
   if (h < 24) return h + "h ago"
   return Math.floor(h / 24) + "d ago"
+}
+
+// The right column of a deployment or a history row. A running section row shows the ticking
+// elapsed; a terminal row shows the duration Coolify gives (createdAt -> finishedAt; there is
+// no started_at, so a queue wait is inside it) beside how long ago it ended. A history row
+// that is not terminal keeps its age. No duration: the row reads exactly the age it read before.
+// age() || age() rather than age(a || b): a non-empty unparseable stamp must fall through, and a
+// finishedAt that durationOf rejected (reversed, over the cap) must not drive the age either: a
+// days-old row would read "Just now" off a year-3000 stamp. Then the row reads today's updatedAt age.
+function credibleFinish(t) {
+  var b = Date.parse(t.finishedAt)
+  if (isNaN(b)) return false
+  var a = Date.parse(t.createdAt)
+  if (!isNaN(a)) return b - a >= 0 && b - a <= DURATION_MAX_MS
+  var u = Date.parse(t.updatedAt)   // no start (an old recent.json entry): the record's own last write must sit within a deployment's duration (DURATION_MAX_MS) of the finish
+  return isNaN(u) || Math.abs(u - b) <= DURATION_MAX_MS
+}
+function rowTime(r, nowMs) {
+  var t = r || {}
+  if (t.type === "deployment" && !t.terminal) return elapsed(t.createdAt, nowMs)
+  var dur = t.terminal ? durationOf(t) : ""
+  var ago = (credibleFinish(t) ? age(t.finishedAt, nowMs) : "") || age(t.updatedAt, nowMs) || age(t.createdAt, nowMs)
+  return [dur, ago].filter(function (x) { return !!x }).join(" · ")
 }

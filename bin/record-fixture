@@ -22,7 +22,7 @@ fi
 deny='^(internal_db_url|external_db_url|docker_compose|docker_compose_raw|dockerfile|git_full_url|private_key|sentinel_token|sentinel_custom_url|value|custom_labels|configuration_snapshot|configuration_diff|logs|last_saved_proxy_configuration|last_applied_settings|last_saved_settings|validation_logs)$|^manual_webhook_secret_|^logdrain_|_token$|_password$|_secret$|_key$'
 body=$(printf 'url = "%s"\nsilent\nheader = "Authorization: Bearer %s"\nheader = "Accept: application/json"\n' \
   "${url%/}/api/v1$apipath" "$tok" | curl -q -S -K -)
-if [[ $apipath == /version ]]; then
+if [[ $apipath =~ ^/(version|health)$ ]]; then
   printf '%s\n' "$body" > "$root/tests/fixtures/$name.txt"
 else
   printf '%s' "$body" | jq --arg deny "$deny" '

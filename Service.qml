@@ -501,6 +501,7 @@ Item {
              rateLimitRemaining: null, backoffUntil: 0, paused: false, probeMode: false, openPanels: root._openPanels, baselineDone: false,
              topologyFetched: false, topologyLoaded: false, terminalQueue: 0, drainRetries: 0, recentPersisted: 0, recentRejected: false,
              error: root._configError ? { kind: root._configError.kind, request: "", httpCode: 0, curlExit: 0 } : null, warning: null,
+             health: { state: "unknown", httpCode: 0, curlExit: 0, at: 0 },
              bar: { glyph: "U+" + root.bar.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: root.bar.dimmed, active: root.bar.active },
              topologyQueue: 0, lastAction: null, pending: 0, pendingStale: 0, actionsLastMin: 0, inflightAction: false,
              baseline: { deployments: false, resources: false, servers: false, version: false },
@@ -512,13 +513,16 @@ Item {
 
   // CLI verbs never confirm: typing the verb is the confirmation. The result is the
   // stdout token and status.lastAction; omarchy-shell exits 0 on dispatch regardless.
-  // Verbs resolve against the active instance only (SR38).
-  function _ipcAct(verb, uuid) {
-    var u = String(uuid === undefined || uuid === null ? "" : uuid).replace(/[\r\n\t]/g, " ").trim()
-    if (!u) return "usage: " + verb + " <uuid>"
-    var r = root.act(verb, u, true)
-    var token = r === "queued" ? "queued " + verb + " " + u.slice(0, 64) : r
-    console.log("coolwatch ipc " + verb + " " + u.slice(0, 8) + " -> " + token.split(" ")[0])
+  // Verbs resolve against the active instance only (SR38). The argument is a uuid or a name:
+  // a name is the label the panel shows, resolved in ctx.act after the readiness gates. The
+  // ipc log line names the resolved uuid on success and nothing otherwise: the argument may
+  // be a Coolify name, and the refuse line already carries the uuid8 (SR15).
+  function _ipcAct(verb, target) {
+    var u = String(target === undefined || target === null ? "" : target).replace(/[\r\n\t]/g, " ").trim()
+    if (!u) return "usage: " + verb + " <uuid|name>"
+    var parts = root.act(verb, u, true).split(" "), queued = parts[0] === "queued"
+    var token = queued ? "queued " + verb + " " + parts[1].slice(0, 64) : parts.join(" ")
+    console.log("coolwatch ipc " + verb + " " + (queued ? Model.uuid8(parts[1]) : "-") + " -> " + parts[0])
     return token
   }
   // The one verb that looks past the active instance: a deployment uuid names exactly one
@@ -556,10 +560,10 @@ Item {
     target: "io.github.danjonesio.coolwatch"
     function refresh(): string { root.refresh(); return "ok" }
     function status(): string { return JSON.stringify(root._status()) }
-    function deploy(uuid: string): string { return root._ipcAct("deploy", uuid) }
-    function restart(uuid: string): string { return root._ipcAct("restart", uuid) }
-    function stop(uuid: string): string { return root._ipcAct("stop", uuid) }
-    function start(uuid: string): string { return root._ipcAct("start", uuid) }
+    function deploy(target: string): string { return root._ipcAct("deploy", target) }
+    function restart(target: string): string { return root._ipcAct("restart", target) }
+    function stop(target: string): string { return root._ipcAct("stop", target) }
+    function start(target: string): string { return root._ipcAct("start", target) }
     function instances(): string { return root._ipcInstances() }
     function instance(id: string): string { return root._ipcInstance(id) }
     function log(uuid: string): string { return root._ipcLog(uuid) }
@@ -579,7 +583,7 @@ Item {
     readonly property string sensitiveMessage: root.sensitiveMessage
     // Chips and the tooltip suffix read this (Model.instanceChips / instanceTrouble).
     readonly property var summary: ({ id: ctx.instId, name: ctx._instance ? ctx._instance.name : ctx.instId,
-                                      error: ctx._error ? ctx._error.kind : "", failed: ctx._failedUnacked.length,
+                                      error: ctx._shownError ? ctx._shownError.kind : "", failed: ctx._failedUnacked.length,
                                       down: ctx._servers.filter(function(x) { return !x.reachable && !x.disabled }).length })
 
     property var _instance: null         // this entry without the token
@@ -622,6 +626,13 @@ Item {
     property bool _paused: false         // 429: every timer stops until pauseTimer fires
     property int _backoffSec: 0
     property bool _probeMode: false      // 401/403: timers stop; one deployments probe a minute
+    // Health before auth (2026-09-22): GET /health runs only when a poll fails with an HTTP answer
+    // (Model.healthWanted), on healthReq, at most once per 30 s; its verdict never enters _error,
+    // _backoff, _probeMode or a toast. _shownError is the one place the two are combined.
+    property var _health: ({ state: "unknown", httpCode: 0, curlExit: 0, at: 0 })
+    property double _lastHealthAt: 0     // the 30 s floor; standalone so no reset defeats it
+    property bool _healthWanted: false   // set inside _finish's loop, drained after it
+    readonly property var _shownError: Model.errorWithHealth(ctx._error, ctx._health)
     property var _rateLimitRemaining: null
     property double _lastPrimeAt: 0
     property bool _busy: false
@@ -704,7 +715,7 @@ Item {
 
     readonly property var snapshot: ({
       instance: ctx._instance ? { id: ctx._instance.id, name: ctx._instance.name, url: ctx._instance.url, version: ctx._version, plaintext: ctx._instance.plaintext } : null,
-      error: ctx._error, warning: ctx._warning,
+      error: ctx._shownError, warning: ctx._warning,
       servers: ctx._servers, resources: ctx._resources, deployments: ctx._deployments, recent: ctx._recent,
       tree: ctx._tree, byServer: ctx._byServer,
       failedUnacked: ctx._failedUnacked, lastPollAt: ctx._lastPollAt,
@@ -842,6 +853,7 @@ Item {
       ctx._baselineDone = false
       ctx._topologyFetched = false; ctx._topologyLoaded = false; ctx._lastTopologyStepAt = 0; ctx._topologyQueue = []
       ctx._backoff = {}; ctx._paused = false; ctx._backoffSec = 0; ctx._probeMode = false
+      ctx._health = { state: "unknown", httpCode: 0, curlExit: 0, at: 0 }; ctx._lastHealthAt = 0; ctx._healthWanted = false
       startupRamp.ticks = 0
       var interrupted = ctx._inflightAction !== null
       ctx._pending = {}; ctx._inflightAction = null; ctx._ipcAbilityStreak = 0; ctx._lastAbility = ""
@@ -903,8 +915,9 @@ Item {
     Req { id: logReq; owner: ctx; property var target: null }        // buildlog (one-shot, a uuid neither active nor drained) and containerlog
     Req { id: historyReq; owner: ctx; property var target: null }    // history pages
     Req { id: serviceReq; owner: ctx; property var target: null }    // GET /services/{uuid} for the picker, and GET /tags
+    Req { id: healthReq; owner: ctx }                                  // GET /health, unauthenticated; settled by _healthDone and nothing else
 
-    readonly property var _reqs: [versionReq, deploymentsReq, deploymentReq, resourcesReq, serversReq, topologyReq, actionReq, logReq, historyReq, serviceReq]
+    readonly property var _reqs: [versionReq, deploymentsReq, deploymentReq, resourcesReq, serversReq, topologyReq, actionReq, logReq, historyReq, serviceReq, healthReq]
 
     function _syncBusy() { ctx._busy = ctx._reqs.some(function(p) { return p.running }) }
     function _isViewKind(kind) { return !!ctx._viewKinds[kind] }
@@ -933,6 +946,15 @@ Item {
       ctx._syncBusy()
       if (p.liveSeq !== p.seq) return
       if (p === actionReq) { ctx._finishAction(p, code, stdoutText, stderrText); return }   // after the stale guard, never before
+      if (p === healthReq) {
+        // A diagnostic, not a poll: recorded for the rate accounting, then its verdict and
+        // nothing else. Never _fail, _dispatch, _succeeded, _pauseFor or _flushNotify (SR40).
+        var hs = Model.splitResponses(stdoutText)
+        var h0 = hs[0] || { exit: code || 1, code: 0, body: "", errmsg: stderrText, headers: null, timeMs: 0, bytes: 0 }
+        ctx._record("health", h0)
+        ctx._healthDone(hs[0] || null)
+        return
+      }
       var isView = ctx._isViewKind(p.kind)
       var results = Model.splitResponses(stdoutText)
       if (results.length === 0) {
@@ -954,8 +976,10 @@ Item {
           else if (isView) ctx._viewFail(p, r)
           else ctx._fail(p.kind, e, r.headers)
         } else {
-          anyOk = true
-          ctx._dispatch(p.arg[i], r, p.kind)
+          // HTTP 200 alone is not success (the _drainDispatched precedent): a body that does not
+          // parse is _fail'ed inside _dispatch, and counting it as ok here would let _succeeded
+          // clear that error, drop the backoff and lift probe mode on the same pass.
+          if (ctx._dispatch(p.arg[i], r, p.kind)) anyOk = true
         }
       }
       if (isView) { ctx._viewDone(p); ctx._flushNotify(); return }   // never _succeeded: a user fetch must not lift probe mode
@@ -972,6 +996,7 @@ Item {
       // (A failed stage-2 block after a successful /projects still counts: the tree is usable.)
       if (p.kind === "topology" && (anyOk || ctx._projects.length)) { ctx._topologyFetched = ctx._topologyQueue.length === 0; if (ctx._topologyFetched) ctx._topologyLoaded = true }   // the next block waits for topologyStep
       ctx._flushNotify()                // last: after the joins, so every toast reads the joined snapshot
+      if (ctx._healthWanted) { ctx._healthWanted = false; Qt.callLater(ctx._probeHealth) }   // outside the block loop, like _deploymentsBytes
     }
 
     // ---- notifications (Phase 3) ---------------------------------------------------------
@@ -1017,7 +1042,7 @@ Item {
     function _dispatch(req, r, kind) {
       var now = Date.now()
       var json = req.json === false ? null : Model.parseJson(r.body)
-      if (req.json !== false && !json.ok) { ctx._fail(kind, Model.makeError("http", "Coolify returned something that is not JSON", { httpCode: r.code, request: kind }), r.headers); return }
+      if (req.json !== false && !json.ok) { ctx._fail(kind, Model.makeError("http", "Coolify returned something that is not JSON", { httpCode: r.code, request: kind, notJson: true }), r.headers); return false }
       switch (req.kind) {
         case "version":
           ctx._version = Model.parseVersion(r.body)
@@ -1138,6 +1163,7 @@ Item {
           break
       }
       console.log("coolwatch " + ctx.instId + "/" + req.kind + " " + r.code + " exit=" + r.exit + " " + r.timeMs + "ms " + r.bytes + "B")   // per-request line names the instance (Phase 4)
+      return true
     }
 
     // ---- depth (Phase 4): capture, view slices, view failures ------------------------------
@@ -1446,14 +1472,32 @@ Item {
     function _succeeded(kind) {
       var b = ctx._backoff; if (b[kind]) { delete b[kind]; ctx._backoff = b }
       if (ctx._error && ctx._error.request === kind) ctx._error = null
+      if (!ctx._error && ctx._health.state !== "unknown") ctx._health = { state: "unknown", httpCode: 0, curlExit: 0, at: 0 }   // the verdict lives as long as the failure it explains
       if (ctx._probeMode) { ctx._probeMode = false; ctx._prime("all"); ctx._drainTerminal() }
+    }
+
+    // Health before auth: the only launch site. Gated like every launch (ready, not paused), floored
+    // at Model.HEALTH_FLOOR_MS per instance, so at most two health requests a minute and none while healthy.
+    function _probeHealth() {
+      if (!ctx._ready || !ctx._instance || ctx._paused) return
+      var now = Date.now()
+      if (now - ctx._lastHealthAt < Model.HEALTH_FLOOR_MS) return
+      ctx._lastHealthAt = now
+      ctx._launch(healthReq, Api.reqHealth(), 6)
+    }
+    // Settles healthReq: the verdict and a log line of numbers. Never _fail, _succeeded, _backoff,
+    // _probeMode, _pauseFor, _markPoll or a toast (SR40).
+    function _healthDone(r) {
+      var res = Model.healthResult(r, Date.now())
+      ctx._health = { state: res.state, httpCode: res.httpCode, curlExit: res.curlExit, at: res.at }
+      console.log("coolwatch " + ctx.instId + "/health " + res.state + " http=" + res.httpCode + " exit=" + res.curlExit)
     }
 
     function _record(kind, r) {
       var pk = ctx._perKindEntry(kind)
       pk.lastAt = Date.now(); pk.lastCode = r.code; pk.lastMs = r.timeMs; pk.lastBytes = r.bytes
       if (r.exit === 0 && r.code < 400) pk.consecutiveFailures = 0
-      if (r.headers && r.headers.rateLimitRemaining !== null) ctx._rateLimitRemaining = r.headers.rateLimitRemaining
+      if (kind !== "health" && r.headers && r.headers.rateLimitRemaining !== null) ctx._rateLimitRemaining = r.headers.rateLimitRemaining   // health is unauthenticated: another bucket
       ctx._perKind = ctx._perKind
       ctx._noteBytes(kind, r.bytes || 0)
     }
@@ -1489,6 +1533,9 @@ Item {
         bo[kind] = { until: Date.now() + (a <= 1 ? 30 : 60) * 1000, attempt: a }; ctx._backoff = bo
       }
       console.warn("coolwatch " + ctx.instId + "/" + kind + " failed: " + e.kind + " http=" + e.httpCode + " exit=" + e.curlExit + " " + e.detail)
+      // The standing error, not e: a ratelimited error kept above must not probe. Never for a view
+      // kind: its failure is a message in the view (SR29). Drained after _finish's loop.
+      if (!ctx._isViewKind(kind) && Model.healthWanted(ctx._error)) ctx._healthWanted = true
     }
 
     // 429 is instance-wide: pause every timer for Retry-After (clamped) or the ladder.
@@ -1535,14 +1582,25 @@ Item {
     // targetHint: the panel passes the row type so a vanished target is named correctly.
     function act(verb, uuid, fromIpc, targetHint, instanceId) {
       // instanceId: the instance the confirm was opened on; a switch in between refuses (SR38).
-      if (instanceId !== undefined && instanceId !== null && String(instanceId) !== ctx.instId) return ctx._refuse("wronginstance", verb, uuid)
-      if (!ctx._ready) return ctx._refuse(root._configError && root._configError.kind === "unsafe" ? "unsafe" : "notconfigured", verb, uuid)   // the unsafe mode is the root's error
-      if (ctx._probeMode) return ctx._refuse("probe", verb, uuid)
-      if (ctx._paused) return ctx._refuse("ratelimited", verb, uuid)
-      if (ctx._requestsLastMin() >= 120) return ctx._refuse("toomany", verb, uuid)
-      var a = Model.actionRequest(ctx.snapshot, verb, uuid)
-      if (!a.ok) return ctx._refuse(a.why, verb, uuid, targetHint)
-      if (fromIpc && ctx._ipcAbilityStreak >= 3) return ctx._refuse("ipcability", a.verb, uuid)
+      // An IPC argument is unvouched until resolved (it may be a Coolify name): a refusal before
+      // resolution names no uuid8 in the log or lastAction. The panel's row uuid is kept.
+      var unresolved = fromIpc ? "" : uuid
+      if (instanceId !== undefined && instanceId !== null && String(instanceId) !== ctx.instId) return ctx._refuse("wronginstance", verb, unresolved)
+      if (!ctx._ready) return ctx._refuse(root._configError && root._configError.kind === "unsafe" ? "unsafe" : "notconfigured", verb, unresolved)   // the unsafe mode is the root's error
+      if (ctx._probeMode) return ctx._refuse("probe", verb, unresolved)
+      if (ctx._paused) return ctx._refuse("ratelimited", verb, unresolved)
+      if (ctx._requestsLastMin() >= 120) return ctx._refuse("toomany", verb, unresolved)
+      // The panel hands a row uuid; the CLI may hand a label. Resolution sits after the readiness
+      // gates so not configured / token rejected / rate limited keep winning over a name miss.
+      var target = uuid
+      if (fromIpc) {
+        var t = Model.resolveActionTarget(ctx.snapshot, uuid)
+        if (!t.ok) return ctx._refuse(t.why, verb, uuid)      // "unknown" lands in today's arm with today's token
+        target = t.uuid                                       // from here on every token, log and lastAction carries the uuid, not the argument
+      }
+      var a = Model.actionRequest(ctx.snapshot, verb, target)
+      if (!a.ok) return ctx._refuse(a.why, verb, target, targetHint)
+      if (fromIpc && ctx._ipcAbilityStreak >= 3) return ctx._refuse("ipcability", a.verb, target)
       var why = Model.canAct(ctx._pending, ctx._inflightAction, a.uuid, Date.now(), ctx._lastActionLaunchAt)
       if (why) return ctx._refuse(why, a.verb, a.uuid)
       var req = ctx._descriptorFor(a)
@@ -1556,7 +1614,7 @@ Item {
         return ctx._refuse("busy", a.verb, a.uuid)
       }
       console.log("coolwatch action launch " + a.verb + " " + a.uuid.slice(0, 8) + (fromIpc ? " ipc" : ""))
-      return "queued"
+      return "queued " + a.uuid                               // the one reader of the return is _ipcAct; the panel discards it
     }
 
     function _descriptorFor(a) {
@@ -1586,6 +1644,9 @@ Item {
           var word = targetHint === "deployment" || targetHint === "server" || targetHint === "tag" ? targetHint : "resource"
           ctx._say("Coolify no longer has that " + word, "urgent"); token = "unknown uuid " + u; break
         }
+        // IPC verbs by name: the argument is echoed, the log and lastAction get no argument (it may be a Coolify name)
+        case "unknownname": ctx._say("No match for that name", "dim"); token = "unknown name " + u; u8 = ""; break
+        case "ambiguousname": ctx._say("That name matches more than one resource", "dim"); token = "ambiguous name " + u; u8 = ""; break
         case "nav":                      // Phase 4: open/logs/history are the panel's, never an action
         case "notapplicable": ctx._say("Nothing to " + verb, "dim"); token = "not applicable " + verb + " " + u; break
         case "already pending": {
@@ -1599,7 +1660,7 @@ Item {
       }
       if (why !== "wronginstance")   // a confirm from another instance leaves lastAction as it was (plan step 12; review: skeptic 1)
         ctx._lastAction = { verb: String(verb || ""), uuid8: u8, code: 0, curlExit: 0, ms: 0, at: Date.now(), result: "refused", instance: ctx.instId }
-      console.log("coolwatch action refuse " + why + " " + String(verb || "").slice(0, 16) + " " + u8)
+      console.log("coolwatch action refuse " + why + " " + String(verb || "").slice(0, 16) + " " + (u8 || "-"))
       return token
     }
 
@@ -1789,7 +1850,7 @@ Item {
       onTriggered: { ticks += 1; ctx._prime("missing") }
     }
     // 401/403: everything stops; one deployments probe a minute until a 2xx or a config change.
-    Timer { id: probeTimer; interval: 60000; repeat: true; running: ctx._ready && ctx._probeMode; onTriggered: ctx._launch(deploymentsReq, Api.reqDeployments(), 12) }   // log-bearing: 12 s, 4 MB (SR30)
+    Timer { id: probeTimer; interval: 60000; repeat: true; running: ctx._ready && ctx._probeMode; onTriggered: ctx._launch(deploymentsReq, Api.reqDeployments(), 12) }   // log-bearing: 12 s, 4 MB (SR30); the probe's own 401 triggers the health check through _fail, after the failure is stamped (review: a probe launched beside it answered first and read as stale)
     // 429: everything pauses for Retry-After (clamped) or the ladder.
     Timer { id: pauseTimer; interval: 30000; repeat: false; running: false; onTriggered: { ctx._paused = false; ctx._prime("all"); ctx._drainTerminal() } }
 
@@ -1804,6 +1865,13 @@ Item {
             p.kill()
             var pk = ctx._perKindEntry(p.kind)
             pk.reaps += 1; pk.lastReapAt = now
+            if (p === healthReq) {
+              // A reaped health probe is "unknown": no failure count, no backoff, never a claim (SR40).
+              ctx._perKind = ctx._perKind
+              ctx._healthDone(null)
+              console.warn("coolwatch " + ctx.instId + "/health reaped")
+              continue
+            }
             if (p === actionReq) {
               // A reaped POST may have landed: pending stays, no backoff, no retry (SR7).
               ctx._perKind = ctx._perKind
@@ -1877,7 +1945,8 @@ Item {
         drainRetries: ctx._drainRetries,
         recentPersisted: ctx._recentPersisted,
         recentRejected: ctx._recentRejected,
-        error: ctx._error ? { kind: ctx._error.kind, request: ctx._error.request, httpCode: ctx._error.httpCode, curlExit: ctx._error.curlExit } : null,
+        error: ctx._shownError ? { kind: ctx._shownError.kind, request: ctx._shownError.request, httpCode: ctx._shownError.httpCode, curlExit: ctx._shownError.curlExit } : null,
+        health: { state: ctx._health.state, httpCode: ctx._health.httpCode, curlExit: ctx._health.curlExit, at: ctx._health.at },   // numbers only, never the body
         id: ctx.instId,
         warning: ctx._warning ? ctx._warning.kind : null,
         bar: (function() { var b = Model.barState(ctx.snapshot); return { glyph: "U+" + b.glyph.codePointAt(0).toString(16).toUpperCase(), dimmed: b.dimmed, active: b.active } })(),   // computed on demand, not a standing binding (review: perf 6)

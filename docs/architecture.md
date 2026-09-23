@@ -36,15 +36,25 @@ No daemon, no second Quickshell, no Python collector. The shell is the runtime.
 - The service registers `IpcHandler { target: "io.github.danjonesio.coolwatch" }` with
   `refresh` and `status` (Phase 1; `status` returns fixed-shape JSON with counts,
   per-kind timings and the rolling request count, never a secret, body or URL).
-  Phase 2 adds `deploy <uuid>`, `restart <uuid>`, `stop <uuid>`, `start <uuid>`: each
-  returns `queued <verb> <uuid>` or a refusal token (`unknown uuid <uuid>`,
-  `not applicable <verb> <uuid>`, `already pending <uuid>`, `busy`, `not configured`,
-  `config unsafe`, `rate limited`, `token rejected`, `refused: token lacks the
-  <ability> permission` after three consecutive ability failures from the CLI); Phase 4
-  adds `instances` (`cloud (active), homelab`) and `instance <id>` (`active <id>` or
-  `unknown instance <id>`), and the action verbs resolve against the active instance; the
-  outcome is `status.lastAction`. CLI verbs never confirm. The uuid echoed back is
-  bounded to 64 characters and one line; the log carries 8.
+  Phase 2 adds `deploy <uuid|name>`, `restart <uuid|name>`, `stop <uuid|name>`,
+  `start <uuid|name>`: each returns `queued <verb> <uuid>` or a refusal token
+  (`unknown uuid <uuid>` for a uuid-shaped argument the store does not hold,
+  `unknown name <argument>`, `ambiguous name <argument>`, `not applicable <verb> <uuid>`,
+  `already pending <uuid>`, `busy`, `not configured`, `config unsafe`, `rate limited`,
+  `token rejected`, `refused: token lacks the <ability> permission` after three
+  consecutive ability failures from the CLI); Phase 4 adds `instances`
+  (`cloud (active), homelab`) and `instance <id>` (`active <id>` or
+  `unknown instance <id>`), and the action verbs resolve against the active instance;
+  the outcome is `status.lastAction`. An argument is tried as a uuid over every list
+  first (a uuid-shaped argument, 20+ lowercase alphanumerics, the store does not hold is
+  a uuid miss and never a name), then as a resource label (`Model.resolveActionTarget`,
+  in front of the gate; resources only, never deployments, servers or tags, so a tag
+  name cannot fan out unconfirmed; exact, then case-folded). CLI verbs never confirm.
+  The uuid or name echoed back is bounded to 64 characters and one line; the `ipc` log
+  line carries the resolved uuid8 on success and `-` otherwise, and
+  `status.lastAction.uuid8` is `""` for an IPC call refused by a readiness gate or by
+  name (`unknown name`, `ambiguous name`); a uuid-shaped miss keeps the argument's
+  first 8.
 - Hot reload: saving under `~/.config/omarchy/plugins/` reloads the plugin. `bin/dev-sync`
   copies the repo there (the validator refuses symlinks).
 
@@ -185,11 +195,19 @@ write-out = "\n<RS>%{exitcode} %{http_code} %{time_total} %{size_download} %{err
   log). A `Req`'s deadline is `blocks × max-time + 3` s; one 5 s reaper
   `Timer`, armed once at service start, kills a `Req` past its deadline (bumping `seq`
   first) and counts a reap as a failure.
+- Every block carries `header = "Authorization: Bearer …"` except the one kind in
+  `Api.UNAUTH` (`health`): `GET /api/v1/health` is Coolify's unauthenticated route, so its
+  block is byte-identical for any token (GET only; `bin/check` SR40 pins the literal).
 - Errors map per transfer: exit 6/7/28/35/60 → offline; exit 63 → response too large;
   401 → token rejected; 403 by `message` → API disabled / IP not allowed / missing
   ability; 429 → rate limited (`Retry-After` clamped to 1–300 s, else 30 → 60 → 60);
   other → Coolify error. Never read a `success` field (the 403 API-disabled body says
-  `true`). The last good snapshot stays on screen with "Showing data from N ago".
+  `true`). The last good snapshot stays on screen with "Showing data from N ago". A 2xx
+  whose body does not parse is a failure like any other (`_dispatch` reports it and
+  `_finish`'s `anyOk` follows that report, SR40): it never clears an error, drops a
+  backoff, lifts probe mode or latches the topology. `down` (Coolify not responding) is a
+  render-time kind: `Model.errorWithHealth` rewrites an `auth` or `http` error to it when
+  the health check contradicts it; `errorFor` never produces it.
 - offline/http/reap back off 30 → 60 → 60 s on that kind; 429 pauses every timer;
   401/403 stop every timer and probe `GET /deployments` once a minute until a 2xx or a
   config change.
@@ -220,6 +238,21 @@ before the deployments poll idled at 8 s on 2026-09-13).
   `refresh`, first panel open, at most once per 2 s), because changing a running
   `Timer`'s `interval` restarts it; after an interval change a kind whose last poll is
   older than the new interval launches immediately.
+- Diagnostics, not polls (health before auth, 2026-09-22): when a poll fails with an HTTP
+  answer of kind `auth` or `http` (`Model.healthWanted`), the service sends one
+  unauthenticated `GET /health` on its own `Req` (`max-time` 6, 64 KB cap), floored at
+  30 s per instance; in probe mode the probe's own 401 triggers it the same way, after the
+  failure is stamped (a health request launched beside the probe answered first and read
+  as stale). Never at token-ready, never while healthy (a never-failed instance has no
+  `perKind.health`), never for a curl-level failure, a recognised 403, a failure kept
+  behind a standing rate limit, or a view fetch. Ceiling two per minute per instance; a 502 front door costs
+  about 10 in the first minute and 5 steady, probe mode 2, a box that is down 0 extra.
+  Its answer settles in `_healthDone` and touches nothing else: never `_fail`,
+  `_succeeded`, `_backoff`, `_probeMode`, `_pauseFor` (its 429 is an IP bucket) or a
+  toast, and its headers never write `rateLimitRemaining`. The verdict is reset when the
+  error it explains clears; an OK older than the failure by more than the 30 s floor
+  (`Model.HEALTH_FLOOR_MS`) is not evidence, one inside it is (a panel open re-primes every
+  kind and re-stamps the failure, and the floor refuses a re-probe there).
 - Startup: deployments, version, resources and servers launch together; `/projects`
   65 s later, outside the first minute's burst. The icon lights on the first deployments response. A `startupRamp` retries
   every 2 s for 30 s if the first attempts are offline.
@@ -271,7 +304,7 @@ before the deployments poll idled at 8 s on 2026-09-13).
 ## State model
 
 The service holds one normalised store per instance: `Service.qml` declares an inline
-`InstanceCtx` component (its own store, timers, the ten `Req`s, ledgers, baseline, pending
+`InstanceCtx` component (its own store, timers, the eleven `Req`s, ledgers, baseline, pending
 map, notify state, recent file, `_status()`), instantiated by an `Instantiator` over a
 `ListModel` of instance ids that `_setInstanceIds` edits in place (a reassigned array would
 rebuild every context). The root owns the config file, the panel registry, the reaper tick
@@ -297,8 +330,10 @@ views:     { buildLogs, containerLogs, picks, history } // beside snapshot, the 
 instance:  { id, name, url, version, plaintext }
 error:     null | { kind, title, detail, httpCode, curlExit, request, at, staleSince }
            kind ∈ noconfig | configerror | unsafe | tokencmd | waitingtoken | auth |
-                  apidisabled | ipblocked | ability | ratelimited | offline | tls | toolarge | http
+                  apidisabled | ipblocked | ability | ratelimited | offline | tls | toolarge | http | down
            // tls (Phase 4, SR36): curl exit 60, the peer certificate failed verification; nothing was sent; retried like offline
+           // down (2026-09-22): render-time only, from Model.errorWithHealth; an auth/http error the health
+           // check contradicted. An annotated auth/http error also carries healthState, healthCode, healthExit.
 warning:   null | { kind (permissions | plaintext | notify | instances), title, detail }
 server:    { uuid, name, ip, reachable, usable, disabled, buildServer, resourceCount }
 resource:  { uuid, name, kind (application|service|database), type, status,
@@ -306,8 +341,10 @@ resource:  { uuid, name, kind (application|service|database), type, status,
              health (healthy|unhealthy|unknown), fqdn, environmentId, serverUuid,
              projectUuid, projectName, environmentName, environmentUuid, gitBranch }
            // pending is NOT a resource field: it is a service-owned map applied at render
-deployment:{ uuid (from deployment_uuid), appUuid, appName, branch, status, commit,
-             commitMessage, createdAt, updatedAt, url, restartOnly, force, isApi, isWebhook }
+deployment:{ uuid (from deployment_uuid), appId, appUuid, appName, serverName, branch, status, commit,
+             commitMessage, createdAt, updatedAt, finishedAt, url, restartOnly, force, isApi, isWebhook }
+           // the three stamps are kept only as non-empty strings of <= 40 chars (tsField);
+           // durationOf renders createdAt -> finishedAt on terminal rows and in the toasts
 tree:      [ { projectUuid, projectName, environments: [ { id, name, resourceUuids } ] } ]
 byServer:  { serverUuid: [resourceUuid…] }
 ```
@@ -509,10 +546,12 @@ Every action block adds `request = "POST"`, `header = "Content-Type: application
 and `data-raw = "{}"` (constants; `data` would read a file for a leading `@`) and never
 `location`. `Model.actionRequest` is the single gate for the panel and the IPC verbs
 (uuid shape, presence in the store, the applicability table); the service builds the
-`Api` descriptor from the stored kind. One single-flight `actionReq` goes through
-`_launch` like a poll; `act()` refuses while an action is in flight or within 1 s of the
-last launch, while the same uuid is pending, when not ready / probing / paused, and
-after 120 requests in the last minute. There is no queue and no compensating poll.
+`Api` descriptor from the stored kind. `Model.resolveActionTarget` runs in front of the
+gate for IPC calls only, turning a label into a store uuid; it is not a second gate. One
+single-flight `actionReq` goes through `_launch` like a poll; `act()` refuses while an
+action is in flight or within 1 s of the last launch, while the same uuid is pending,
+when not ready / probing / paused, and after 120 requests in the last minute. There is
+no queue and no compensating poll.
 
 Pending is a service-owned map `{ uuid: { verb, targetType, kind, since, baseStatus,
 deploymentUuid, stale } }` applied at render through `Model.panelRows`'s `ui.pending`
@@ -536,7 +575,7 @@ and dim refusals, 6 s for failures), never the callout, never `_error`, `_backof
 `_probeMode` or `consecutiveFailures`. The one escalation is a 429, which enters the
 instance-wide pause through `_pauseFor` (extracted from `_fail`). A reaped action says
 "Sent, but Coolify did not answer", keeps its pending entry, and is never retried.
-`status` gains `lastAction { verb, uuid8, code, curlExit, ms, at, result, instance }` (`instance` since Phase 4), `pending`,
+`status` gains `lastAction { verb, uuid8, code, curlExit, ms, at, result, instance }` (`instance` since Phase 4; `uuid8` is `""` for an IPC call refused by a readiness gate or by name, and the argument's first 8 for a uuid-shaped miss), `pending`,
 `pendingStale`, `actionsLastMin` and `inflightAction`; the log line is
 `coolwatch action <verb> <code> exit=<n> <ms>ms <uuid8>`.
 
@@ -593,8 +632,10 @@ refused after three consecutive ability failures until a 2xx or a config change.
     that form and no `.qml` mentions `fqdn`.
 16. Actions never poison polling (see Actions), the POST body is a constant, the
     method comes from a whitelist checked with `hasOwnProperty`, and IPC verbs are
-    exactly `deploy restart stop start`: a no-confirm destructive surface open to any
-    local process, documented in the README.
+    exactly `deploy restart stop start`, taking a uuid or the active instance's resource
+    label (`Model.resolveActionTarget`: resources only, so a tag name cannot fan out
+    unconfirmed): a no-confirm destructive surface open to any local process, documented
+    in the README.
 17. (plan SR15) No Coolify string becomes a notifier option or a control sequence: every
     positional passes `Model.notifySafe`, the body `Model.notifyBody`; log lines use
     `Model.uuid8`.
@@ -672,7 +713,8 @@ refused after three consecutive ability failures until a 2xx or a config change.
     (curl aborts before any request, so the Bearer header was never sent); `insecure`,
     `-k` and `proto-default` are never emitted (node test).
 40. (Phase 4 SR38) Actions bind to the instance they were opened on: IPC verbs resolve
-    against the active instance only; the confirm dialog captures `activeId` and the
+    against the active instance only (a name against its last resources poll); the
+    confirm dialog captures `activeId` and the
     context refuses a mismatch with "Instance changed; nothing sent"; every pending entry
     lives in its context; `status.lastAction.instance` names it.
 41. (SR39, 2026-09-13) Fixtures name no real account: `bin/check` extracts every URL host
@@ -684,6 +726,14 @@ refused after three consecutive ability failures until a 2xx or a config change.
     Added after the 2026-09-13 review found three live hostnames, a private repository
     path and a real commit message that the by-hand rename and the key-name gates (SR31)
     had both missed. Names and descriptions stay a by-hand check.
+42. (SR40, 2026-09-22) Health before auth: exactly one descriptor kind is unauthenticated,
+    named by the literal `var UNAUTH = { health: true }` in `Api.js`, GET only, its block
+    byte-identical for any token, and the Authorization line is emitted from one
+    conditional site; `_dispatch` reports a body that does not parse and `_finish`'s
+    `anyOk` follows that report (one `if (ctx._dispatch(` and one `anyOk = true` in
+    `Service.qml`, comments stripped). The health answer settles in `_healthDone` and
+    touches nothing else; its body is capped at 16 chars by `Model.parseHealth` and never
+    stored, logged or shown; `down` never carries the Edit config button.
 
 ## Testing
 
