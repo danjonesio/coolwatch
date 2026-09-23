@@ -1350,13 +1350,18 @@ test("Model.rowTime: running section row ticks elapsed; terminal row reads durat
   eq(M.rowTime(Object.assign({}, fin, { finishedAt: "garbage" }), now), today, "finishedAt unparseable falls through, not blank")
   eq(M.rowTime(Object.assign({}, fin, { createdAt: fin.finishedAt, finishedAt: fin.createdAt }), now), today, "reversed pair: no duration, and the rejected finishedAt does not drive the age")
   eq(M.rowTime(Object.assign({}, fin, { finishedAt: null, updatedAt: null }), now), M.age(fin.createdAt, now), "createdAt last")
+  // a future stamp ages to "Just now" on its own, so these run at a clock where today's text is not "Just now"
+  const now4 = Date.parse(fin.updatedAt) + 4 * 60000, today4 = M.age(fin.updatedAt, now4)
+  eq(today4, "4m ago")
   const far = new Date(Date.parse(fin.createdAt) + M.DURATION_MAX_MS + 1000).toISOString()
-  eq(M.rowTime(Object.assign({}, fin, { finishedAt: far }), now), today, "over the cap: today's updatedAt age (review: data-analyst 1)")
-  eq(M.rowTime(Object.assign({}, fin, { finishedAt: "3000-01-01T00:00:00Z" }), now), today, "a future stamp never reads Just now")
-  eq(M.rowTime(Object.assign({}, fin, { finishedAt: "1970-01-01T00:00:00Z" }), now), today, "a far-past stamp never reads 20000d ago")
+  eq(M.rowTime(Object.assign({}, fin, { finishedAt: far }), now4), today4, "over the cap: today's updatedAt age (review: data-analyst 1)")
+  eq(M.rowTime(Object.assign({}, fin, { finishedAt: "3000-01-01T00:00:00Z" }), now4), today4, "a future stamp never reads Just now")
+  eq(M.rowTime(Object.assign({}, fin, { finishedAt: "1970-01-01T00:00:00Z" }), now4), today4, "a far-past stamp never reads 20000d ago")
   eq(M.rowTime(Object.assign({}, fin, { createdAt: null, finishedAt: fin.finishedAt }), now), "1m ago", "no createdAt: finishedAt is still the age source")
-  eq(M.rowTime(Object.assign({}, fin, { createdAt: null, finishedAt: "3000-01-01T00:00:00Z" }), now), today, "no createdAt: a future finishedAt is anchored to updatedAt (review: data-analyst re-check)")
-  eq(M.rowTime(Object.assign({}, fin, { createdAt: "garbage", finishedAt: "1970-01-01T00:00:00Z" }), now), today, "no createdAt: a far-past finishedAt likewise")
+  eq(M.rowTime(Object.assign({}, fin, { createdAt: null, finishedAt: "3000-01-01T00:00:00Z" }), now4), today4, "no createdAt: a future finishedAt is anchored to updatedAt (review: data-analyst re-check)")
+  eq(M.rowTime(Object.assign({}, fin, { createdAt: "garbage", finishedAt: "1970-01-01T00:00:00Z" }), now4), today4, "no createdAt: a far-past finishedAt likewise")
+  // the breadcrumb (Panel.qml openLogsFor) reads the same gate
+  eq(M.credibleFinish(fin), true); eq(M.credibleFinish(Object.assign({}, fin, { finishedAt: "garbage" })), false); eq(M.credibleFinish(Object.assign({}, fin, { finishedAt: "3000-01-01T00:00:00Z" })), false)
   eq(M.rowTime(fin, now), "2m 21s · 1m ago", "age source is finishedAt when it is credible, not updatedAt")
   const noStart = M.panelRows(snap({ recent: [{ uuid: "r0", appName: "app", status: "finished", createdAt: null, updatedAt: new Date(NOW - 4 * 60000).toISOString(), branch: "main" }] }), {}).filter(r => r.type === "deployment")[0]
   eq(M.rowTime(noStart, NOW), "4m ago", "an old recent.json entry without createdAt")
@@ -1371,7 +1376,7 @@ test("Model.rowTime: running section row ticks elapsed; terminal row reads durat
   eq(M.rowTime(odd, Date.parse(h[0].createdAt) + 90 * 86400000), "90d ago", "unmapped status months old reads an age, never an elapsed (requirement 7)")
   eq(M.rowTime(null, NOW), ""); eq(M.rowTime({ type: "deployment", terminal: true }, NOW), "")
   // requirement 6: the filter cannot match on the duration
-  eq(M.rowMatches(fin, ["2m"]), false); eq(M.rowMatches(fin, ["storefront"]), true)
+  eq(M.rowMatches(fin, ["2m"]), false, "guards the rejected duration-in-sub alternative; rowMatches itself is untouched"); eq(M.rowMatches(fin, ["storefront"]), true)
 })
 
 test("Model.elapsed / age", () => {
@@ -2007,7 +2012,7 @@ test("Model.normaliseHistory: {count, rows} newest first, no logs key on any row
   const row = M.historyRow(h.rows[0], "app1", "https://app.coolify.io")
   eq(row.type, "history"); eq(row.rowType, "history"); eq(row.key, "hist:" + h.rows[0].uuid); eq(row.appUuid, "app1")
   eq(row.sub, "deploy", "commit HEAD and no branch renders as deploy"); assert(!("age" in row) || row.age === null)
-  eq(row.finishedAt, h.rows[0].finishedAt, "finishedAt comes from deploymentRow now"); assert(row.finishedAt.length === 27, "the fixture's own stamp")
+  eq(row.finishedAt, h.rows[0].finishedAt, "the history row carries the fixture's finishedAt"); assert(row.finishedAt.length === 27, "the fixture's own stamp")
   eq(M.historyRow(Object.assign({}, h.rows[0], { restartOnly: true }), "app1", "").sub, "restart")
   eq(M.historyRow(Object.assign({}, h.rows[0], { branch: "main" }), "app1", "").sub, "main")
   eq(M.historyRow(Object.assign({}, h.rows[0], { branch: "HEAD" }), "app1", "").sub, "deploy")

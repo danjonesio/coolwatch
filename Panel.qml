@@ -440,7 +440,7 @@ Panel {
     if (!row || !svc) return
     if (row.type === "deployment" || row.type === "history") {
       root.pushView({ kind: "buildlog", uuid: row.uuid, name: row.name || row.uuid, url: row.url || "", status: row.status || "",
-                      at: row.finishedAt || row.updatedAt || "", createdAt: row.createdAt || "" })
+                      at: (Model.credibleFinish(row) ? row.finishedAt : row.updatedAt) || "", createdAt: row.createdAt || "" })   // the row's own age gate: a stamp durationOf rejected never ages the breadcrumb
       root._watch()
     } else if (row.type === "resource") {
       if (row.kind === "service") {
