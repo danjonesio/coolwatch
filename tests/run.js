@@ -1347,12 +1347,14 @@ test("Model.rowTime: running section row ticks elapsed; terminal row reads durat
   const today = M.age(fin.updatedAt, now)
   eq(M.rowTime(Object.assign({}, fin, { finishedAt: null }), now), today, "finishedAt null")
   eq(M.rowTime(Object.assign({}, fin, { finishedAt: "garbage" }), now), today, "finishedAt unparseable falls through, not blank")
-  const rev = M.rowTime(Object.assign({}, fin, { createdAt: fin.finishedAt, finishedAt: fin.createdAt }), now)
-  eq(rev, "3m ago", "reversed pair: no duration; the age reads off the (parseable) finishedAt"); assert(rev.indexOf(" · ") < 0)
+  eq(M.rowTime(Object.assign({}, fin, { createdAt: fin.finishedAt, finishedAt: fin.createdAt }), now), today, "reversed pair: no duration, and the rejected finishedAt does not drive the age")
   eq(M.rowTime(Object.assign({}, fin, { finishedAt: null, updatedAt: null }), now), M.age(fin.createdAt, now), "createdAt last")
   const far = new Date(Date.parse(fin.createdAt) + M.DURATION_MAX_MS + 1000).toISOString()
-  eq(M.rowTime(Object.assign({}, fin, { finishedAt: far }), Date.parse(far) + 1000), "Just now", "over the cap: age alone, off finishedAt")
-  eq(M.rowTime(fin, now), "2m 21s · 1m ago", "age source is finishedAt when it parses, not updatedAt")
+  eq(M.rowTime(Object.assign({}, fin, { finishedAt: far }), now), today, "over the cap: today's updatedAt age (review: data-analyst 1)")
+  eq(M.rowTime(Object.assign({}, fin, { finishedAt: "3000-01-01T00:00:00Z" }), now), today, "a future stamp never reads Just now")
+  eq(M.rowTime(Object.assign({}, fin, { finishedAt: "1970-01-01T00:00:00Z" }), now), today, "a far-past stamp never reads 20000d ago")
+  eq(M.rowTime(Object.assign({}, fin, { createdAt: null, finishedAt: fin.finishedAt }), now), "1m ago", "no createdAt: finishedAt is still the age source")
+  eq(M.rowTime(fin, now), "2m 21s · 1m ago", "age source is finishedAt when it is credible, not updatedAt")
   const noStart = M.panelRows(snap({ recent: [{ uuid: "r0", appName: "app", status: "finished", createdAt: null, updatedAt: new Date(NOW - 4 * 60000).toISOString(), branch: "main" }] }), {}).filter(r => r.type === "deployment")[0]
   eq(M.rowTime(noStart, NOW), "4m ago", "an old recent.json entry without createdAt")
   // History

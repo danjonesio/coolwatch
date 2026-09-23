@@ -2167,11 +2167,19 @@ function age(iso, nowMs) {
 // elapsed; a terminal row shows the duration Coolify gives (createdAt -> finishedAt; there is
 // no started_at, so a queue wait is inside it) beside how long ago it ended. A history row
 // that is not terminal keeps its age. No duration: the row reads exactly the age it read before.
-// age() || age() rather than age(a || b): a non-empty unparseable stamp must fall through.
+// age() || age() rather than age(a || b): a non-empty unparseable stamp must fall through, and a
+// finishedAt that durationOf rejected (reversed, over the cap) must not drive the age either: a
+// days-old row would read "Just now" off a year-3000 stamp. Then the row reads today's updatedAt age.
+function credibleFinish(t) {
+  var b = Date.parse(t.finishedAt)
+  if (isNaN(b)) return false
+  var a = Date.parse(t.createdAt)
+  return isNaN(a) || (b - a >= 0 && b - a <= DURATION_MAX_MS)
+}
 function rowTime(r, nowMs) {
   var t = r || {}
   if (t.type === "deployment" && !t.terminal) return elapsed(t.createdAt, nowMs)
   var dur = t.terminal ? durationOf(t) : ""
-  var ago = age(t.finishedAt, nowMs) || age(t.updatedAt, nowMs) || age(t.createdAt, nowMs)
+  var ago = (credibleFinish(t) ? age(t.finishedAt, nowMs) : "") || age(t.updatedAt, nowMs) || age(t.createdAt, nowMs)
   return [dur, ago].filter(function (x) { return !!x }).join(" · ")
 }
