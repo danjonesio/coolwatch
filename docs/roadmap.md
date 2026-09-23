@@ -225,7 +225,10 @@ not parse counted as a success and cost about 49 requests in the first minute on
 **Build duration** (PR #15, merged 2026-09-23 into `develop`; `docs/plans/build-duration.md` and
 its build record). Terminal rows in the section and in History read `duration · age`
 (`2m 21s · 4m ago`); Coolify has no `started_at`, so the duration is `created_at → finished_at`
-and the finished toast already carried it. The cancelled toast still has no body (open call).
+and the finished toast already carried it. The cancelled toast still has no body (open call). **IPC verbs by name** (PR #17, merged 2026-09-24 into `develop`;
+`docs/plans/ipc-verbs-by-name.md` and its build record). `deploy <label>` resolves the
+panel's label on the active instance (uuid first, resources only, exact then case-folded),
+`unknown name` / `ambiguous name` otherwise; a uuid-shaped miss still reads `unknown uuid`.
 
 ### Small (an hour each, `Model.js` + a test, patch or minor)
 
@@ -242,8 +245,6 @@ and the finished toast already carried it. The cancelled toast still has no body
   verbs. Panel-only key.
 - **Hyprland keybinding in the README.** A `bindd` line for the toggle IPC; the biggest
   usability gap for the cost of one doc line.
-- **IPC verbs by name.** `deploy api` resolves an unambiguous `Model.appLabel` match on
-  the active instance, `unknown name` / `ambiguous name` otherwise. Uuids still work.
 
 ### Medium (a plan, a fixture, a needs-human list)
 
