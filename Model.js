@@ -729,9 +729,16 @@ function notifyBody(text, max) {
   return notifySafe(text, max).replace(/&/g, "&amp;").replace(/</g, "&lt;")
 }
 
+// createdAt -> finishedAt (Coolify has no started_at, so a queue wait is inside it). Parse once and
+// compute from the span: "" when either end is unparseable, reversed (a fabricated "0s" is a metric
+// the API did not give) or over the cap; "0s" for an equal pair (Coolify's stamps are second-granular).
+var DURATION_MAX_MS = 7 * 24 * 3600 * 1000   // longer than this is not a deployment: caps the string the name column is sized against
 function durationOf(d) {
-  var a = Date.parse(d.createdAt), b = Date.parse(d.finishedAt)
-  return isNaN(a) || isNaN(b) ? "" : elapsed(d.createdAt, b)
+  var a = Date.parse(d && d.createdAt), b = Date.parse(d && d.finishedAt)
+  if (isNaN(a) || isNaN(b)) return ""
+  var span = b - a
+  if (span < 0 || span > DURATION_MAX_MS) return ""
+  return span === 0 ? "0s" : elapsed(0, span)
 }
 function serverLabelFor(s, serverUuid) {
   if (!serverUuid) return ""

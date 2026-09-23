@@ -1295,6 +1295,30 @@ test("Model.sameRows: identical true; status change false; updatedAt-only change
   eq(M.sameRows(a, a.slice(0, -1)), false, "length")
 })
 
+// Security requirement 2: the duration is bounded on both sides in one place, computed from the span,
+// over the raw six-fractional-digit Coolify stamps (never toISOString output).
+test("Model.durationOf: createdAt -> finishedAt, never updatedAt; \"\" on NaN, reversed or over the cap; 0s on an equal pair", () => {
+  const fin = M.normaliseDeployment(fx("deployment-finished.json"))
+  eq(M.durationOf(fin), "2m 21s")
+  eq(M.durationOf(M.normaliseDeployment(fx("deployment-cancelled.json"))), "6s")
+  eq(M.durationOf({ createdAt: "2026-09-04T20:00:00.000000Z", finishedAt: "2026-09-04T22:03:00.000000Z" }), "2h 03m")
+  const h0 = M.normaliseHistory(fx("history-page.json")).rows[0]
+  eq(M.durationOf(h0), "29s", "finished_at, not updated_at (34s)")
+  assert(M.durationOf({ createdAt: h0.createdAt, finishedAt: h0.updatedAt }) === "34s", "the trap is real: updated_at is 5 s late on this row")
+  eq(M.durationOf({ finishedAt: fin.finishedAt }), "", "createdAt missing")
+  eq(M.durationOf({ createdAt: fin.createdAt, finishedAt: "garbage" }), "")
+  eq(M.durationOf({ createdAt: fin.finishedAt, finishedAt: fin.createdAt }), "", "reversed pair is not 0s")
+  eq(M.durationOf({ createdAt: fin.createdAt, finishedAt: fin.createdAt }), "0s", "equal pair")
+  eq(M.durationOf({ createdAt: "1970-01-01T00:00:00.000Z", finishedAt: "1970-01-01T00:00:00.000Z" }), "0s", "epoch pair never reaches elapsed's clock fallback")
+  eq(M.durationOf({ createdAt: 1, finishedAt: fin.finishedAt }), "", "a numeric start is not a stamp (was 496823h 16m)")
+  eq(M.durationOf({ createdAt: fin.createdAt, finishedAt: "3000-01-01T00:00:00Z" }), "")
+  eq(M.durationOf({ createdAt: fin.createdAt, finishedAt: "+275760-09-13T00:00:00.000Z" }), "", "Date.parse ceiling")
+  const a = Date.parse(fin.createdAt), iso = (ms) => new Date(ms).toISOString()
+  eq(M.durationOf({ createdAt: fin.createdAt, finishedAt: iso(a + M.DURATION_MAX_MS) }), "168h 00m", "cap exactly")
+  eq(M.durationOf({ createdAt: fin.createdAt, finishedAt: iso(a + M.DURATION_MAX_MS + 1000) }), "", "cap + 1 s")
+  eq(M.durationOf(null), "")
+})
+
 test("Model.elapsed / age", () => {
   const t0 = NOW
   eq(M.elapsed(new Date(t0 - 45000).toISOString(), t0), "45s")
