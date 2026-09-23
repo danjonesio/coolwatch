@@ -1355,6 +1355,8 @@ test("Model.rowTime: running section row ticks elapsed; terminal row reads durat
   eq(M.rowTime(Object.assign({}, fin, { finishedAt: "3000-01-01T00:00:00Z" }), now), today, "a future stamp never reads Just now")
   eq(M.rowTime(Object.assign({}, fin, { finishedAt: "1970-01-01T00:00:00Z" }), now), today, "a far-past stamp never reads 20000d ago")
   eq(M.rowTime(Object.assign({}, fin, { createdAt: null, finishedAt: fin.finishedAt }), now), "1m ago", "no createdAt: finishedAt is still the age source")
+  eq(M.rowTime(Object.assign({}, fin, { createdAt: null, finishedAt: "3000-01-01T00:00:00Z" }), now), today, "no createdAt: a future finishedAt is anchored to updatedAt (review: data-analyst re-check)")
+  eq(M.rowTime(Object.assign({}, fin, { createdAt: "garbage", finishedAt: "1970-01-01T00:00:00Z" }), now), today, "no createdAt: a far-past finishedAt likewise")
   eq(M.rowTime(fin, now), "2m 21s · 1m ago", "age source is finishedAt when it is credible, not updatedAt")
   const noStart = M.panelRows(snap({ recent: [{ uuid: "r0", appName: "app", status: "finished", createdAt: null, updatedAt: new Date(NOW - 4 * 60000).toISOString(), branch: "main" }] }), {}).filter(r => r.type === "deployment")[0]
   eq(M.rowTime(noStart, NOW), "4m ago", "an old recent.json entry without createdAt")

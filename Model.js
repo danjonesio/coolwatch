@@ -2174,7 +2174,9 @@ function credibleFinish(t) {
   var b = Date.parse(t.finishedAt)
   if (isNaN(b)) return false
   var a = Date.parse(t.createdAt)
-  return isNaN(a) || (b - a >= 0 && b - a <= DURATION_MAX_MS)
+  if (!isNaN(a)) return b - a >= 0 && b - a <= DURATION_MAX_MS
+  var u = Date.parse(t.updatedAt)   // no start (an old recent.json entry): the record's own last write must sit within a deployment's span of the finish
+  return isNaN(u) || Math.abs(u - b) <= DURATION_MAX_MS
 }
 function rowTime(r, nowMs) {
   var t = r || {}
