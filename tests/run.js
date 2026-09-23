@@ -1149,6 +1149,9 @@ test("Model.panelRows: deployments render active plus newest 5 recent only", () 
   eq(deps[0].key, "dep:activeinprogress0000001"); eq(deps[0].tone, "urgent", "in flight paints the bar's signal colour"); eq(deps[0].glyph, M.G.progress); eq(deps[0].terminal, false)
   eq(M.deploymentGlyph({ status: "failed" }).tone, "accent", "failed paints the theme accent")
   eq(deps[1].glyph, M.G.queued); eq(deps[2].uuid, "r0"); eq(deps[2].terminal, true); eq(deps[2].sub, "main · m")
+  const withFin = M.panelRows(snap({ recent: [Object.assign({}, recent[0], { finishedAt: "2026-09-06T21:31:00.000000Z" })] }), {})
+  eq(withFin.filter(r => r.type === "deployment")[0].finishedAt, "2026-09-06T21:31:00.000000Z", "terminal rows from recent carry finishedAt")
+  eq(deps[2].finishedAt, null, "absent finishedAt is null on the row")
   assert(deps[0].sub.indexOf("Merge pull request") > 0, "branch · commit message")
   assert(!rows.some(r => r.type === "note" && r.text === "Nothing deploying."))
   const old = recent.map(d => Object.assign({}, d, { updatedAt: new Date(NOW - 2 * 3600000).toISOString() }))
@@ -1288,6 +1291,9 @@ test("Model.sameRows: identical true; status change false; updatedAt-only change
   const s2 = loadedSnap({ deployments: M.normaliseDeployments(fx("deployments-active.json")) })
   s2.deployments[0].updatedAt = "2026-09-06T21:31:00.000000Z"
   eq(M.sameRows(a, M.panelRows(s2, {})), true, "updatedAt is not a rev field")
+  const s3 = loadedSnap({ deployments: M.normaliseDeployments(fx("deployments-active.json")) })
+  s3.deployments[0].finishedAt = "2026-09-06T21:31:00.000000Z"
+  eq(M.sameRows(a, M.panelRows(s3, {})), false, "finishedAt is a rev field: the right column renders it (security requirement 5)")
   s2.deployments[0].status = "finished"
   eq(M.sameRows(a, M.panelRows(s2, {})), false, "status change")
   const c = a.slice(); const t = c[1]; c[1] = c[2]; c[2] = t
@@ -1646,6 +1652,19 @@ test("Model.deploymentRow / resourceRow: names pass appLabel (Phase 4b item 1)",
   const o = "https://app.coolify.io"
   eq(M.deploymentRow({ uuid: "d1", status: "finished", appName: "storefront:main-h0wxyg40kc0lz727dom9l03i" }, o).name, "storefront")
   eq(M.deploymentRow({ uuid: "deadbeefdeadbeefdeadbeef", status: "finished", appName: "" }, o).name, "deadbeef", "no app name: uuid8")
+  const finD = M.normaliseDeployment(fx("deployment-finished.json"))
+  eq(M.deploymentRow(finD, o).finishedAt, "2026-09-04T23:16:46.000000Z", "finishedAt passes through")
+  eq(M.deploymentRow({ uuid: "d1", status: "finished", appName: "a" }, o).finishedAt, null, "absent -> null")
+  // Security requirement 1: timestamps are bounded at normaliseDeployment (non-empty strings of <= 40 chars)
+  eq(M.normaliseDeployment({ created_at: "x".repeat(41) }).createdAt, null, "41 chars rejected")
+  eq(M.normaliseDeployment({ created_at: "" }).createdAt, null, "empty string stays null (recent.json never gains a \"\")")
+  eq(M.normaliseDeployment({ created_at: 1 }).createdAt, null, "number rejected")
+  eq(M.normaliseDeployment({ created_at: {} }).createdAt, null, "object rejected")
+  eq(M.normaliseDeployment({ updated_at: 1, finished_at: [1] }).updatedAt, null); eq(M.normaliseDeployment({ finished_at: [1] }).finishedAt, null)
+  eq(M.normaliseDeployment({ created_at: "2026-09-04T23:14:25.000000Z" }).createdAt, "2026-09-04T23:14:25.000000Z", "a 27-char ISO stamp is kept")
+  // one record, both surfaces: the section row and the History row compute the same duration
+  eq(M.durationOf(M.deploymentRow(finD, o)), M.durationOf(M.historyRow(finD, "app1", o)), "section and History agree from one record")
+  eq(M.durationOf(M.historyRow(finD, "app1", o)), "2m 21s")
   eq(M.resourceRow({ uuid: "xyhpwdxqu33omjgwuo6c7cjp", name: "xyhpwdxqu33omjgwuo6c7cjp-200537415987", kind: "application", state: "running", status: "running:healthy" }, 0, o).name, "xyhpwdxq")
   eq(M.resourceRow({ uuid: "u2", name: "Storefront Prod WP", kind: "service", state: "exited", status: "exited" }, 0, o).name, "Storefront Prod WP", "plain names untouched")
 })
@@ -1939,6 +1958,7 @@ test("Model.normaliseHistory: {count, rows} newest first, no logs key on any row
   const row = M.historyRow(h.rows[0], "app1", "https://app.coolify.io")
   eq(row.type, "history"); eq(row.rowType, "history"); eq(row.key, "hist:" + h.rows[0].uuid); eq(row.appUuid, "app1")
   eq(row.sub, "deploy", "commit HEAD and no branch renders as deploy"); assert(!("age" in row) || row.age === null)
+  eq(row.finishedAt, h.rows[0].finishedAt, "finishedAt comes from deploymentRow now"); assert(row.finishedAt.length === 27, "the fixture's own stamp")
   eq(M.historyRow(Object.assign({}, h.rows[0], { restartOnly: true }), "app1", "").sub, "restart")
   eq(M.historyRow(Object.assign({}, h.rows[0], { branch: "main" }), "app1", "").sub, "main")
   eq(M.historyRow(Object.assign({}, h.rows[0], { branch: "HEAD" }), "app1", "").sub, "deploy")

@@ -456,6 +456,13 @@ function normaliseResources(arr) {
   })
 }
 
+// A timestamp is kept only as a non-empty string of at most the recent file's cap (40): the first
+// bound in the normalise layer, and load-bearing twice: it keeps a 10 MB stamp out of recentEntry's
+// redact() on every save and out of the per-tick parses in Panel.qml's right column. The file path
+// stays different on purpose (recentEntry truncates and stringifies); durationOf's bounds guard it.
+function tsField(v) {
+  return typeof v === "string" && v && v.length <= RECENT_STRING_FIELDS.createdAt ? v : null
+}
 function normaliseDeployment(d) {
   d = d || {}
   return {
@@ -468,9 +475,9 @@ function normaliseDeployment(d) {
     status: String(d.status || ""),
     commit: String(d.commit || ""),
     commitMessage: String(d.commit_message || "").split("\n")[0],
-    createdAt: d.created_at || null,
-    updatedAt: d.updated_at || null,
-    finishedAt: d.finished_at || null,
+    createdAt: tsField(d.created_at),
+    updatedAt: tsField(d.updated_at),
+    finishedAt: tsField(d.finished_at),
     url: typeof d.deployment_url === "string" ? d.deployment_url : null,
     restartOnly: !!d.restart_only,
     force: !!d.force_rebuild,
@@ -1404,6 +1411,7 @@ function deploymentRow(d, originStr) {
     type: "deployment", key: "dep:" + d.uuid, uuid: d.uuid, glyph: g.glyph, tone: g.tone,
     name: appLabel(d.appName, d.uuid), sub: [d.branch, d.commitMessage].filter(function (x) { return !!x }).join(" · "),   // Phase 4b: the toast label, not Coolify's decorated name
     createdAt: d.createdAt, updatedAt: d.updatedAt, terminal: !!TERMINAL[d.status], status: d.status,
+    finishedAt: d.finishedAt || null,
     url: openUrl("deployment", d, originStr), pendingVerb: ""
   }
 }
@@ -1800,7 +1808,8 @@ function rowRev(r) {
   return [r.type, r.glyph || r.dot || "", r.tone || "", r.name || r.title || r.text || "", r.sub || r.statusWords || "",
           r.open === undefined ? "" : String(r.open), r.count === undefined ? "" : String(r.count),
           r.dim === undefined ? "" : String(r.dim), r.kindHint || "", r.terminal === undefined ? "" : String(r.terminal), r.control || "",
-          r.pendingVerb || "", r.url ? "u" : "", r.actions ? r.actions.map(function (a) { return a.id }).join(",") : ""].join("")
+          r.pendingVerb || "", r.url ? "u" : "", r.actions ? r.actions.map(function (a) { return a.id }).join(",") : "",
+          r.finishedAt || ""].join("")   // the right column renders it (rowTime); set once per uuid, unlike updatedAt
 }
 
 function sameRows(a, b) {
@@ -2045,7 +2054,7 @@ function normaliseHistory(json) {
 // api row carries commit "HEAD" and no message). Rows carry timestamps, not ages.
 function historyRow(d, appUuid, originStr) {
   var r = deploymentRow(d, originStr)
-  r.type = "history"; r.key = "hist:" + d.uuid; r.appUuid = appUuid || null; r.finishedAt = d.finishedAt || null
+  r.type = "history"; r.key = "hist:" + d.uuid; r.appUuid = appUuid || null
   r.sub = d.restartOnly ? "restart" : (d.branch && d.branch !== "HEAD" ? d.branch : "deploy")
   return viewRow("history", r)
 }
