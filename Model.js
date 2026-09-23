@@ -737,7 +737,7 @@ function notifyBody(text, max) {
 }
 
 // createdAt -> finishedAt (Coolify has no started_at, so a queue wait is inside it). Parse once and
-// compute from the span: "" when either end is unparseable, reversed (a fabricated "0s" is a metric
+// compute from the two numbers: "" when either end is unparseable, reversed (a fabricated "0s" is a metric
 // the API did not give) or over the cap; "0s" for an equal pair (Coolify's stamps are second-granular).
 var DURATION_MAX_MS = 7 * 24 * 3600 * 1000   // longer than this is not a deployment: caps the string the name column is sized against
 function durationOf(d) {

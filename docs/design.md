@@ -197,8 +197,7 @@ last hour; older ones drop out on their own (Phase 3 persists them across restar
 history view below, reached from an application's strip, holds the rest). It never goes
 blank while there is an outcome to show (Phase 4b): with nothing active and nothing under
 an hour old, the newest terminal deployment stays with its duration and age (`2m 21s · 3h ago`,
-`1m 4s · 2d ago`) until
-it is dismissed. Every terminal row carries a `×` (`Model.G.dismiss`, U+00D7) at its right
+`1m 4s · 2d ago`) until it is dismissed. Every terminal row carries a `×` (`Model.G.dismiss`, U+00D7) at its right
 edge, dim, foreground while the row has the cursor (`hasCursor`, never `containsMouse`);
 one click on it, `x` on the row, or **Dismiss** in the strip acknowledges. Dismiss clears
 that row **and every older terminal entry**, so the section reads "Nothing deploying."
@@ -261,8 +260,7 @@ is busy).
 **History** in an application's strip opens `‹ <app> · N deployments`: ten rows newest
 first, each `glyph · status word` over `branch` / `restart` / `deploy` (never the string
 `HEAD`), right-aligned `duration · age` on a terminal row (a running row keeps its age); then
-`Show 10 more (10 of 39)`
-until the count is reached. Enter on a row opens that build's log (a second view; `h`
+`Show 10 more (10 of 39)` until the count is reached. Enter on a row opens that build's log (a second view; `h`
 returns to the history with the cursor still on that row). Pages are fetched on demand,
 never on a timer, and never touch Recent. States: `Loading history…`, `No deployments
 recorded for this application.`, `Coolify no longer has that application.`
