@@ -167,7 +167,7 @@ kept.
 ### From the command line
 
 ```sh
-omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid>   # -> "queued deploy <uuid>" or why not
+omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid|name>   # -> "queued deploy <uuid>" or why not
 omarchy-shell io.github.danjonesio.coolwatch log <deployment uuid>             # opens the panel on that build's log
 omarchy-shell io.github.danjonesio.coolwatch instances                          # -> "cloud (active), homelab"
 omarchy-shell io.github.danjonesio.coolwatch instance homelab                   # switch
@@ -178,7 +178,11 @@ omarchy-shell shell toggle io.github.danjonesio.coolwatch                       
 
 The verbs never ask for confirmation: typing the verb is the confirmation. `status | jq
 .lastAction` shows the outcome. They act on the active instance, except `log`, which
-finds the instance holding that deployment.
+finds the instance holding that deployment. A name is the label the panel shows for an
+application, service or database on the active instance (the name cut at 32 characters),
+matched whole, case-insensitively, against the last poll; a name nothing has answers
+`unknown name <name>`, a name two things have answers `ambiguous name <name>`; a uuid the
+instance no longer has answers `unknown uuid <uuid>`.
 
 ## Notifications
 

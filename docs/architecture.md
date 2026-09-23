@@ -37,14 +37,20 @@ No daemon, no second Quickshell, no Python collector. The shell is the runtime.
   `refresh` and `status` (Phase 1; `status` returns fixed-shape JSON with counts,
   per-kind timings and the rolling request count, never a secret, body or URL).
   Phase 2 adds `deploy <uuid>`, `restart <uuid>`, `stop <uuid>`, `start <uuid>`: each
-  returns `queued <verb> <uuid>` or a refusal token (`unknown uuid <uuid>`,
-  `not applicable <verb> <uuid>`, `already pending <uuid>`, `busy`, `not configured`,
-  `config unsafe`, `rate limited`, `token rejected`, `refused: token lacks the
-  <ability> permission` after three consecutive ability failures from the CLI); Phase 4
-  adds `instances` (`cloud (active), homelab`) and `instance <id>` (`active <id>` or
-  `unknown instance <id>`), and the action verbs resolve against the active instance; the
-  outcome is `status.lastAction`. CLI verbs never confirm. The uuid echoed back is
-  bounded to 64 characters and one line; the log carries 8.
+  returns `queued <verb> <uuid>` or a refusal token (`unknown uuid <uuid>` for a
+  uuid-shaped argument the store does not hold, `unknown name <argument>`,
+  `ambiguous name <argument>`, `not applicable <verb> <uuid>`, `already pending <uuid>`,
+  `busy`, `not configured`, `config unsafe`, `rate limited`, `token rejected`,
+  `refused: token lacks the <ability> permission` after three consecutive ability
+  failures from the CLI); Phase 4 adds `instances` (`cloud (active), homelab`) and
+  `instance <id>` (`active <id>` or `unknown instance <id>`), and the action verbs resolve
+  against the active instance; the outcome is `status.lastAction`. An argument is tried
+  as a uuid over every list first, then as a resource label (`Model.resolveActionTarget`,
+  in front of the gate; resources only, never deployments, servers or tags, so a tag name
+  cannot fan out unconfirmed; exact, then case-folded). CLI verbs never confirm. The uuid
+  or name echoed back is bounded to 64 characters and one line; the `ipc` log line
+  carries the resolved uuid8 on success and `-` otherwise, and `status.lastAction.uuid8`
+  is `""` for a name refusal.
 - Hot reload: saving under `~/.config/omarchy/plugins/` reloads the plugin. `bin/dev-sync`
   copies the repo there (the validator refuses symlinks).
 
@@ -536,7 +542,9 @@ Every action block adds `request = "POST"`, `header = "Content-Type: application
 and `data-raw = "{}"` (constants; `data` would read a file for a leading `@`) and never
 `location`. `Model.actionRequest` is the single gate for the panel and the IPC verbs
 (uuid shape, presence in the store, the applicability table); the service builds the
-`Api` descriptor from the stored kind. One single-flight `actionReq` goes through
+`Api` descriptor from the stored kind. `Model.resolveActionTarget` runs in front of the
+gate for IPC calls only, turning a label into a store uuid; it is not a second gate.
+One single-flight `actionReq` goes through
 `_launch` like a poll; `act()` refuses while an action is in flight or within 1 s of the
 last launch, while the same uuid is pending, when not ready / probing / paused, and
 after 120 requests in the last minute. There is no queue and no compensating poll.
@@ -563,7 +571,7 @@ and dim refusals, 6 s for failures), never the callout, never `_error`, `_backof
 `_probeMode` or `consecutiveFailures`. The one escalation is a 429, which enters the
 instance-wide pause through `_pauseFor` (extracted from `_fail`). A reaped action says
 "Sent, but Coolify did not answer", keeps its pending entry, and is never retried.
-`status` gains `lastAction { verb, uuid8, code, curlExit, ms, at, result, instance }` (`instance` since Phase 4), `pending`,
+`status` gains `lastAction { verb, uuid8, code, curlExit, ms, at, result, instance }` (`instance` since Phase 4; `uuid8` is `""` when a name refused before resolution), `pending`,
 `pendingStale`, `actionsLastMin` and `inflightAction`; the log line is
 `coolwatch action <verb> <code> exit=<n> <ms>ms <uuid8>`.
 
@@ -620,8 +628,10 @@ refused after three consecutive ability failures until a 2xx or a config change.
     that form and no `.qml` mentions `fqdn`.
 16. Actions never poison polling (see Actions), the POST body is a constant, the
     method comes from a whitelist checked with `hasOwnProperty`, and IPC verbs are
-    exactly `deploy restart stop start`: a no-confirm destructive surface open to any
-    local process, documented in the README.
+    exactly `deploy restart stop start`, taking a uuid or the active instance's resource
+    label (`Model.resolveActionTarget`: resources only, so a tag name cannot fan out
+    unconfirmed): a no-confirm destructive surface open to any local process, documented
+    in the README.
 17. (plan SR15) No Coolify string becomes a notifier option or a control sequence: every
     positional passes `Model.notifySafe`, the body `Model.notifyBody`; log lines use
     `Model.uuid8`.
@@ -699,7 +709,8 @@ refused after three consecutive ability failures until a 2xx or a config change.
     (curl aborts before any request, so the Bearer header was never sent); `insecure`,
     `-k` and `proto-default` are never emitted (node test).
 40. (Phase 4 SR38) Actions bind to the instance they were opened on: IPC verbs resolve
-    against the active instance only; the confirm dialog captures `activeId` and the
+    against the active instance only (a name against its last resources poll); the
+    confirm dialog captures `activeId` and the
     context refuses a mismatch with "Instance changed; nothing sent"; every pending entry
     lives in its context; `status.lastAction.instance` names it.
 41. (SR39, 2026-09-13) Fixtures name no real account: `bin/check` extracts every URL host

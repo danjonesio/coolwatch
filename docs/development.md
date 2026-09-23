@@ -17,7 +17,8 @@ per-instance state files) and 4b (polish) all merged; manifest 1.0.0 (2026-09-13
 `develop` since 2026-09-22: health before auth (one unauthenticated `GET /health` when a
 poll fails with an HTTP answer; the callout tells "Coolify not responding" from "token
 rejected"; `docs/plans/health-before-auth.md`); build duration on terminal and History rows
-(`duration · age` from `created_at → finished_at`; `docs/plans/build-duration.md`).**
+(`duration · age` from `created_at → finished_at`; `docs/plans/build-duration.md`); IPC
+verbs by name (`docs/plans/ipc-verbs-by-name.md`).**
 Read `docs/roadmap.md` before writing code.
 
 Branches (since 2026-09-14): work branches from `develop` into `develop`; `master` is the
@@ -171,7 +172,9 @@ moves only by a release PR from `develop` (`docs/release.md`: bump `manifest.jso
   panel). Deploy, Redeploy, Restart, Start, Validate do not. CLI verbs never confirm: typing the
   verb is the confirmation.
 - One deploy button follows the state: Deploy on a stopped application, Redeploy on a
-  running one (both `POST /deploy`; `d` and IPC `deploy` resolve the same way). Only
+  running one (both `POST /deploy`; `d` and IPC `deploy` resolve the same way, and a name
+  argument resolves to the row the panel shows: `Model.appLabel`, resources only, uuid
+  first). Only
   applications get it (`POST /deploy` accepts services and databases but that is Start
   under another name). A left click on a row opens its strip; the buttons are clickable. A strip of more than four
   buttons folds: the lifecycle verbs plus **More** on the first line, Logs · History · Open beneath once More is open
@@ -282,7 +285,7 @@ omarchy-shell io.github.danjonesio.coolwatch status | jq .ui   # Phase 4b: {load
 omarchy-shell io.github.danjonesio.coolwatch status | jq '{logView, buildLogsHeld, history, tags, sensitive, dep: (.perKind.deployments | {lastBytes, bytesLastMin, skipped})}'   # Phase 4 fields, counts only
 quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch (notify|recent|drain|logview) '   # unanchored: the log prefixes "DEBUG qml:"
 quickshell log -p /usr/share/omarchy/shell --tail 300 | grep -E 'coolwatch [A-Za-z0-9_-]+/(buildlog|containerlog|service|history|tags) '   # the view fetches ("<instance id>/<kind>" since Phase 4); a failure logs "<id>/<kind> view failed: <kind> http=<n>"
-omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`; resolves against the active instance only
+omarchy-shell io.github.danjonesio.coolwatch deploy|restart|stop|start <uuid|name>   # -> "queued <verb> <uuid>" | "unknown uuid <uuid>" | "unknown name <name>" | "ambiguous name <name>" | "not applicable <verb> <uuid>" | "already pending <uuid>" | "busy" | ...; no confirm; read the outcome from `status | jq .lastAction`; resolves against the active instance only; a name is the panel's label (resources only, uuid first)
 omarchy-shell io.github.danjonesio.coolwatch instances                          # -> "cloud (active), homelab"
 omarchy-shell io.github.danjonesio.coolwatch instance homelab                   # -> "active homelab" | "unknown instance homelab"
 omarchy-shell io.github.danjonesio.coolwatch log <deployment uuid>             # -> "log <uuid8>" | "invalid uuid": opens the panel on that build's log (a failed toast's click); the log says "coolwatch ipc log <uuid8> -> summoned|open|no panel <instance id>"
