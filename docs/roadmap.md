@@ -222,6 +222,14 @@ Done from this list: **Health before auth** (PR #13, merged 2026-09-22 into `dev
 `GET /health` when a poll fails with an HTTP answer; the callout tells "Coolify not
 responding" from "token rejected". It also fixed a pre-existing bug: a 2xx whose body did
 not parse counted as a success and cost about 49 requests in the first minute on a wrong URL.
+**Build duration** (PR #15, merged 2026-09-23 into `develop`; `docs/plans/build-duration.md` and
+its build record). Terminal rows in the section and in History read `duration · age`
+(`2m 21s · 4m ago`); Coolify has no `started_at`, so the duration is `created_at → finished_at`
+and the finished toast already carried it. The cancelled toast still has no body (open call).
+**IPC verbs by name** (PR #17, merged 2026-09-23 into `develop`;
+`docs/plans/ipc-verbs-by-name.md` and its build record). `deploy <label>` resolves the
+panel's label on the active instance (uuid first, resources only, exact then case-folded),
+`unknown name` / `ambiguous name` otherwise; a uuid-shaped miss still reads `unknown uuid`.
 
 ### Small (an hour each, `Model.js` + a test, patch or minor)
 
@@ -229,9 +237,6 @@ not parse counted as a success and cost about 49 requests in the first minute on
   application as its own copy when previews are on; those deployments carry
   `pull_request_id` and today look like a production deploy. Row and toast say
   `PR #123` (`Model.appLabel` caption, `notifyCopy`).
-- **Build duration on terminal and history rows.** Running rows show elapsed; finished
-  rows could show `2m 14s` from `started_at`/`finished_at`, and the finished toast could
-  say `finished in 2m 14s`. Real data, not progress.
 - **Commit message on the cursor row.** Parsed (`commit_message`) and never shown. A
   `PanelToolTip` on a deployment row, same binding as the elided-name tip; `notifySafe`
   is not needed (it never reaches argv).
@@ -241,8 +246,6 @@ not parse counted as a success and cost about 49 requests in the first minute on
   verbs. Panel-only key.
 - **Hyprland keybinding in the README.** A `bindd` line for the toggle IPC; the biggest
   usability gap for the cost of one doc line.
-- **IPC verbs by name.** `deploy api` resolves an unambiguous `Model.appLabel` match on
-  the active instance, `unknown name` / `ambiguous name` otherwise. Uuids still work.
 
 ### Medium (a plan, a fixture, a needs-human list)
 
