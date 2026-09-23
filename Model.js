@@ -1581,25 +1581,28 @@ function holdsUuid(s, uuid) {
 // lowercase-only, so an upper-cased decorated paste does not resolve while an upper-cased
 // label does), exact first, then case-folded. Resources only: a deployment's label is its
 // application's, no verb applies to a server, and a tag name would fan out unconfirmed (SR35).
-// A row whose uuid fails UUID_RE is invisible (normalise does not charset-check uuids; the
-// same drop normaliseTags makes), so a name never resolves to a string that would fail the
-// gate's re-test and reach stdout, the log or status through _refuse (SR15).
+// A uuid-shaped argument the store does not hold is a uuid miss and never a name: a script's
+// by-uuid call cannot be redirected to a resource named after a deleted uuid (the cost: a label
+// of 20+ lowercase letters and digits with nothing else is uuid-only). A row whose uuid is not a
+// UUID_RE string is invisible (normalise does not charset-check uuids; the same drop
+// normaliseTags makes), so a name never resolves to a string that would fail the gate's
+// re-test and reach stdout, the log or status through _refuse (SR15).
 function resolveActionTarget(s, arg) {
   var a = String(arg === undefined || arg === null ? "" : arg).trim()
   if (!a || a.length > IPC_ARG_MAX) return { ok: false, why: "unknownname" }
   s = s || {}
   if (UUID_RE.test(a) && holdsUuid(s, a)) return { ok: true, uuid: a, by: "uuid" }
+  if (UUID_SHAPED_RE.test(a)) return { ok: false, why: "unknown" }
   var label = appLabel(a, ""), want = label.toLowerCase(), exact = [], folded = []
-  if (want) (s.resources || []).forEach(function (r) {
-    if (!r || !UUID_RE.test(r.uuid)) return
+  ;(s.resources || []).forEach(function (r) {
+    if (!r || typeof r.uuid !== "string" || !UUID_RE.test(r.uuid)) return
     var l = appLabel(r.name, r.uuid)
     if (l === label && exact.indexOf(r.uuid) < 0) exact.push(r.uuid)
     if (l.toLowerCase() === want && folded.indexOf(r.uuid) < 0) folded.push(r.uuid)
   })
   var hits = exact.length ? exact : folded
   if (hits.length === 1) return { ok: true, uuid: hits[0], by: "name" }
-  if (hits.length) return { ok: false, why: "ambiguousname" }
-  return { ok: false, why: UUID_SHAPED_RE.test(a) ? "unknown" : "unknownname" }
+  return { ok: false, why: hits.length ? "ambiguousname" : "unknownname" }
 }
 
 // "" when the action may launch now (SR6).

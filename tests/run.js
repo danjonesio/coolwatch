@@ -1550,8 +1550,14 @@ test("Model.resolveActionTarget: uuid first, then one exact label over resources
   eq(R(st, "production-landing").why, "unknownname", "SR35: a tag name cannot fan out"); eq(R(st, "canary").why, "unknownname")
   // no prefix
   eq(R(s, "storefron").why, "unknownname"); eq(R(s, "h0wx").why, "unknownname"); eq(R(s, "xyhpwdx").why, "unknownname")
-  // a uuid-shaped miss is a uuid miss (requirement 9): today's arm, today's token; a label typo is a name miss
+  // a uuid-shaped miss is a uuid miss (requirement 9): today's arm, today's token; a label typo is a name miss;
+  // and a uuid-shaped argument the store does not hold never resolves by name (review: security-analyst 2),
+  // so a label of 20+ lowercase letters and digits is uuid-only (decision)
   eq(R(s, "zzzzzzzzzzzzzzzzzzzzzzzz").why, "unknown"); eq(R(s, "storefrnt").why, "unknownname")
+  const impostor = withRes([{ uuid: "aaaaaaaaaaaaaaaaaaaaaaaa", name: "zzzzzzzzzzzzzzzzzzzzzzzz" }, { uuid: "longlabel00000000000001", name: "myverylongapplicationname" }])
+  eq(R(impostor, "zzzzzzzzzzzzzzzzzzzzzzzz").why, "unknown", "a deleted uuid cannot be stolen by a resource named after it")
+  eq(R(impostor, "myverylongapplicationname").why, "unknown", "a uuid-shaped label is uuid-only")
+  eq(R(impostor, "aaaaaaaaaaaaaaaaaaaaaaaa").by, "uuid")
   // ambiguity refuses, never picks first (requirement 6): exact pass, then the fold
   const twoBranches = withRes([{ uuid: "branch000000000000000001", name: "storefront:main-branch000000000000000001" }, { uuid: "branch000000000000000002", name: "storefront:staging-branch000000000000000002" }])
   eq(R(twoBranches, "storefront").why, "ambiguousname")
@@ -1560,6 +1566,8 @@ test("Model.resolveActionTarget: uuid first, then one exact label over resources
   eq(R(withRes([rs[0]]), "storefront").uuid, APP, "the same resource listed twice is one hit")
   // guards (requirements 2, 7): a row whose uuid fails UUID_RE is invisible (SR15); bounds; missing lists; nothing throws
   eq(R(withRes([{ uuid: "../../etc/passwd", name: "hostile" }]), "hostile").why, "unknownname")
+  eq(R(withRes([{ uuid: null, name: "nully" }, { uuid: 12345678901234567890, name: "num" }]), "nully").why, "unknownname", "a non-string uuid is invisible (review: security-analyst 3)")
+  eq(R(withRes([{ uuid: 12345678901234567890, name: "num" }]), "num").why, "unknownname")
   const empty = withRes([{ uuid: "", name: "" }])
   eq(R(empty, ":x-" + "a".repeat(20)).why, "unknownname"); eq(R(empty, "").why, "unknownname")
   eq(R(s, " ").why, "unknownname"); eq(R(s, "x".repeat(65)).why, "unknownname")
