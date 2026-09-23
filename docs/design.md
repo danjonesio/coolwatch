@@ -82,8 +82,8 @@ Card padding is the `KeyboardPanel` default. Column spacing `Style.space(12)`.
 │ DEPLOYMENTS                                       │  PanelSectionHeader
 │ 󰦖 api          main · fix login redirect   1m 20s │  active: spinner, name, commit, elapsed
 │ 󰔟 worker       queued                             │  queued
-│ 󰄬 web          finished                    4m ago │  recent terminal (dimmed)
-│ 󰅙 cron         failed                     12m ago │  failed in urgent
+│ 󰄬 web          finished           2m 21s · 4m ago │  recent terminal (dimmed): duration · age
+│ 󰅙 cron         failed             1m 4s · 12m ago │  failed in urgent
 │ ───────────────────────────────────────────────── │
 │ SERVERS                                           │
 │ ● web-1        10.0.0.4 · 7 resources             │  ● foreground = reachable
@@ -187,15 +187,17 @@ Rows are `CursorSurface`s. Left glyph by status: `󰦖` in progress (`bar.urgent
 queued (dim), `󰄬` finished (dim), `󰅙` failed (`Color.accent`: red in Aetheria while `bar.urgent` is yellow-green), `󰜺` cancelled (dim). Name in
 body weight, "branch · commit message" in caption dim (the branch is the joined
 application's `git_branch`; the first seven characters of the commit when the join
-misses), right-aligned elapsed or age. Expanded row (Phase 2) shows an action row:
+misses), right-aligned: the ticking elapsed on a running row; on a terminal one how long the
+deployment ran, from Coolify's `created_at → finished_at`, then the age (`2m 21s · 4m ago`);
+the age alone when Coolify's pair is missing. Expanded row (Phase 2) shows an action row:
 **Logs** first (Phase 4; `L` is the direct key, so Enter, Enter reaches the build log),
 **Cancel** (only while queued or in progress; `foreground: root.urgent`) or **Dismiss** (a
 terminal row; `x` does the same), **Open**. A pending cancel appends " · cancelling…" to the caption in accent. The section shows all active plus the newest 5 terminal deployments from the
 last hour; older ones drop out on their own (Phase 3 persists them across restarts; the
 history view below, reached from an application's strip, holds the rest). It never goes
 blank while there is an outcome to show (Phase 4b): with nothing active and nothing under
-an hour old, the newest terminal deployment stays with its age (`3h ago`, `2d ago`) until
-it is dismissed. Every terminal row carries a `×` (`Model.G.dismiss`, U+00D7) at its right
+an hour old, the newest terminal deployment stays with its duration and age (`2m 21s · 3h ago`,
+`1m 4s · 2d ago`) until it is dismissed. Every terminal row carries a `×` (`Model.G.dismiss`, U+00D7) at its right
 edge, dim, foreground while the row has the cursor (`hasCursor`, never `containsMouse`);
 one click on it, `x` on the row, or **Dismiss** in the strip acknowledges. Dismiss clears
 that row **and every older terminal entry**, so the section reads "Nothing deploying."
@@ -205,8 +207,11 @@ entries stay in `recent` for dedupe with `dismissed: true` and are hidden from t
 at any age; the status line reads "Dismissed". The file keeps entries for seven days, so
 a Friday build is still Monday's last deployment.
 
-Elapsed time ticks every second while the panel is open (a `Timer` on `root.opened`),
-formatted `1m 20s`, `45s`, `2h 03m`.
+A running row's elapsed ticks every second while the panel is open (a `Timer` on
+`root.opened`), formatted `45s`, `1m 20s`, `2h 03m`. The age beside it (`Just now`, `4m ago`,
+`3h ago`, `2d ago`) follows the same clock and changes once a minute. A terminal row's
+duration is fixed from Coolify's `created_at → finished_at` and is never recomputed. A
+terminal row without Coolify's pair renders the age alone; it is not a state.
 
 ### Log view (Phase 4)
 
@@ -254,8 +259,8 @@ is busy).
 
 **History** in an application's strip opens `‹ <app> · N deployments`: ten rows newest
 first, each `glyph · status word` over `branch` / `restart` / `deploy` (never the string
-`HEAD`), right-aligned age from the row's timestamps; then `Show 10 more (10 of 39)`
-until the count is reached. Enter on a row opens that build's log (a second view; `h`
+`HEAD`), right-aligned `duration · age` on a terminal row (a running row keeps its age); then
+`Show 10 more (10 of 39)` until the count is reached. Enter on a row opens that build's log (a second view; `h`
 returns to the history with the cursor still on that row). Pages are fetched on demand,
 never on a timer, and never touch Recent. States: `Loading history…`, `No deployments
 recorded for this application.`, `Coolify no longer has that application.`
@@ -492,8 +497,9 @@ thing:
 stripped (`storefront:main-h0wx…` → `storefront`), elided to 32, the uuid's
 first 8 characters when the name is empty or is Coolify's generated `<uuid>-<digits>`
 shape for an unnamed app (`xyhpwdxqu33omjgwuo6c7cjp-200537415987` → `xyhpwdxq`, which
-matches the log lines). One rule for every toast; the panel still shows the raw name. `dur` is `createdAt → finishedAt` ("1m 42s"), empty when either is
-unparseable; `sub` is the panel's `branch · commit message`. Headlines are elided at 72,
+matches the log lines). One rule for every toast; the panel still shows the raw name. `dur` is `createdAt → finishedAt` ("1m 42s"; a queue wait is inside it, Coolify has no start
+time), empty when either is unparseable, reversed or over 7 days; the panel's terminal rows
+render the same value; `sub` is the panel's `branch · commit message`. Headlines are elided at 72,
 bodies at 96 (the toast text box is 304 px). An empty body is omitted, which gives the
 compact one-line toast. With two or more instances every body ends in ` · <instance
 name>` (`Deployed api` / `21s · main · Coolify Cloud`); the headline never changes.

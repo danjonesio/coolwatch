@@ -456,6 +456,13 @@ function normaliseResources(arr) {
   })
 }
 
+// A timestamp is kept only as a non-empty string of at most the recent file's cap (40): the first
+// bound in the normalise layer, and load-bearing twice: it keeps a 10 MB stamp out of recentEntry's
+// redact() on every save and out of the per-tick parses in Panel.qml's right column. The file path
+// stays different on purpose (recentEntry truncates and stringifies); durationOf's bounds guard it.
+function tsField(v) {
+  return typeof v === "string" && v && v.length <= RECENT_STRING_FIELDS.createdAt ? v : null
+}
 function normaliseDeployment(d) {
   d = d || {}
   return {
@@ -468,9 +475,9 @@ function normaliseDeployment(d) {
     status: String(d.status || ""),
     commit: String(d.commit || ""),
     commitMessage: String(d.commit_message || "").split("\n")[0],
-    createdAt: d.created_at || null,
-    updatedAt: d.updated_at || null,
-    finishedAt: d.finished_at || null,
+    createdAt: tsField(d.created_at),
+    updatedAt: tsField(d.updated_at),
+    finishedAt: tsField(d.finished_at),
     url: typeof d.deployment_url === "string" ? d.deployment_url : null,
     restartOnly: !!d.restart_only,
     force: !!d.force_rebuild,
@@ -729,9 +736,16 @@ function notifyBody(text, max) {
   return notifySafe(text, max).replace(/&/g, "&amp;").replace(/</g, "&lt;")
 }
 
+// createdAt -> finishedAt (Coolify has no started_at, so a queue wait is inside it). Parse once and
+// compute from the two numbers: "" when either end is unparseable, reversed (a fabricated "0s" is a metric
+// the API did not give) or over the cap; "0s" for an equal pair (Coolify's stamps are second-granular).
+var DURATION_MAX_MS = 7 * 24 * 3600 * 1000   // longer than this is not a deployment: caps the string the name column is sized against
 function durationOf(d) {
-  var a = Date.parse(d.createdAt), b = Date.parse(d.finishedAt)
-  return isNaN(a) || isNaN(b) ? "" : elapsed(d.createdAt, b)
+  var a = Date.parse(d && d.createdAt), b = Date.parse(d && d.finishedAt)
+  if (isNaN(a) || isNaN(b)) return ""
+  var span = b - a
+  if (span < 0 || span > DURATION_MAX_MS) return ""
+  return span === 0 ? "0s" : elapsed(0, span)
 }
 function serverLabelFor(s, serverUuid) {
   if (!serverUuid) return ""
@@ -1397,6 +1411,7 @@ function deploymentRow(d, originStr) {
     type: "deployment", key: "dep:" + d.uuid, uuid: d.uuid, glyph: g.glyph, tone: g.tone,
     name: appLabel(d.appName, d.uuid), sub: [d.branch, d.commitMessage].filter(function (x) { return !!x }).join(" · "),   // Phase 4b: the toast label, not Coolify's decorated name
     createdAt: d.createdAt, updatedAt: d.updatedAt, terminal: !!TERMINAL[d.status], status: d.status,
+    finishedAt: d.finishedAt || null,
     url: openUrl("deployment", d, originStr), pendingVerb: ""
   }
 }
@@ -1793,7 +1808,8 @@ function rowRev(r) {
   return [r.type, r.glyph || r.dot || "", r.tone || "", r.name || r.title || r.text || "", r.sub || r.statusWords || "",
           r.open === undefined ? "" : String(r.open), r.count === undefined ? "" : String(r.count),
           r.dim === undefined ? "" : String(r.dim), r.kindHint || "", r.terminal === undefined ? "" : String(r.terminal), r.control || "",
-          r.pendingVerb || "", r.url ? "u" : "", r.actions ? r.actions.map(function (a) { return a.id }).join(",") : ""].join("")
+          r.pendingVerb || "", r.url ? "u" : "", r.actions ? r.actions.map(function (a) { return a.id }).join(",") : "",
+          r.finishedAt || ""].join("")   // the right column renders it (rowTime); set once per uuid, unlike updatedAt
 }
 
 function sameRows(a, b) {
@@ -2038,7 +2054,7 @@ function normaliseHistory(json) {
 // api row carries commit "HEAD" and no message). Rows carry timestamps, not ages.
 function historyRow(d, appUuid, originStr) {
   var r = deploymentRow(d, originStr)
-  r.type = "history"; r.key = "hist:" + d.uuid; r.appUuid = appUuid || null; r.finishedAt = d.finishedAt || null
+  r.type = "history"; r.key = "hist:" + d.uuid; r.appUuid = appUuid || null
   r.sub = d.restartOnly ? "restart" : (d.branch && d.branch !== "HEAD" ? d.branch : "deploy")
   return viewRow("history", r)
 }
@@ -2145,4 +2161,27 @@ function age(iso, nowMs) {
   var h = Math.floor(m / 60)
   if (h < 24) return h + "h ago"
   return Math.floor(h / 24) + "d ago"
+}
+
+// The right column of a deployment or a history row. A running section row shows the ticking
+// elapsed; a terminal row shows the duration Coolify gives (createdAt -> finishedAt; there is
+// no started_at, so a queue wait is inside it) beside how long ago it ended. A history row
+// that is not terminal keeps its age. No duration: the row reads exactly the age it read before.
+// age() || age() rather than age(a || b): a non-empty unparseable stamp must fall through, and a
+// finishedAt that durationOf rejected (reversed, over the cap) must not drive the age either: a
+// days-old row would read "Just now" off a year-3000 stamp. Then the row reads today's updatedAt age.
+function credibleFinish(t) {
+  var b = Date.parse(t.finishedAt)
+  if (isNaN(b)) return false
+  var a = Date.parse(t.createdAt)
+  if (!isNaN(a)) return b - a >= 0 && b - a <= DURATION_MAX_MS
+  var u = Date.parse(t.updatedAt)   // no start (an old recent.json entry): the record's own last write must sit within a deployment's duration (DURATION_MAX_MS) of the finish
+  return isNaN(u) || Math.abs(u - b) <= DURATION_MAX_MS
+}
+function rowTime(r, nowMs) {
+  var t = r || {}
+  if (t.type === "deployment" && !t.terminal) return elapsed(t.createdAt, nowMs)
+  var dur = t.terminal ? durationOf(t) : ""
+  var ago = (credibleFinish(t) ? age(t.finishedAt, nowMs) : "") || age(t.updatedAt, nowMs) || age(t.createdAt, nowMs)
+  return [dur, ago].filter(function (x) { return !!x }).join(" · ")
 }

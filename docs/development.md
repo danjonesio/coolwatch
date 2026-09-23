@@ -16,7 +16,8 @@ logs, history, tag deploy; instances: one `InstanceCtx` per configured Coolify, 
 per-instance state files) and 4b (polish) all merged; manifest 1.0.0 (2026-09-13). On
 `develop` since 2026-09-22: health before auth (one unauthenticated `GET /health` when a
 poll fails with an HTTP answer; the callout tells "Coolify not responding" from "token
-rejected"; `docs/plans/health-before-auth.md`).**
+rejected"; `docs/plans/health-before-auth.md`); build duration on terminal and History rows
+(`duration · age` from `created_at → finished_at`; `docs/plans/build-duration.md`).**
 Read `docs/roadmap.md` before writing code.
 
 Branches (since 2026-09-14): work branches from `develop` into `develop`; `master` is the

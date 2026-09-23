@@ -440,7 +440,7 @@ Panel {
     if (!row || !svc) return
     if (row.type === "deployment" || row.type === "history") {
       root.pushView({ kind: "buildlog", uuid: row.uuid, name: row.name || row.uuid, url: row.url || "", status: row.status || "",
-                      at: row.finishedAt || row.updatedAt || "", createdAt: row.createdAt || "" })
+                      at: (Model.credibleFinish(row) ? row.finishedAt : row.updatedAt) || "", createdAt: row.createdAt || "" })   // the row's own age gate: a stamp durationOf rejected never ages the breadcrumb
       root._watch()
     } else if (row.type === "resource") {
       if (row.kind === "service") {
@@ -1118,8 +1118,8 @@ Panel {
                   Text {
                     id: histTime
                     textFormat: Text.PlainText
-                    // Rows carry timestamps, not strings: the age ticks with nowMs.
-                    text: Model.age(viewDelegate.modelData.finishedAt || viewDelegate.modelData.updatedAt || viewDelegate.modelData.createdAt, root.nowMs)
+                    // Rows carry timestamps, not strings: the elapsed and the age tick with nowMs; the duration is fixed.
+                    text: Model.rowTime(viewDelegate.modelData, root.nowMs)
                     color: root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
@@ -1474,8 +1474,8 @@ Panel {
                 Text {
                   id: depTime
                   textFormat: Text.PlainText
-                  // The only delegate that reads nowMs: rows carry timestamps, not strings.
-                  text: rowDelegate.row.terminal ? Model.age(rowDelegate.row.updatedAt, root.nowMs) : Model.elapsed(rowDelegate.row.createdAt, root.nowMs)
+                  // Rows carry timestamps, not strings: the elapsed and the age tick with nowMs; the duration is fixed.
+                  text: Model.rowTime(rowDelegate.row, root.nowMs)
                   color: root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption

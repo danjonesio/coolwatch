@@ -331,8 +331,10 @@ resource:  { uuid, name, kind (application|service|database), type, status,
              health (healthy|unhealthy|unknown), fqdn, environmentId, serverUuid,
              projectUuid, projectName, environmentName, environmentUuid, gitBranch }
            // pending is NOT a resource field: it is a service-owned map applied at render
-deployment:{ uuid (from deployment_uuid), appUuid, appName, branch, status, commit,
-             commitMessage, createdAt, updatedAt, url, restartOnly, force, isApi, isWebhook }
+deployment:{ uuid (from deployment_uuid), appId, appUuid, appName, serverName, branch, status, commit,
+             commitMessage, createdAt, updatedAt, finishedAt, url, restartOnly, force, isApi, isWebhook }
+           // the three stamps are kept only as non-empty strings of <= 40 chars (tsField);
+           // durationOf renders createdAt -> finishedAt on terminal rows and in the toasts
 tree:      [ { projectUuid, projectName, environments: [ { id, name, resourceUuids } ] } ]
 byServer:  { serverUuid: [resourceUuid…] }
 ```
