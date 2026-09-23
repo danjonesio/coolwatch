@@ -1325,6 +1325,50 @@ test("Model.durationOf: createdAt -> finishedAt, never updatedAt; \"\" on NaN, r
   eq(M.durationOf(null), "")
 })
 
+// The one right-column chooser (plan Design). Security requirement 6 (filter), 7 (no unbounded elapsed on History).
+test("Model.rowTime: running section row ticks elapsed; terminal row reads duration · age; no duration reads today's age", () => {
+  const o = "https://app.coolify.io"
+  const fin = M.deploymentRow(M.normaliseDeployment(fx("deployment-finished.json")), o)
+  const finAt = Date.parse(fin.finishedAt)
+  eq(M.rowTime(fin, finAt + 4 * 60000), "2m 21s · 4m ago")
+  eq(M.rowTime(fin, finAt + 10000), "2m 21s · Just now")
+  const fail = M.deploymentRow(M.normaliseDeployment(fx("deployment-failed.json")), o)
+  eq(M.rowTime(fail, Date.parse(fail.finishedAt) + 12 * 60000), "1m 4s · 12m ago")
+  const can = M.deploymentRow(M.normaliseDeployment(fx("deployment-cancelled.json")), o)
+  eq(M.rowTime(can, Date.parse(can.finishedAt) + 2 * 86400000), "6s · 2d ago")
+  const act = M.normaliseDeployments(fx("deployments-active.json")).map(d => M.deploymentRow(d, o))
+  const t0 = Date.parse(act[0].createdAt) + 80000
+  eq(M.rowTime(act[0], t0), "1m 20s", "in_progress: elapsed"); assert(M.rowTime(act[0], t0).indexOf(" · ") < 0)
+  eq(M.rowTime(act[1], Date.parse(act[1].createdAt) + 12000), "12s", "queued: elapsed")
+  // the four fallbacks read exactly today's text: age off updatedAt. now is chosen so finishedAt and
+  // updatedAt sit in different minute buckets (finished 23:16:46, updated 23:16:50 -> now 23:17:48).
+  const now = Date.parse(fin.updatedAt) + 58000
+  eq(M.age(fin.finishedAt, now), "1m ago"); eq(M.age(fin.updatedAt, now), "Just now", "the buckets differ")
+  const today = M.age(fin.updatedAt, now)
+  eq(M.rowTime(Object.assign({}, fin, { finishedAt: null }), now), today, "finishedAt null")
+  eq(M.rowTime(Object.assign({}, fin, { finishedAt: "garbage" }), now), today, "finishedAt unparseable falls through, not blank")
+  const rev = M.rowTime(Object.assign({}, fin, { createdAt: fin.finishedAt, finishedAt: fin.createdAt }), now)
+  eq(rev, "3m ago", "reversed pair: no duration; the age reads off the (parseable) finishedAt"); assert(rev.indexOf(" · ") < 0)
+  eq(M.rowTime(Object.assign({}, fin, { finishedAt: null, updatedAt: null }), now), M.age(fin.createdAt, now), "createdAt last")
+  const far = new Date(Date.parse(fin.createdAt) + M.DURATION_MAX_MS + 1000).toISOString()
+  eq(M.rowTime(Object.assign({}, fin, { finishedAt: far }), Date.parse(far) + 1000), "Just now", "over the cap: age alone, off finishedAt")
+  eq(M.rowTime(fin, now), "2m 21s · 1m ago", "age source is finishedAt when it parses, not updatedAt")
+  const noStart = M.panelRows(snap({ recent: [{ uuid: "r0", appName: "app", status: "finished", createdAt: null, updatedAt: new Date(NOW - 4 * 60000).toISOString(), branch: "main" }] }), {}).filter(r => r.type === "deployment")[0]
+  eq(M.rowTime(noStart, NOW), "4m ago", "an old recent.json entry without createdAt")
+  // History
+  const h = M.normaliseHistory(fx("history-page.json")).rows
+  const h0 = M.historyRow(h[0], "app1", o)
+  eq(M.rowTime(h0, Date.parse(h0.finishedAt) + 5 * 60000), "29s · 5m ago")
+  eq(M.rowTime(M.historyRow(h[2], "app1", o), Date.parse(h[2].finishedAt) + 3600000), "16s · 1h ago", "failed history row")
+  const running = M.historyRow(Object.assign({}, h[0], { status: "in_progress", finishedAt: null }), "app1", o)
+  eq(M.rowTime(running, Date.parse(h[0].updatedAt) + 4 * 60000), "4m ago", "History in_progress keeps its age (unchanged)")
+  const odd = M.historyRow(Object.assign({}, h[0], { status: "", finishedAt: null, updatedAt: null }), "app1", o)
+  eq(M.rowTime(odd, Date.parse(h[0].createdAt) + 90 * 86400000), "90d ago", "unmapped status months old reads an age, never an elapsed (requirement 7)")
+  eq(M.rowTime(null, NOW), ""); eq(M.rowTime({ type: "deployment", terminal: true }, NOW), "")
+  // requirement 6: the filter cannot match on the duration
+  eq(M.rowMatches(fin, ["2m"]), false); eq(M.rowMatches(fin, ["storefront"]), true)
+})
+
 test("Model.elapsed / age", () => {
   const t0 = NOW
   eq(M.elapsed(new Date(t0 - 45000).toISOString(), t0), "45s")

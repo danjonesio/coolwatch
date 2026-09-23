@@ -2162,3 +2162,16 @@ function age(iso, nowMs) {
   if (h < 24) return h + "h ago"
   return Math.floor(h / 24) + "d ago"
 }
+
+// The right column of a deployment or a history row. A running section row shows the ticking
+// elapsed; a terminal row shows the duration Coolify gives (createdAt -> finishedAt; there is
+// no started_at, so a queue wait is inside it) beside how long ago it ended. A history row
+// that is not terminal keeps its age. No duration: the row reads exactly the age it read before.
+// age() || age() rather than age(a || b): a non-empty unparseable stamp must fall through.
+function rowTime(r, nowMs) {
+  var t = r || {}
+  if (t.type === "deployment" && !t.terminal) return elapsed(t.createdAt, nowMs)
+  var dur = t.terminal ? durationOf(t) : ""
+  var ago = age(t.finishedAt, nowMs) || age(t.updatedAt, nowMs) || age(t.createdAt, nowMs)
+  return [dur, ago].filter(function (x) { return !!x }).join(" · ")
+}
