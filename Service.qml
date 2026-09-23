@@ -1582,11 +1582,14 @@ Item {
     // targetHint: the panel passes the row type so a vanished target is named correctly.
     function act(verb, uuid, fromIpc, targetHint, instanceId) {
       // instanceId: the instance the confirm was opened on; a switch in between refuses (SR38).
-      if (instanceId !== undefined && instanceId !== null && String(instanceId) !== ctx.instId) return ctx._refuse("wronginstance", verb, uuid)
-      if (!ctx._ready) return ctx._refuse(root._configError && root._configError.kind === "unsafe" ? "unsafe" : "notconfigured", verb, uuid)   // the unsafe mode is the root's error
-      if (ctx._probeMode) return ctx._refuse("probe", verb, uuid)
-      if (ctx._paused) return ctx._refuse("ratelimited", verb, uuid)
-      if (ctx._requestsLastMin() >= 120) return ctx._refuse("toomany", verb, uuid)
+      // An IPC argument is unvouched until resolved (it may be a Coolify name): a refusal before
+      // resolution names no uuid8 in the log or lastAction. The panel's row uuid is kept.
+      var unresolved = fromIpc ? "" : uuid
+      if (instanceId !== undefined && instanceId !== null && String(instanceId) !== ctx.instId) return ctx._refuse("wronginstance", verb, unresolved)
+      if (!ctx._ready) return ctx._refuse(root._configError && root._configError.kind === "unsafe" ? "unsafe" : "notconfigured", verb, unresolved)   // the unsafe mode is the root's error
+      if (ctx._probeMode) return ctx._refuse("probe", verb, unresolved)
+      if (ctx._paused) return ctx._refuse("ratelimited", verb, unresolved)
+      if (ctx._requestsLastMin() >= 120) return ctx._refuse("toomany", verb, unresolved)
       // The panel hands a row uuid; the CLI may hand a label. Resolution sits after the readiness
       // gates so not configured / token rejected / rate limited keep winning over a name miss.
       var target = uuid

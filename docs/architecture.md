@@ -50,7 +50,8 @@ No daemon, no second Quickshell, no Python collector. The shell is the runtime.
   cannot fan out unconfirmed; exact, then case-folded). CLI verbs never confirm. The uuid
   or name echoed back is bounded to 64 characters and one line; the `ipc` log line
   carries the resolved uuid8 on success and `-` otherwise, and `status.lastAction.uuid8`
-  is `""` for a name refusal.
+  is `""` for any IPC call refused before resolution (a readiness gate, `unknown name`,
+  `ambiguous name`).
 - Hot reload: saving under `~/.config/omarchy/plugins/` reloads the plugin. `bin/dev-sync`
   copies the repo there (the validator refuses symlinks).
 
@@ -571,7 +572,7 @@ and dim refusals, 6 s for failures), never the callout, never `_error`, `_backof
 `_probeMode` or `consecutiveFailures`. The one escalation is a 429, which enters the
 instance-wide pause through `_pauseFor` (extracted from `_fail`). A reaped action says
 "Sent, but Coolify did not answer", keeps its pending entry, and is never retried.
-`status` gains `lastAction { verb, uuid8, code, curlExit, ms, at, result, instance }` (`instance` since Phase 4; `uuid8` is `""` when a name refused before resolution), `pending`,
+`status` gains `lastAction { verb, uuid8, code, curlExit, ms, at, result, instance }` (`instance` since Phase 4; `uuid8` is `""` for an IPC call refused before resolution: a readiness gate, `unknown name`, `ambiguous name`), `pending`,
 `pendingStale`, `actionsLastMin` and `inflightAction`; the log line is
 `coolwatch action <verb> <code> exit=<n> <ms>ms <uuid8>`.
 
