@@ -513,13 +513,16 @@ Item {
 
   // CLI verbs never confirm: typing the verb is the confirmation. The result is the
   // stdout token and status.lastAction; omarchy-shell exits 0 on dispatch regardless.
-  // Verbs resolve against the active instance only (SR38).
-  function _ipcAct(verb, uuid) {
-    var u = String(uuid === undefined || uuid === null ? "" : uuid).replace(/[\r\n\t]/g, " ").trim()
-    if (!u) return "usage: " + verb + " <uuid>"
-    var r = root.act(verb, u, true)
-    var token = r === "queued" ? "queued " + verb + " " + u.slice(0, 64) : r
-    console.log("coolwatch ipc " + verb + " " + u.slice(0, 8) + " -> " + token.split(" ")[0])
+  // Verbs resolve against the active instance only (SR38). The argument is a uuid or a name:
+  // a name is the label the panel shows, resolved in ctx.act after the readiness gates. The
+  // ipc log line names the resolved uuid on success and nothing otherwise: the argument may
+  // be a Coolify name, and the refuse line already carries the uuid8 (SR15).
+  function _ipcAct(verb, target) {
+    var u = String(target === undefined || target === null ? "" : target).replace(/[\r\n\t]/g, " ").trim()
+    if (!u) return "usage: " + verb + " <uuid|name>"
+    var parts = root.act(verb, u, true).split(" "), queued = parts[0] === "queued"
+    var token = queued ? "queued " + verb + " " + parts[1].slice(0, 64) : parts.join(" ")
+    console.log("coolwatch ipc " + verb + " " + (queued ? Model.uuid8(parts[1]) : "-") + " -> " + parts[0])
     return token
   }
   // The one verb that looks past the active instance: a deployment uuid names exactly one
@@ -557,10 +560,10 @@ Item {
     target: "io.github.danjonesio.coolwatch"
     function refresh(): string { root.refresh(); return "ok" }
     function status(): string { return JSON.stringify(root._status()) }
-    function deploy(uuid: string): string { return root._ipcAct("deploy", uuid) }
-    function restart(uuid: string): string { return root._ipcAct("restart", uuid) }
-    function stop(uuid: string): string { return root._ipcAct("stop", uuid) }
-    function start(uuid: string): string { return root._ipcAct("start", uuid) }
+    function deploy(target: string): string { return root._ipcAct("deploy", target) }
+    function restart(target: string): string { return root._ipcAct("restart", target) }
+    function stop(target: string): string { return root._ipcAct("stop", target) }
+    function start(target: string): string { return root._ipcAct("start", target) }
     function instances(): string { return root._ipcInstances() }
     function instance(id: string): string { return root._ipcInstance(id) }
     function log(uuid: string): string { return root._ipcLog(uuid) }
@@ -1584,9 +1587,17 @@ Item {
       if (ctx._probeMode) return ctx._refuse("probe", verb, uuid)
       if (ctx._paused) return ctx._refuse("ratelimited", verb, uuid)
       if (ctx._requestsLastMin() >= 120) return ctx._refuse("toomany", verb, uuid)
-      var a = Model.actionRequest(ctx.snapshot, verb, uuid)
-      if (!a.ok) return ctx._refuse(a.why, verb, uuid, targetHint)
-      if (fromIpc && ctx._ipcAbilityStreak >= 3) return ctx._refuse("ipcability", a.verb, uuid)
+      // The panel hands a row uuid; the CLI may hand a label. Resolution sits after the readiness
+      // gates so not configured / token rejected / rate limited keep winning over a name miss.
+      var target = uuid
+      if (fromIpc) {
+        var t = Model.resolveActionTarget(ctx.snapshot, uuid)
+        if (!t.ok) return ctx._refuse(t.why, verb, uuid)      // "unknown" lands in today's arm with today's token
+        target = t.uuid                                       // from here on every token, log and lastAction carries the uuid, not the argument
+      }
+      var a = Model.actionRequest(ctx.snapshot, verb, target)
+      if (!a.ok) return ctx._refuse(a.why, verb, target, targetHint)
+      if (fromIpc && ctx._ipcAbilityStreak >= 3) return ctx._refuse("ipcability", a.verb, target)
       var why = Model.canAct(ctx._pending, ctx._inflightAction, a.uuid, Date.now(), ctx._lastActionLaunchAt)
       if (why) return ctx._refuse(why, a.verb, a.uuid)
       var req = ctx._descriptorFor(a)
@@ -1600,7 +1611,7 @@ Item {
         return ctx._refuse("busy", a.verb, a.uuid)
       }
       console.log("coolwatch action launch " + a.verb + " " + a.uuid.slice(0, 8) + (fromIpc ? " ipc" : ""))
-      return "queued"
+      return "queued " + a.uuid                               // the one reader of the return is _ipcAct; the panel discards it
     }
 
     function _descriptorFor(a) {
@@ -1630,6 +1641,9 @@ Item {
           var word = targetHint === "deployment" || targetHint === "server" || targetHint === "tag" ? targetHint : "resource"
           ctx._say("Coolify no longer has that " + word, "urgent"); token = "unknown uuid " + u; break
         }
+        // IPC verbs by name: the argument is echoed, the log and lastAction get no argument (it may be a Coolify name)
+        case "unknownname": ctx._say("No match for that name", "dim"); token = "unknown name " + u; u8 = ""; break
+        case "ambiguousname": ctx._say("That name matches more than one resource", "dim"); token = "ambiguous name " + u; u8 = ""; break
         case "nav":                      // Phase 4: open/logs/history are the panel's, never an action
         case "notapplicable": ctx._say("Nothing to " + verb, "dim"); token = "not applicable " + verb + " " + u; break
         case "already pending": {
@@ -1643,7 +1657,7 @@ Item {
       }
       if (why !== "wronginstance")   // a confirm from another instance leaves lastAction as it was (plan step 12; review: skeptic 1)
         ctx._lastAction = { verb: String(verb || ""), uuid8: u8, code: 0, curlExit: 0, ms: 0, at: Date.now(), result: "refused", instance: ctx.instId }
-      console.log("coolwatch action refuse " + why + " " + String(verb || "").slice(0, 16) + " " + u8)
+      console.log("coolwatch action refuse " + why + " " + String(verb || "").slice(0, 16) + " " + (u8 || "-"))
       return token
     }
 
