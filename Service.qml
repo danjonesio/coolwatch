@@ -883,7 +883,7 @@ Item {
     function _resolveToken() {
       var i = ctx._entry
       if (!i) return
-      var bind = Model.tokenBinding(i)
+      var bind = ctx._binding()
       if (i.tokenCommand) {
         // The held token is reused only when the same rule _launch applies says it is usable
         // (SR41): no vault re-prompt on a name or poll edit, a re-run on a url or command edit.
@@ -905,7 +905,7 @@ Item {
       if (!ctx._entry) return                                       // a removed entry binds nothing
       ctx._token = token
       ctx._tokenSource = source
-      ctx._tokenKey = Model.tokenBinding(ctx._entry)                // the one place a token is bound; before _ready and _prime, which _launch checks against (SR41)
+      ctx._tokenKey = ctx._binding()                                // the one place a token is bound; before _ready and _prime, which _launch checks against (SR41)
       if (ctx._error && (ctx._error.kind === "waitingtoken" || ctx._error.kind === "tokencmd" || ctx._error.kind === "noconfig" || ctx._error.kind === "configerror")) ctx._error = null
       ctx._ready = true
       ctx._prime("all")
@@ -916,9 +916,11 @@ Item {
     // The context as the token rule sees it (SR41): the binding of the url a request is built
     // from (_instance.url, what Api.base consumes) with the entry's command, whether the entry
     // still exists, and the file's safety.
+    // The one binding: the url a request is built from (_instance.url, kept equal to the entry's by
+    // _configApplied, whose key holds the url) with the entry's command. Both sides of every compare.
+    function _binding() { return Model.tokenBinding({ url: ctx._instance ? ctx._instance.url : "", tokenCommand: ctx._entry ? ctx._entry.tokenCommand : null }) }
     function _tokenNow() {
-      return { current: Model.tokenBinding({ url: ctx._instance ? ctx._instance.url : "", tokenCommand: ctx._entry ? ctx._entry.tokenCommand : null }),
-               hasEntry: !!ctx._entry, safe: !(root._configError && root._configError.kind === "unsafe") }
+      return { current: ctx._binding(), hasEntry: !!ctx._entry, safe: !(root._configError && root._configError.kind === "unsafe") }
     }
     // The Req.kill shape: the seq bump is the stop; running = false alone is not (its exit still arrives, judged against its own seq).
     function _stopTokenCmd() { tokenCmd.seq += 1; if (tokenCmd.running) { tokenCmd.stopping = true; tokenCmd.running = false } }
