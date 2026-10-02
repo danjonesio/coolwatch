@@ -99,10 +99,15 @@ like any other edit.
 - `token` or `tokenCommand`; both are accepted and `tokenCommand` wins when both are
   present. `tokenCommand` must be an array of strings whose first element does not
   start with `-` (a bare string is a config error). It runs as
-  `timeout -k 2 30 <argv…>` through `Process` on load and on every config change whose
-  `tokenCommand` differs from the last one (a touch does not re-prompt a vault); its
-  stdout (trimmed) is the token. Neither stdout nor stderr is ever logged; failure
-  shows "Token unavailable (exit N)". While it runs the bar shows "waiting for token".
+  `timeout -k 2 30 <argv…>` through `Process` on load and whenever the entry's `url` or
+  `tokenCommand` changes (a name, poll or notify edit, or a touch, does not re-prompt a
+  vault); its stdout (trimmed) is the token. The result is bound to the exact `url` +
+  `tokenCommand` pair that started it (`Model.tokenBinding`) and is refused if that pair,
+  the entry or the file's safety changed meanwhile; a switch to an inline token, a URL or
+  command change, an unsafe file or the entry's removal stops a running command; every
+  request is built only from a token bound to its URL (SR41). Neither stdout nor stderr
+  is ever logged; failure shows "Token unavailable (exit N)". While it runs the bar shows
+  "waiting for token".
   `tokenCommand` keeps the token off disk but not away from other plugins loaded into
   the same shell.
 - Token abilities are per phase: Phase 1 `read` only; `read` + `deploy` from Phase 2
@@ -111,8 +116,9 @@ like any other edit.
   logs). `write` is only needed for "Validate server"; the panel gates that action on
   it and names the missing ability instead of failing silently.
 - Mode check: a `stat -c '%a %U'` process runs on every load and on every `refresh`.
-  Group- or world-**writable**, or owned by someone else → "Config unsafe", no polling
-  and no `tokenCommand` (a writable config could point the token at another `url`).
+  Group- or world-**writable**, or owned by someone else → "Config unsafe", no polling,
+  no `tokenCommand`, and an outstanding `tokenCommand` is stopped and its result refused
+  (a writable config could point the token at another `url`).
   Group- or world-readable with an inline `token` → a warning in the panel, polling
   continues.
 - `url` must start with `http://` or `https://`; `http://` shows a plaintext warning; a
@@ -599,7 +605,9 @@ refused after three consecutive ability failures until a 2xx or a config change.
 6. Token handling: never in argv, `console.*`, `snapshot`, `status`, or disk; no
    function on the service returns it or the config text; `Api.config` is called only
    in `_launch`, its result cleared in `onStarted`. `tokenCommand` is an argv array run
-   under `timeout`, never a shell; its output is never logged.
+   under `timeout`, never a shell; its output is never logged, and its result is accepted
+   only when `Model.tokenVerdict` says the entry that started it is still the entry
+   configured, with the file safe (SR41).
 7. Config trust: `mkdir -m 700`; writable-by-others or foreign-owned → unsafe, no
    polling, no `tokenCommand`; loose read bits with an inline token → warning.
 8. Logging: kind, code, exit, timings, bytes and a `Model.redact`ed, `Model.elide`d
@@ -705,7 +713,8 @@ refused after three consecutive ability failures until a 2xx or a config change.
 37. (Phase 4 SR33) No userinfo in an instance URL: a config error, so credentials never
     reach browser argv or the shell's history files; chips render `name` only.
 38. (Phase 4 SR34) Tokens live in one place per context (`_token`, written by
-    `_tokenReady`, read by `_launch`); a released context kills its requests and drops its
+    `_tokenReady`, read by `_launch`) and are bound to the entry's `url` + `tokenCommand`
+    (`_tokenKey`, SR41); a released context kills its requests and drops its
     token in `Component.onDestruction`; the exposure through `serviceFor()` scales with
     the instance count and is stated here rather than discovered.
 39. (Phase 4 SR36) TLS failures are named: curl exit 60 is the `tls` kind at every site
@@ -734,6 +743,23 @@ refused after three consecutive ability failures until a 2xx or a config change.
     `Service.qml`, comments stripped). The health answer settles in `_healthDone` and
     touches nothing else; its body is capped at 16 chars by `Model.parseHealth` and never
     stored, logged or shown; `down` never carries the Edit config button.
+43. (SR41, 2026-10-01, marketplace review) Token binding: a `tokenCommand` result and the
+    held token are usable only by the entry (`url` + `tokenCommand`) that asked for them.
+    `Model.tokenBinding(entry)` is that pair as JSON (never the token); `Model.tokenVerdict`
+    returns `""` or a reason word (`gone`, `unsafe`, `superseded`, `stale`, `failed`) and is
+    asked at exactly three places: `tokenCmd.onExited` (accept), the cache branch of
+    `_resolveToken` (reuse) and `_launch` (use, the only `Api.config` site, so no caller can
+    bypass it; the four panel view fetches also gained the `_ready` gate the polls had).
+    `_stopTokenCmd` (the `Req.kill` shape: a sequence bump, then `running = false`) runs on
+    a superseding command, a switch to an inline token, `_suspend` and destruction;
+    `tokenCmd.liveSeq` is stamped in `onStarted` so a coalesced restart cannot deliver an
+    old child's output. Two keys exist over an entry and neither is widened into the other:
+    `Model.instanceKey` (entry minus token, token fingerprint, poll) resets the store;
+    `Model.tokenBinding` gates the credential and is deliberately narrower, so a name or
+    poll edit does not re-prompt a vault. A refusal logs `coolwatch <id>/token refused
+    <word>` or `/launch refused <word>` and nothing else. `bin/check` counts: `Api.config(`
+    once, `Model.tokenVerdict(` three times, `tokenOut.text` once, `ctx._token` six times,
+    no console line naming a binding, a key or the command output.
 
 ## Testing
 

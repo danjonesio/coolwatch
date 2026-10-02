@@ -18,7 +18,8 @@ Manifest 1.1.0 (2026-09-23): health before auth (one unauthenticated `GET /healt
 poll fails with an HTTP answer; the callout tells "Coolify not responding" from "token
 rejected"; `docs/plans/health-before-auth.md`); build duration on terminal and History rows
 (`duration · age` from `created_at → finished_at`; `docs/plans/build-duration.md`); IPC
-verbs by name (`docs/plans/ipc-verbs-by-name.md`).**
+verbs by name (`docs/plans/ipc-verbs-by-name.md`). Manifest 1.1.1 (2026-10-01): token
+binding, a marketplace-review fix (`docs/plans/token-binding.md`).**
 Read `docs/roadmap.md` before writing code.
 
 Branches (since 2026-09-14): work branches from `develop` into `develop`; `master` is the
@@ -67,7 +68,8 @@ moves only by a release PR from `develop` (`docs/release.md`: bump `manifest.jso
   terminal body off the drain: **no log poller**. Log text lives in the service's view
   slices (`views`, beside `snapshot`) and the panel's overlay model only; it never enters
   `snapshot`, `_status()`, `recent.json`, a `console.*` line or a toast (SR26).
-- Config accepts `token` and `tokenCommand`; `tokenCommand` wins when both are set.
+- Config accepts `token` and `tokenCommand`; `tokenCommand` wins when both are set. A
+  token is bound to the entry's `url` + `tokenCommand` and is never sent elsewhere (SR41).
 - Edit config (Phase 5 prep): the footer's cog, `e`, and a spelled-out button on the
   callouts the file can fix (`Model.calloutEditable`: noconfig, configerror, unsafe,
   tokencmd, auth, the permissions warning) call the service's `editConfig()`, the one
@@ -161,7 +163,8 @@ moves only by a release PR from `develop` (`docs/release.md`: bump `manifest.jso
   `stdinEnabled = false` right after the write, which is what makes curl start. The
   token never goes in argv, never in logs, never in state files.
 - Config lives in `~/.config/coolwatch/config.json` (0600), not in `shell.json`.
-  `token` or `tokenCommand`. Watched live.
+  `token` or `tokenCommand`. Watched live; a url or command edit re-resolves the token, a
+  name, poll or notify edit does not.
 - Status strings have colons (`running:healthy`). Prefix-match the state; treat bare
   `exited` and `exited:unhealthy` as the same. Deployment terminal states are
   `finished`, `failed`, `cancelled-by-user`.
@@ -421,6 +424,8 @@ bin/record-fixture deployments-active /deployments
 
 - Don't add a daemon, a Python collector, or a second Quickshell.
 - Don't put the token in argv, `console.*`, state files, or `shell.json`.
+- Don't send a token to a URL it was not resolved for: `_launch` asks `Model.tokenVerdict`
+  and `tokenCmd.onExited` refuses a result whose entry changed (SR41).
 - Don't fake metrics, progress percentages or "started" events the API does not give.
 - Don't notify on the baseline poll, and don't gate a notification on `_baselineDone`.
 - Don't write `recent.json` from a property change or from `_resetStore`.
