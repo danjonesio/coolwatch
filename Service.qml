@@ -786,7 +786,7 @@ Item {
       function _halt() {
         ctx._suspend()
         ctx._resetStore()
-        ctx._token = ""
+        ctx._token = ""; ctx._tokenKey = ""
       }
       Component.onCompleted: ctx._configApplied()
 
