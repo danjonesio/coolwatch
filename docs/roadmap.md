@@ -230,7 +230,7 @@ and the finished toast already carried it. The cancelled toast still has no body
 `docs/plans/ipc-verbs-by-name.md` and its build record). `deploy <label>` resolves the
 panel's label on the active instance (uuid first, resources only, exact then case-folded),
 `unknown name` / `ambiguous name` otherwise; a uuid-shaped miss still reads `unknown uuid`.
-**Token binding** (PR #N, merged YYYY-MM-DD into `develop`, 1.1.1; `docs/plans/token-binding.md`
+**Token binding** (PR #20, merged 2026-10-02 into `develop`, 1.1.1; `docs/plans/token-binding.md`
 and its build record). Found in marketplace review (issue 8253): a `tokenCommand` result and
 the held token are now bound to the entry's `url` + `tokenCommand`; the four panel view
 fetches gained the readiness gate the polls already had.
