@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.1 — 2026-10-02
+
+- **Token binding.** A `tokenCommand` result, and the token an instance holds, are now
+  bound to the exact `url` and `tokenCommand` that produced them; editing an instance
+  while its command runs, switching it to an inline token, or an unsafe config discards
+  the pending result and stops the command, and a request is never sent with a token
+  resolved for a different URL. Found in marketplace review.
+
 ## 1.1.0 — 2026-09-23
 
 - **Health before auth.** When a poll fails with an HTTP answer, one unauthenticated

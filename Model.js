@@ -1186,6 +1186,34 @@ function instanceKey(entry, poll) {
   return JSON.stringify({ e: e, poll: poll || null })
 }
 
+// Token binding (SR41, marketplace review 2026-10-01). The two facts the credential boundary
+// is made of: the request target as Api.base consumes it (the normalised url, never
+// Model.origin, which flattens a query-bearing url to "") and the producer (the tokenCommand
+// argv, or null for an inline token). A name, poll or notify edit leaves it unchanged (a touch
+// does not re-prompt a vault, docs/architecture.md); a url or command change, or a switch
+// between inline and command, changes it. Never the token (SR34). instanceKey above is the
+// wider store-reset key; this one is deliberately narrower and neither is widened into the other.
+function tokenBinding(entry) {
+  var e = entry || {}
+  var url = String(e.url === undefined || e.url === null ? "" : e.url).trim()
+  if (!url) return ""                                   // never matches anything, including itself (tokenVerdict)
+  return JSON.stringify({ url: url, cmd: Array.isArray(e.tokenCommand) && e.tokenCommand.length ? e.tokenCommand : null })
+}
+// "" to proceed, else the reason word (the canAct shape). `what` is a tokenCommand result
+// ({bound, live, code, hasText}) or a held token ({bound}); `now` is the context today
+// ({current, hasEntry, safe}). The strongest refusal wins, and a stale or unsafe result is
+// never reported as "failed" (it must not re-arm the tokencmd callout).
+function tokenVerdict(what, now) {
+  what = what || {}; now = now || {}
+  if (!now.hasEntry) return "gone"
+  if (!now.safe) return "unsafe"
+  if (what.live === false) return "superseded"
+  var bound = String(what.bound === undefined || what.bound === null ? "" : what.bound)
+  if (!bound || bound !== String(now.current === undefined || now.current === null ? "" : now.current)) return "stale"
+  if (what.code !== undefined && (what.code !== 0 || !what.hasText)) return "failed"
+  return ""
+}
+
 // Chips exist only with two or more instances; one instance shows none.
 function instanceChips(list, activeId) {
   list = list || []
