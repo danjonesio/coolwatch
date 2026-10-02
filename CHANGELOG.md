@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.1.1 — 2026-10-01
+## 1.1.1 — 2026-10-02
 
 - **Token binding.** A `tokenCommand` result, and the token an instance holds, are now
   bound to the exact `url` and `tokenCommand` that produced them; editing an instance

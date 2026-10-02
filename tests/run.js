@@ -2480,7 +2480,7 @@ test("Model.tokenBinding / tokenVerdict: a tokenCommand result is usable only by
   // T7 the _launch and cache form: a held token, no seq, no exit code (requirement 3)
   eq(V({ bound: M.tokenBinding(A) }, now(A)), ""); eq(V({ bound: M.tokenBinding(A) }, now(B)), "stale")
   eq(V({ bound: "" }, now(A)), "stale"); eq(V(null, null), "gone"); eq(V({}, now(A)), "stale")
-  // T8 cache width (requirement 5): a name, plaintext or poll edit keeps the binding; url, command, inline<->command change it
+  // T8 cache width (requirement 5): a name or plaintext edit keeps the binding (poll is not an input, by construction); url, command, inline<->command change it
   eq(M.tokenBinding(Object.assign({}, A, { name: "X", plaintext: true })), M.tokenBinding(A))
   assert(M.tokenBinding(Object.assign({}, A, { url: "https://c.example.net" })) !== M.tokenBinding(A), "url")
   assert(M.tokenBinding(Object.assign({}, A, { tokenCommand: ["op", "read", "x"] })) !== M.tokenBinding(A), "command")

@@ -126,13 +126,13 @@ nh=$(printf '%s\n' "$ajs" | grep -cF 'if (!unauth) s += "header = \"Authorizatio
 # SR41 (token binding, marketplace review 2026-10-01): a tokenCommand result and the held token are
 # usable only by the entry (url + tokenCommand) that asked for them. One use site builds every
 # request (Api.config), the pure verdict is asked at exactly three places (accept, cache, use), the
-# command's stdout is read once, the token lives at its five sites, and no log line names a
+# command's stdout is read once, the token lives at its six sites, and no log line names a
 # binding, a key, the argv or the output.
-nc=$(printf '%s\n' "$sq" | grep -o 'Api.config(' | wc -l)
+nc=$(printf '%s\n' "$sq" | grep -oF 'Api.config(' | wc -l)
 [[ $nc -eq 1 ]] || fail "SR41: Api.config( must appear exactly once in Service.qml (found $nc)"
-nv=$(printf '%s\n' "$sq" | grep -o 'Model.tokenVerdict(' | wc -l)
+nv=$(printf '%s\n' "$sq" | grep -oF 'Model.tokenVerdict(' | wc -l)
 [[ $nv -eq 3 ]] || fail "SR41: Model.tokenVerdict( must appear exactly three times in Service.qml: accept, cache, use (found $nv)"
-no=$(printf '%s\n' "$sq" | grep -o 'tokenOut.text' | wc -l)
+no=$(printf '%s\n' "$sq" | grep -oF 'tokenOut.text' | wc -l)
 [[ $no -eq 1 ]] || fail "SR41: tokenOut.text must be read exactly once in Service.qml (found $no)"
 nt=$(printf '%s\n' "$sq" | grep -o 'ctx\._token\b' | wc -l)
 [[ $nt -eq 6 ]] || fail "SR41: ctx._token must appear exactly six times in Service.qml: _halt, the cache branch (read + reuse), _tokenReady, _launch, destruction (found $nt)"

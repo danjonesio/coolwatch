@@ -587,7 +587,7 @@ Item {
                                       down: ctx._servers.filter(function(x) { return !x.reachable && !x.disabled }).length })
 
     property var _instance: null         // this entry without the token
-    property string _token: ""           // written only by _tokenReady, read only by _launch
+    property string _token: ""           // written only by _tokenReady; read by _launch and by _resolveToken's cache branch
     property string _tokenSource: ""     // "file" | "command"
     property string _tokenKey: ""        // the binding (Model.tokenBinding: url + tokenCommand) the held _token belongs to; written only by _tokenReady (SR41)
     property bool _needToken: false
@@ -769,7 +769,7 @@ Item {
       // The config went unsafe: stop polling, keep the store behind the callout, resolve the
       // token again once the mode is repaired (the pre-Phase-4 unsafe arm; review: code 2).
       function _suspend() {
-        ctx._stopTokenCmd(); ctx._tokenKey = ""   // an unsafe file: accept nothing in flight, hold nothing bound; the token stays behind the callout and is re-bound by the next _resolveToken (SR41)
+        ctx._stopTokenCmd()                        // an unsafe file: accept nothing in flight (SR41). The held token keeps its binding: every verdict is "unsafe" while the callout is up, and the repair reuses it without a vault re-prompt.
         ctx._ready = false
         ctx._needToken = true
         // A killed Req never reaches _finish (the liveSeq guard), so settle what it carried
@@ -842,6 +842,9 @@ Item {
         var t = String(tokenOut.text || "").trim()
         var why = Model.tokenVerdict({ bound: tokenCmd.key, live: tokenCmd.liveSeq === tokenCmd.seq, code: code, hasText: t.length > 0 }, ctx._tokenNow())
         if (why === "failed") { ctx._setError(Model.makeError("tokencmd", "", { curlExit: code })); return }
+        // An exit with no start seen (a spawn failure, a coalesced restart that died) for the
+        // entry's own run leaves nothing running and nothing to retry it: arm the callout.
+        if (why === "superseded" && !tokenCmd.running && tokenCmd.key === Model.tokenBinding(ctx._entry)) { ctx._setError(Model.makeError("tokencmd", "", { curlExit: code })); return }
         if (why) { console.log("coolwatch " + ctx.instId + "/token refused " + why); return }   // a reason word; never the key, the argv, the output or its length
         ctx._tokenReady(t, "command")
       }

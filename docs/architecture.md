@@ -756,8 +756,11 @@ refused after three consecutive ability failures until a 2xx or a config change.
     old child's output. Two keys exist over an entry and neither is widened into the other:
     `Model.instanceKey` (entry minus token, token fingerprint, poll) resets the store;
     `Model.tokenBinding` gates the credential and is deliberately narrower, so a name or
-    poll edit does not re-prompt a vault. A refusal logs `coolwatch <id>/token refused
-    <word>` or `/launch refused <word>` and nothing else. `bin/check` counts: `Api.config(`
+    poll edit does not re-prompt a vault, and an unsafe file keeps the held token bound
+    (every verdict is `unsafe` while the callout is up) so the repair reuses it. A refusal
+    logs `coolwatch <id>/token refused <word>` or `/launch refused <word>` and nothing
+    else; `failed` (a non-zero exit or empty output for the current entry's own run) arms
+    the "Token unavailable" callout instead. `bin/check` counts: `Api.config(`
     once, `Model.tokenVerdict(` three times, `tokenOut.text` once, `ctx._token` six times,
     no console line naming a binding, a key or the command output.
 

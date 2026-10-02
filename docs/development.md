@@ -18,7 +18,7 @@ Manifest 1.1.0 (2026-09-23): health before auth (one unauthenticated `GET /healt
 poll fails with an HTTP answer; the callout tells "Coolify not responding" from "token
 rejected"; `docs/plans/health-before-auth.md`); build duration on terminal and History rows
 (`duration · age` from `created_at → finished_at`; `docs/plans/build-duration.md`); IPC
-verbs by name (`docs/plans/ipc-verbs-by-name.md`). Manifest 1.1.1 (2026-10-01): token
+verbs by name (`docs/plans/ipc-verbs-by-name.md`). Manifest 1.1.1 (2026-10-02): token
 binding, a marketplace-review fix (`docs/plans/token-binding.md`).**
 Read `docs/roadmap.md` before writing code.
 
