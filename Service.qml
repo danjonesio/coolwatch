@@ -829,7 +829,8 @@ Item {
     Process {
       id: tokenCmd
       property int seq: 0                // bumped by _stopTokenCmd: the Req.kill shape
-      property int liveSeq: -1           // stamped at start (the Req idiom): a coalesced restart cannot deliver an old child under a new seq
+      property int liveSeq: -1           // stamped at start (the Req idiom); Quickshell delivers a stopped child's exit before a same-tick restart's start (measured 2026-10-02), so the old exit is judged against its own seq
+      property bool stopping: false      // the Req idiom's other half: this exit was asked for by _stopTokenCmd, not a failure of the entry's own run
       property string key: ""            // the binding of the entry that started this run (Model.tokenBinding); never logged
       running: false
       command: []
@@ -839,12 +840,13 @@ Item {
       // Accept: the result is usable only if nothing about the entry, the run or the file's
       // safety changed since it started (SR41). A refusal reads nothing but the verdict.
       onExited: function(code) {
+        var wasStopped = tokenCmd.stopping; tokenCmd.stopping = false
         var t = String(tokenOut.text || "").trim()
         var why = Model.tokenVerdict({ bound: tokenCmd.key, live: tokenCmd.liveSeq === tokenCmd.seq, code: code, hasText: t.length > 0 }, ctx._tokenNow())
         if (why === "failed") { ctx._setError(Model.makeError("tokencmd", "", { curlExit: code })); return }
-        // An exit with no start seen (a spawn failure, a coalesced restart that died) for the
-        // entry's own run leaves nothing running and nothing to retry it: arm the callout.
-        if (why === "superseded" && !tokenCmd.running && tokenCmd.key === Model.tokenBinding(ctx._entry)) { ctx._setError(Model.makeError("tokencmd", "", { curlExit: code })); return }
+        // An exit nobody asked for with no start seen (a spawn failure) for the entry's own run
+        // leaves nothing running and nothing to retry it: arm the callout rather than go silent.
+        if (why === "superseded" && !wasStopped && !tokenCmd.running && tokenCmd.key === ctx._tokenNow().current) { ctx._setError(Model.makeError("tokencmd", "", { curlExit: code })); return }
         if (why) { console.log("coolwatch " + ctx.instId + "/token refused " + why); return }   // a reason word; never the key, the argv, the output or its length
         ctx._tokenReady(t, "command")
       }
@@ -911,12 +913,15 @@ Item {
     }
 
     function _setError(e) { ctx._error = e }
-    // The context as the token rule sees it (SR41): the current binding, whether the entry still exists, and the file's safety.
+    // The context as the token rule sees it (SR41): the binding of the url a request is built
+    // from (_instance.url, what Api.base consumes) with the entry's command, whether the entry
+    // still exists, and the file's safety.
     function _tokenNow() {
-      return { current: Model.tokenBinding(ctx._entry), hasEntry: !!ctx._entry, safe: !(root._configError && root._configError.kind === "unsafe") }
+      return { current: Model.tokenBinding({ url: ctx._instance ? ctx._instance.url : "", tokenCommand: ctx._entry ? ctx._entry.tokenCommand : null }),
+               hasEntry: !!ctx._entry, safe: !(root._configError && root._configError.kind === "unsafe") }
     }
-    // The Req.kill shape: the seq bump is the stop; running = false alone is not (its exit could still arrive).
-    function _stopTokenCmd() { tokenCmd.seq += 1; if (tokenCmd.running) tokenCmd.running = false }
+    // The Req.kill shape: the seq bump is the stop; running = false alone is not (its exit still arrives, judged against its own seq).
+    function _stopTokenCmd() { tokenCmd.seq += 1; if (tokenCmd.running) { tokenCmd.stopping = true; tokenCmd.running = false } }
 
       // Phase 4: each context owns its ten Reqs; `owner` routes the exit to this context.
     Req { id: versionReq; owner: ctx }

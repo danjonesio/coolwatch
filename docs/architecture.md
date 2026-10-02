@@ -752,8 +752,13 @@ refused after three consecutive ability failures until a 2xx or a config change.
     bypass it; the four panel view fetches also gained the `_ready` gate the polls had).
     `_stopTokenCmd` (the `Req.kill` shape: a sequence bump, then `running = false`) runs on
     a superseding command, a switch to an inline token, `_suspend` and destruction;
-    `tokenCmd.liveSeq` is stamped in `onStarted` so a coalesced restart cannot deliver an
-    old child's output. Two keys exist over an entry and neither is widened into the other:
+    `tokenCmd.liveSeq` is stamped in `onStarted`, and Quickshell delivers a stopped child's
+    exit before a same-tick restart's start, with its own output only (measured 2026-10-02
+    with a throwaway `Process` probe), so the old exit is judged against its own sequence
+    and refused as `superseded` before the new run exists; `tokenCmd.stopping` records that
+    the stop was asked for, so an exit nobody asked for with no start seen arms the
+    "Token unavailable" callout instead. The `_launch` guard is built from `_instance.url`,
+    the url `Api.base` consumes, with the entry's `tokenCommand`. Two keys exist over an entry and neither is widened into the other:
     `Model.instanceKey` (entry minus token, token fingerprint, poll) resets the store;
     `Model.tokenBinding` gates the credential and is deliberately narrower, so a name or
     poll edit does not re-prompt a vault, and an unsafe file keeps the held token bound

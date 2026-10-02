@@ -136,7 +136,7 @@ no=$(printf '%s\n' "$sq" | grep -oF 'tokenOut.text' | wc -l)
 [[ $no -eq 1 ]] || fail "SR41: tokenOut.text must be read exactly once in Service.qml (found $no)"
 nt=$(printf '%s\n' "$sq" | grep -o 'ctx\._token\b' | wc -l)
 [[ $nt -eq 6 ]] || fail "SR41: ctx._token must appear exactly six times in Service.qml: _halt, the cache branch (read + reuse), _tokenReady, _launch, destruction (found $nt)"
-nl=$(printf '%s\n' "$sq" | grep -E 'console\.(log|warn|error)' | grep -cE '_tokenKey|tokenCmd\.key|_instKey|tokenOut' || true)
+nl=$(printf '%s\n' "$sq" | grep -E 'console\.(log|warn|error)' | grep -cE '_tokenKey|tokenCmd\.key|_instKey|tokenOut|\bbind\b' || true)
 [[ $nl -eq 0 ]] || fail "SR41: a console line in Service.qml names a token binding, key or the command output ($nl)"
 
 # Lint the four bin/ scripts with shellcheck. Required in CI (ubuntu-latest ships it); a local
