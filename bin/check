@@ -123,6 +123,21 @@ nu=$(printf '%s\n' "$ajs" | grep -cF 'var UNAUTH = { health: true }' || true)
 [[ $nu -eq 1 ]] || fail "SR40: Api.js must hold the literal 'var UNAUTH = { health: true }' exactly once (found $nu)"
 nh=$(printf '%s\n' "$ajs" | grep -cF 'if (!unauth) s += "header = \"Authorization' || true)
 [[ $nh -eq 1 ]] || fail "SR40: the conditional Authorization line must appear exactly once in Api.js (found $nh)"
+# SR41 (token binding, marketplace review 2026-10-01): a tokenCommand result and the held token are
+# usable only by the entry (url + tokenCommand) that asked for them. One use site builds every
+# request (Api.config), the pure verdict is asked at exactly three places (accept, cache, use), the
+# command's stdout is read once, the token lives at its five sites, and no log line names a
+# binding, a key, the argv or the output.
+nc=$(printf '%s\n' "$sq" | grep -o 'Api.config(' | wc -l)
+[[ $nc -eq 1 ]] || fail "SR41: Api.config( must appear exactly once in Service.qml (found $nc)"
+nv=$(printf '%s\n' "$sq" | grep -o 'Model.tokenVerdict(' | wc -l)
+[[ $nv -eq 3 ]] || fail "SR41: Model.tokenVerdict( must appear exactly three times in Service.qml: accept, cache, use (found $nv)"
+no=$(printf '%s\n' "$sq" | grep -o 'tokenOut.text' | wc -l)
+[[ $no -eq 1 ]] || fail "SR41: tokenOut.text must be read exactly once in Service.qml (found $no)"
+nt=$(printf '%s\n' "$sq" | grep -o 'ctx\._token\b' | wc -l)
+[[ $nt -eq 6 ]] || fail "SR41: ctx._token must appear exactly six times in Service.qml: _halt, the cache branch (read + reuse), _tokenReady, _launch, destruction (found $nt)"
+nl=$(printf '%s\n' "$sq" | grep -E 'console\.(log|warn|error)' | grep -cE '_tokenKey|tokenCmd\.key|_instKey|tokenOut' || true)
+[[ $nl -eq 0 ]] || fail "SR41: a console line in Service.qml names a token binding, key or the command output ($nl)"
 
 # Lint the four bin/ scripts with shellcheck. Required in CI (ubuntu-latest ships it); a local
 # machine without it skips with a note rather than blocking the dev loop.
