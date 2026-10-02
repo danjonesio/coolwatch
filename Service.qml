@@ -587,10 +587,9 @@ Item {
                                       down: ctx._servers.filter(function(x) { return !x.reachable && !x.disabled }).length })
 
     property var _instance: null         // this entry without the token
-    property string _token: ""           // written only by _tokenReady, read only by _launch
+    property string _token: ""           // written only by _tokenReady; read by _launch and by _resolveToken's cache branch
     property string _tokenSource: ""     // "file" | "command"
-    property string _tokenCmdKey: ""     // JSON of the tokenCommand that produced the cached token
-    property int _tokenCmdSeq: 0         // a superseded token command's exit is ignored
+    property string _tokenKey: ""        // the binding (Model.tokenBinding: url + tokenCommand) the held _token belongs to; written only by _tokenReady (SR41)
     property bool _needToken: false
     property var _error: null            // Model error object or null
     property var _warning: null
@@ -770,6 +769,7 @@ Item {
       // The config went unsafe: stop polling, keep the store behind the callout, resolve the
       // token again once the mode is repaired (the pre-Phase-4 unsafe arm; review: code 2).
       function _suspend() {
+        ctx._stopTokenCmd()                        // an unsafe file: accept nothing in flight (SR41). The held token keeps its binding: every verdict is "unsafe" while the callout is up, and the repair reuses it without a vault re-prompt.
         ctx._ready = false
         ctx._needToken = true
         // A killed Req never reaches _finish (the liveSeq guard), so settle what it carried
@@ -786,7 +786,7 @@ Item {
       function _halt() {
         ctx._suspend()
         ctx._resetStore()
-        ctx._token = ""
+        ctx._token = ""; ctx._tokenKey = ""
       }
       Component.onCompleted: ctx._configApplied()
 
@@ -828,17 +828,27 @@ Item {
 
     Process {
       id: tokenCmd
-      property int seq: 0
-      property string key: ""
+      property int seq: 0                // bumped by _stopTokenCmd: the Req.kill shape
+      property int liveSeq: -1           // stamped at start (the Req idiom); Quickshell delivers a stopped child's exit before a same-tick restart's start (measured 2026-10-02), so the old exit is judged against its own seq
+      property bool stopping: false      // the Req idiom's other half: this exit was asked for by _stopTokenCmd, not a failure of the entry's own run
+      property string key: ""            // the binding of the entry that started this run (Model.tokenBinding); never logged
       running: false
       command: []
       stdout: StdioCollector { id: tokenOut; waitForEnd: true }
       stderr: StdioCollector { id: tokenErr; waitForEnd: true }   // collected so it never reaches the log; never read
+      onStarted: liveSeq = seq
+      // Accept: the result is usable only if nothing about the entry, the run or the file's
+      // safety changed since it started (SR41). A refusal reads nothing but the verdict.
       onExited: function(code) {
-        if (tokenCmd.seq !== ctx._tokenCmdSeq) return
+        var wasStopped = tokenCmd.stopping; tokenCmd.stopping = false
         var t = String(tokenOut.text || "").trim()
-        if (code === 0 && t.length > 0) { ctx._tokenCmdKey = tokenCmd.key; ctx._tokenReady(t, "command") }
-        else ctx._setError(Model.makeError("tokencmd", "", { curlExit: code }))
+        var why = Model.tokenVerdict({ bound: tokenCmd.key, live: tokenCmd.liveSeq === tokenCmd.seq, code: code, hasText: t.length > 0 }, ctx._tokenNow())
+        if (why === "failed") { ctx._setError(Model.makeError("tokencmd", "", { curlExit: code })); return }
+        // An exit nobody asked for with no start seen (a spawn failure) for the entry's own run
+        // leaves nothing running and nothing to retry it: arm the callout rather than go silent.
+        if (why === "superseded" && !wasStopped && !tokenCmd.running && tokenCmd.key === ctx._tokenNow().current) { ctx._setError(Model.makeError("tokencmd", "", { curlExit: code })); return }
+        if (why) { console.log("coolwatch " + ctx.instId + "/token refused " + why); return }   // a reason word; never the key, the argv, the output or its length
+        ctx._tokenReady(t, "command")
       }
     }
 
@@ -873,27 +883,29 @@ Item {
     function _resolveToken() {
       var i = ctx._entry
       if (!i) return
+      var bind = ctx._binding()
       if (i.tokenCommand) {
-        var key = JSON.stringify(i.tokenCommand)
-        if (key === ctx._tokenCmdKey && ctx._token.length > 0) { ctx._tokenReady(ctx._token, "command"); return }
+        // The held token is reused only when the same rule _launch applies says it is usable
+        // (SR41): no vault re-prompt on a name or poll edit, a re-run on a url or command edit.
+        if (ctx._token.length > 0 && !Model.tokenVerdict({ bound: ctx._tokenKey }, ctx._tokenNow())) { ctx._tokenReady(ctx._token, "command"); return }
         ctx._ready = false
         ctx._setError(Model.makeError("waitingtoken"))
-        if (tokenCmd.running && tokenCmd.key === key) return       // already waiting on this command
-        if (tokenCmd.running) { ctx._tokenCmdSeq += 1; tokenCmd.running = false }   // supersede
-        ctx._tokenCmdSeq += 1
-        tokenCmd.seq = ctx._tokenCmdSeq
-        tokenCmd.key = key
+        if (tokenCmd.running && tokenCmd.key === bind) return      // already waiting on this command for this url (a refresh mid-prompt); asks about the run, not the token
+        ctx._stopTokenCmd()                                         // a different url or argv: supersede
+        tokenCmd.key = bind
         tokenCmd.command = ["timeout", "-k", "2", "30"].concat(i.tokenCommand)
         tokenCmd.running = true
         return
       }
-      ctx._tokenCmdKey = ""
+      ctx._stopTokenCmd()                                           // an inline token: a command still running belongs to a config that no longer names it
       ctx._tokenReady(i.token, "file")
     }
 
     function _tokenReady(token, source) {
+      if (!ctx._entry) return                                       // a removed entry binds nothing
       ctx._token = token
       ctx._tokenSource = source
+      ctx._tokenKey = ctx._binding()                                // the one place a token is bound; before _ready and _prime, which _launch checks against (SR41)
       if (ctx._error && (ctx._error.kind === "waitingtoken" || ctx._error.kind === "tokencmd" || ctx._error.kind === "noconfig" || ctx._error.kind === "configerror")) ctx._error = null
       ctx._ready = true
       ctx._prime("all")
@@ -901,6 +913,17 @@ Item {
     }
 
     function _setError(e) { ctx._error = e }
+    // The context as the token rule sees it (SR41): the binding of the url a request is built
+    // from (_instance.url, what Api.base consumes) with the entry's command, whether the entry
+    // still exists, and the file's safety.
+    // The one binding: the url a request is built from (_instance.url, kept equal to the entry's by
+    // _configApplied, whose key holds the url) with the entry's command. Both sides of every compare.
+    function _binding() { return Model.tokenBinding({ url: ctx._instance ? ctx._instance.url : "", tokenCommand: ctx._entry ? ctx._entry.tokenCommand : null }) }
+    function _tokenNow() {
+      return { current: ctx._binding(), hasEntry: !!ctx._entry, safe: !(root._configError && root._configError.kind === "unsafe") }
+    }
+    // The Req.kill shape: the seq bump is the stop; running = false alone is not (its exit still arrives, judged against its own seq).
+    function _stopTokenCmd() { tokenCmd.seq += 1; if (tokenCmd.running) { tokenCmd.stopping = true; tokenCmd.running = false } }
 
       // Phase 4: each context owns its ten Reqs; `owner` routes the exit to this context.
     Req { id: versionReq; owner: ctx }
@@ -923,6 +946,10 @@ Item {
     function _isViewKind(kind) { return !!ctx._viewKinds[kind] }
 
     function _launch(p, reqs, maxTime) {
+      // Use: the held token must be bound to the url this request is built from, whatever
+      // called us (SR41). Not a dropped tick: skipped is untouched.
+      var why = Model.tokenVerdict({ bound: ctx._tokenKey }, ctx._tokenNow())
+      if (why) { console.log("coolwatch " + ctx.instId + "/launch refused " + why); return false }
       if (p.running || p.stopping) {
         // A dropped tick is starvation, not silence: count it so a byte-starved poll is visible (SR30).
         var k0 = Array.isArray(reqs) ? "topology" : reqs.kind
@@ -1322,7 +1349,7 @@ Item {
       var rec = ctx._recent.filter(function(d) { return d.uuid === uuid })[0] || null
       var known = ctx._buildLogs[uuid] || null
       ctx._captureLog(uuid, undefined, rec ? rec.status : (known ? known.status : ""), "fetch", false)
-      if (logReq.running || logReq.stopping) { ctx._setBuildLogMessage(uuid, "Busy · press r to retry"); return }
+      if (!ctx._ready || logReq.running || logReq.stopping) { ctx._setBuildLogMessage(uuid, "Busy · press r to retry"); return }
       logReq.target = { kind: "buildlog", uuid: uuid, label: "" }
       ctx._launch(logReq, Api.reqBuildLog(uuid), 12)
     }
@@ -1336,7 +1363,7 @@ Item {
       if (kind === "service") {
         if (ctx._viewThrottled(!ctx._servicePicks[uuid])) return
         ctx._setPick(uuid, null, null, label)
-        if (serviceReq.running || serviceReq.stopping) { ctx._setPick(uuid, [], "Busy · try again", label); return }
+        if (!ctx._ready || serviceReq.running || serviceReq.stopping) { ctx._setPick(uuid, [], "Busy · try again", label); return }
         serviceReq.target = { kind: "service", uuid: uuid, label: label }
         ctx._launch(serviceReq, Api.reqService(uuid), 12)
         return
@@ -1350,7 +1377,7 @@ Item {
       var known = ctx._containerLogs[uuid] || null
       if (!internal && ctx._viewThrottled(!known || known.sub !== sub)) return   // internal: the service arm's own continuation, not a key press
       ctx._setContainerLog(uuid, kind, sub, null, null, label)   // lines null: loading
-      if (logReq.running || logReq.stopping) { ctx._setContainerLogMessage(uuid, "Busy · press r to retry"); return }
+      if (!ctx._ready || logReq.running || logReq.stopping) { ctx._setContainerLogMessage(uuid, "Busy · press r to retry"); return }
       logReq.target = { kind: "containerlog", uuid: uuid, label: label, ckind: kind, sub: sub }
       ctx._launch(logReq, req, 12)   // measured 1.1-1.3 s regardless of size: a live docker logs over SSH
     }
@@ -1360,7 +1387,7 @@ Item {
       var h = ctx._history, page = h[appUuid] || { appUuid: appUuid, label: String(label || ""), count: 0, rows: [], skip: 0, loading: false, message: null, at: 0 }
       if (label) page.label = String(label)
       if (ctx._viewThrottled(!h[appUuid] || skip !== page.skip)) return   // a first page or a new page is never dropped
-      if (historyReq.running || historyReq.stopping) { page.message = "Busy · try again"; h[appUuid] = ctx._fresh(page); ctx._history = ctx._fresh(h); return }
+      if (!ctx._ready || historyReq.running || historyReq.stopping) { page.message = "Busy · try again"; h[appUuid] = ctx._fresh(page); ctx._history = ctx._fresh(h); return }
       page.loading = true; page.message = null; page.skip = skip; page.at = Date.now()
       h[appUuid] = ctx._fresh(page); ctx._evictLru(h, 3, null); ctx._history = ctx._fresh(h)
       historyReq.target = { kind: "history", appUuid: appUuid, skip: skip, label: page.label }
@@ -1908,9 +1935,9 @@ Item {
       deploymentsTimer.running = false; resourcesTimer.running = false; serversTimer.running = false; topologyTimer.running = false
       startupRamp.running = false; probeTimer.running = false; pauseTimer.running = false; topologyKick.running = false; topologyStep.running = false
       actionStatusTimer.running = false
-      tokenCmd.running = false
+      ctx._stopTokenCmd()
       for (var i = 0; i < ctx._reqs.length; i++) ctx._reqs[i].kill()
-      ctx._token = ""
+      ctx._token = ""; ctx._tokenKey = ""
     }
 
     // ---- status: this context's part of `status` ------------------------------------------

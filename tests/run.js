@@ -2364,6 +2364,7 @@ test("instanceKey / tokenFingerprint: the store key never holds the token, chang
   assert(k !== M.instanceKey(Object.assign({}, e, { token: "67|secretsecretsecreT" }), { deploymentsSec: 4 }), "a one-char token change resets")
   assert(k !== M.instanceKey(Object.assign({}, e, { name: "B" }), { deploymentsSec: 4 }), "a name change resets")
   assert(k !== M.instanceKey(e, { deploymentsSec: 2 }), "a poll change resets")
+  assert(k !== M.instanceKey(Object.assign({}, e, { url: "https://y" }), { deploymentsSec: 4 }), "a url change resets (SR41)")
   eq(M.tokenFingerprint(""), "0:1505"); assert(/^21:[0-9a-f]+$/.test(M.tokenFingerprint(e.token)))
 })
 
@@ -2450,6 +2451,49 @@ test("statusWords / countsLine / heroMeta / barState: the dot carries the state,
   const clean = snap({ servers: s.servers, resources: s.resources.filter(x => x.state === "running") })
   assert(M.countsLine(clean).indexOf("stopped") < 0 && M.countsLine(clean).indexOf("unhealthy") < 0, "zero clauses drop")
   eq(M.countsLine(snap({ deployments: [{ status: "in_progress" }], resources: [{ state: "exited" }] })), "1 resource · 1 deploying · 1 stopped", "order: totals, deploying, stopped, unhealthy")
+})
+
+// ---- Model.js: token binding (SR41; marketplace review 2026-10-01) ----
+
+test("Model.tokenBinding / tokenVerdict: a tokenCommand result is usable only by the entry that asked for it (SR41; marketplace review 2026-10-01)", () => {
+  const A = { id: "home", name: "H", url: "https://a.example.net", token: "", tokenCommand: ["op", "read", "op://Private/Coolify Homelab/credential"], plaintext: false }
+  const now = (entry, extra) => Object.assign({ current: M.tokenBinding(entry), hasEntry: true, safe: true }, extra || {})
+  const res = (entry, extra) => Object.assign({ bound: M.tokenBinding(entry), live: true, code: 0, hasText: true }, extra || {})
+  const V = M.tokenVerdict
+  const B = Object.assign({}, A, { url: "https://b.example.net", token: "67|secretsecretsecret", tokenCommand: null })
+  // T1 the common path: one command, no edit
+  eq(V(res(A), now(A)), "")
+  // T2 url changed (requirements 2, 4, 5): the maintainer's flow, a late command A result refused by the entry that now holds url B and inline token B
+  eq(V(res(A), now(Object.assign({}, A, { url: "https://b.example.net" }))), "stale")
+  eq(V(res(A), now(B)), "stale", "the maintainer's flow")
+  // T3 command changed; command -> inline on the same url (path 4)
+  eq(V(res(A), now(Object.assign({}, A, { tokenCommand: ["op", "read", "op://Private/Other/credential"] }))), "stale")
+  eq(V(res(A), now(Object.assign({}, A, { tokenCommand: null }))), "stale")
+  // T4 entry removed wins over everything (requirements 4, 11)
+  eq(V(res(A), now(A, { hasEntry: false })), "gone"); eq(V(res(A, { code: 1 }), now(A, { hasEntry: false })), "gone")
+  // T5 unsafe wins over stale and failed
+  eq(V(res(A), now(A, { safe: false })), "unsafe"); eq(V(res(A, { code: 1 }), now(B, { safe: false })), "unsafe")
+  // T6 failed only when nothing stronger applies; superseded (the liveSeq pair) wins over failed (requirements 2, 7)
+  eq(V(res(A, { code: 1 }), now(A)), "failed"); eq(V(res(A, { hasText: false }), now(A)), "failed")
+  eq(V(res(A, { live: false, code: 1 }), now(A)), "superseded")
+  eq(V(res(A, { code: 1 }), now(B)), "stale", "a stale result is never reported as failed")
+  // T7 the _launch and cache form: a held token, no seq, no exit code (requirement 3)
+  eq(V({ bound: M.tokenBinding(A) }, now(A)), ""); eq(V({ bound: M.tokenBinding(A) }, now(B)), "stale")
+  eq(V({ bound: "" }, now(A)), "stale"); eq(V(null, null), "gone"); eq(V({}, now(A)), "stale")
+  // T8 cache width (requirement 5): a name or plaintext edit keeps the binding (poll is not an input, by construction); url, command, inline<->command change it
+  eq(M.tokenBinding(Object.assign({}, A, { name: "X", plaintext: true })), M.tokenBinding(A))
+  assert(M.tokenBinding(Object.assign({}, A, { url: "https://c.example.net" })) !== M.tokenBinding(A), "url")
+  assert(M.tokenBinding(Object.assign({}, A, { tokenCommand: ["op", "read", "x"] })) !== M.tokenBinding(A), "command")
+  assert(M.tokenBinding(Object.assign({}, A, { tokenCommand: null })) !== M.tokenBinding(A), "inline vs command")
+  // T9 an empty url binds to "" and matches nothing, itself included; query-bearing urls stay distinct (requirement 8)
+  eq(M.tokenBinding({ url: "", tokenCommand: A.tokenCommand }), "")
+  eq(V({ bound: "" }, { current: "", hasEntry: true, safe: true }), "stale")
+  assert(M.tokenBinding({ url: "https://h?a=1" }) !== M.tokenBinding({ url: "https://h?b=2" }), "never Model.origin")
+  // T10 no leak (requirements 1, 8): the binding never holds the token; every verdict is one lowercase word
+  const b = M.tokenBinding(Object.assign({}, A, { token: "67|secretsecretsecret" }))
+  assert(b.indexOf("secret") < 0 && b.indexOf("67|") < 0, "no token in the binding")
+  ;[V(res(A), now(A)), V(res(A), now(B)), V(res(A), now(A, { hasEntry: false })), V(res(A), now(A, { safe: false })), V(res(A, { live: false }), now(A)), V(res(A, { code: 1 }), now(A))]
+    .forEach(w => assert(/^[a-z]*$/.test(w), "a reason word: " + w))
 })
 
 console.log(passed + " passed, " + failed + " failed")
